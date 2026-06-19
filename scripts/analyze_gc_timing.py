@@ -34,6 +34,11 @@ TARGET_TABLE_COLUMNS = (
     "skipped_no_gc_count",
     "removed_count",
     "remove_duration",
+    "remove_mode",
+    "batch_remove_enabled",
+    "batch_remove_count",
+    "batch_remove_duration",
+    "individual_remove_duration",
     "node_group_interval",
     "node_group_cleanup_skipped",
     "node_group_cleanup_due",
@@ -112,6 +117,31 @@ def cleanup_due(row: dict[str, str]) -> bool:
     if has_value(row, "node_group_cleanup_due"):
         return as_bool(row, "node_group_cleanup_due")
     return cleanup_effective(row)
+
+
+def batch_remove_enabled(row: dict[str, str]) -> bool:
+    return as_bool(row, "batch_remove_enabled")
+
+
+def remove_mode(row: dict[str, str]) -> str:
+    value = clean_label(row.get("remove_mode"))
+    if value != "(unknown)":
+        return value
+    if as_float(row, "batch_remove_duration") > 0.0 or batch_remove_enabled(row):
+        return "batch_remove"
+    return "individual"
+
+
+def individual_remove_duration(row: dict[str, str]) -> float:
+    if has_value(row, "individual_remove_duration"):
+        return as_float(row, "individual_remove_duration")
+    if remove_mode(row) == "individual":
+        return as_float(row, "remove_duration")
+    return 0.0
+
+
+def batch_remove_duration(row: dict[str, str]) -> float:
+    return as_float(row, "batch_remove_duration")
 
 
 def as_optional_int(row: dict[str, str], key: str) -> int | None:
@@ -340,9 +370,14 @@ def slow_target_rows(targets: list[dict[str, str]]) -> list[dict[str, object]]:
             "skipped_keep_name_count",
             "skipped_no_gc_count",
             "removed_count",
+            "batch_remove_count",
         ):
             item[key] = as_int(row, key)
         item["remove_duration"] = as_float(row, "remove_duration")
+        item["remove_mode"] = remove_mode(row)
+        item["batch_remove_enabled"] = batch_remove_enabled(row)
+        item["batch_remove_duration"] = batch_remove_duration(row)
+        item["individual_remove_duration"] = individual_remove_duration(row)
         interval = as_optional_int(row, "node_group_interval")
         item["node_group_interval"] = "" if interval is None else interval
         item["node_group_cleanup_skipped"] = cleanup_skipped(row)
@@ -388,6 +423,143 @@ def node_group_exit_rows(targets: list[dict[str, str]]) -> list[dict[str, str]]:
         if row.get("phase") == "exit_cleanup"
         and clean_label(row.get("target_name")) == "node_groups"
     ]
+
+
+def summarize_remove_modes(rows: list[dict[str, str]]) -> list[dict[str, object]]:
+    groups: dict[str, dict[str, object]] = defaultdict(
+        lambda: {
+            "rows": 0,
+            "remove_duration": 0.0,
+            "individual_remove_duration": 0.0,
+            "batch_remove_duration": 0.0,
+            "batch_remove_count": 0,
+            "removed_count": 0,
+        }
+    )
+
+    for row in rows:
+        if row.get("phase") != "exit_cleanup":
+            continue
+        mode = remove_mode(row)
+        group = groups[mode]
+        group["rows"] = int(group["rows"]) + 1
+        group["remove_duration"] = float(group["remove_duration"]) + as_float(
+            row, "remove_duration"
+        )
+        group["individual_remove_duration"] = float(
+            group["individual_remove_duration"]
+        ) + individual_remove_duration(row)
+        group["batch_remove_duration"] = float(
+            group["batch_remove_duration"]
+        ) + batch_remove_duration(row)
+        group["batch_remove_count"] = int(group["batch_remove_count"]) + as_int(
+            row, "batch_remove_count"
+        )
+        group["removed_count"] = int(group["removed_count"]) + as_int(
+            row, "removed_count"
+        )
+
+    summary = []
+    for mode, group in groups.items():
+        summary.append({"remove_mode": mode, **group})
+    return sorted(summary, key=lambda item: float(item["remove_duration"]), reverse=True)
+
+
+def print_remove_mode_summary(targets: list[dict[str, str]]) -> None:
+    print("\nF. Remove mode summary")
+    print_table(
+        (
+            "remove_mode",
+            "rows",
+            "remove_duration",
+            "individual_remove",
+            "batch_remove",
+            "batch_remove_count",
+            "removed_count",
+        ),
+        (
+            (
+                item["remove_mode"],
+                item["rows"],
+                item["remove_duration"],
+                item["individual_remove_duration"],
+                item["batch_remove_duration"],
+                item["batch_remove_count"],
+                item["removed_count"],
+            )
+            for item in summarize_remove_modes(targets)
+        ),
+    )
+
+
+def print_node_group_remove_mode_summary(targets: list[dict[str, str]]) -> None:
+    print("\nG. node_groups remove_duration by remove_mode")
+    node_rows = node_group_exit_rows(targets)
+    print_table(
+        (
+            "remove_mode",
+            "rows",
+            "remove_duration",
+            "individual_remove",
+            "batch_remove",
+            "batch_remove_count",
+            "removed_count",
+        ),
+        (
+            (
+                item["remove_mode"],
+                item["rows"],
+                item["remove_duration"],
+                item["individual_remove_duration"],
+                item["batch_remove_duration"],
+                item["batch_remove_count"],
+                item["removed_count"],
+            )
+            for item in summarize_remove_modes(node_rows)
+        ),
+    )
+
+
+def print_batch_remove_summary(targets: list[dict[str, str]]) -> None:
+    batch_rows = [
+        row
+        for row in node_group_exit_rows(targets)
+        if batch_remove_enabled(row) or remove_mode(row) == "batch_remove"
+    ]
+    if not batch_rows:
+        return
+
+    batch_call_rows = [row for row in batch_rows if as_int(row, "batch_remove_count")]
+    batch_count_total = sum(as_int(row, "batch_remove_count") for row in batch_rows)
+    batch_duration_total = sum(batch_remove_duration(row) for row in batch_rows)
+    average_batch_size = (
+        batch_count_total / len(batch_call_rows) if batch_call_rows else 0.0
+    )
+    max_batch_size = max(
+        (as_int(row, "batch_remove_count") for row in batch_rows), default=0
+    )
+
+    print("\nH. node_groups batch_remove summary")
+    print_table(
+        (
+            "batch_enabled_rows",
+            "batch_call_rows",
+            "batch_remove_duration",
+            "batch_remove_count",
+            "average_batch_size",
+            "max_batch_size",
+        ),
+        (
+            (
+                len(batch_rows),
+                len(batch_call_rows),
+                batch_duration_total,
+                batch_count_total,
+                average_batch_size,
+                max_batch_size,
+            ),
+        ),
+    )
 
 
 def parse_removed_name_prefix_top(row: dict[str, str]) -> list[tuple[str, int]]:
@@ -462,7 +634,7 @@ def summarize_node_groups_by_generator(
 def print_node_group_generator_duration_summary(
     targets: list[dict[str, str]]
 ) -> None:
-    print("\nG. node_groups remove_duration by generator_class (top 20)")
+    print("\nI. node_groups remove_duration by generator_class (top 20)")
     summary = sorted(
         summarize_node_groups_by_generator(targets),
         key=lambda item: float(item["remove_duration"]),
@@ -492,7 +664,7 @@ def print_node_group_generator_duration_summary(
 def print_node_group_generator_removed_count_summary(
     targets: list[dict[str, str]]
 ) -> None:
-    print("\nH. node_groups removed_count by generator_class (top 20)")
+    print("\nJ. node_groups removed_count by generator_class (top 20)")
     summary = sorted(
         summarize_node_groups_by_generator(targets),
         key=lambda item: (int(item["removed_count"]), float(item["remove_duration"])),
@@ -528,7 +700,7 @@ def removed_name_prefix_counts(targets: list[dict[str, str]]) -> Counter[str]:
 
 
 def print_removed_name_prefix_summary(targets: list[dict[str, str]]) -> None:
-    print("\nI. Removed node_group name prefixes (top 50)")
+    print("\nK. Removed node_group name prefixes (top 50)")
     prefix_counts = removed_name_prefix_counts(targets)
     print_table(
         ("removed_name_prefix", "removed_count"),
@@ -559,7 +731,7 @@ def slow_node_group_remove_rows(
 
 
 def print_slow_node_group_remove_rows(targets: list[dict[str, str]]) -> None:
-    print("\nJ. Slowest node_groups remove rows (top 50)")
+    print("\nL. Slowest node_groups remove rows (top 50)")
     print_table(
         NODE_GROUP_SLOW_REMOVE_COLUMNS,
         (
@@ -572,7 +744,7 @@ def print_slow_node_group_remove_rows(targets: list[dict[str, str]]) -> None:
 
 
 def print_node_group_throttling_summary(targets: list[dict[str, str]]) -> None:
-    print("\nF. Node group throttling summary")
+    print("\nM. Node group throttling summary")
     node_rows = node_group_exit_rows(targets)
     intervals = sorted(
         {
@@ -648,7 +820,7 @@ def print_node_group_throttling_summary(targets: list[dict[str, str]]) -> None:
 
 
 def print_guidance(targets: list[dict[str, str]]) -> None:
-    print("\nK. GC guidance")
+    print("\nN. GC guidance")
     enter_total = phase_duration(targets, "enter_snapshot")
     exit_total = phase_duration(targets, "exit_cleanup")
     remove_total = sum(as_float(row, "remove_duration") for row in targets)
@@ -689,6 +861,17 @@ def print_guidance(targets: list[dict[str, str]]) -> None:
     if skipped_node_groups:
         print(f"  node_group_cleanup_skipped_count: {skipped_node_groups}")
         print(f"  node_group_cleanup_executed_count: {executed_node_groups}")
+
+    batch_node_rows = [
+        row
+        for row in node_rows
+        if batch_remove_enabled(row) or remove_mode(row) == "batch_remove"
+    ]
+    if batch_node_rows:
+        batch_count_total = sum(as_int(row, "batch_remove_count") for row in node_rows)
+        batch_duration_total = sum(batch_remove_duration(row) for row in node_rows)
+        print(f"  node_group_batch_remove_duration: {batch_duration_total:.3f}s")
+        print(f"  node_group_batch_remove_count: {batch_count_total}")
 
     if top_target:
         print(
@@ -808,11 +991,14 @@ def main() -> None:
     print_target_count_summary(targets)
     print_slow_target_rows(targets)
     print_zero_remove_rows(targets)
-    print_node_group_throttling_summary(targets)
+    print_remove_mode_summary(targets)
+    print_node_group_remove_mode_summary(targets)
+    print_batch_remove_summary(targets)
     print_node_group_generator_duration_summary(targets)
     print_node_group_generator_removed_count_summary(targets)
     print_removed_name_prefix_summary(targets)
     print_slow_node_group_remove_rows(targets)
+    print_node_group_throttling_summary(targets)
     print_guidance(targets)
 
 

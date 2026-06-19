@@ -1,5 +1,115 @@
 # Worklog
 
+## 2026-06-19 - Opt-in node group batch_remove experiment
+
+### Round Goal
+
+Add the first real opt-in cleanup optimization experiment for the current
+single-scene indoor coarse bottleneck. The experiment replaces per-node-group
+`target.remove(obj)` with `bpy.data.batch_remove(ids)` only for
+`bpy.data.node_groups`, and only when explicitly enabled with:
+
+```bash
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
+```
+
+Default behavior remains unchanged when the environment variable is unset. This
+round does not change solver flow, random number calls, proposal order,
+accept/reject logic, solve steps, gin configuration, object availability, or
+the suspected `union_all_bbox` issue. It also does not explore concurrent
+generation, `manage_jobs.num_concurrent`, 32-thread throughput, or multi-process
+scheduling; the scope remains one indoor coarse scene.
+
+### Changes
+
+Updated `infinigen/core/util/blender.py` so untimed and timed GC keep the
+original individual remove path by default. When
+`INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1` and the target is exactly
+`bpy.data.node_groups`, GC scans with the existing remove conditions, collects
+the same data-blocks into `to_remove`, and calls `bpy.data.batch_remove(to_remove)`
+once when the list is non-empty. Other targets such as meshes, materials,
+textures, objects, and collections still use the original individual remove
+logic.
+
+Extended GC timing rows with:
+
+- `remove_mode`
+- `batch_remove_enabled`
+- `batch_remove_count`
+- `batch_remove_duration`
+- `individual_remove_duration`
+
+Updated `scripts/analyze_gc_timing.py` to summarize remove modes, node group
+remove duration by mode, and batch remove totals including total batch size,
+average batch size, and maximum batch size.
+
+Added `scripts/run_gc_batch_remove_experiment.sh`, which runs a sequential
+single-scene baseline and candidate with the same seed, task, gin, and
+overrides, then calls `scripts/compare_indoor_outputs.py`. The baseline leaves
+`INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS` unset. The candidate enables it.
+
+### Smoke Result
+
+Command:
+
+```bash
+PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python \
+EXPERIMENT_TIMEOUT_SECONDS=1200 \
+bash scripts/run_gc_batch_remove_experiment.sh
+```
+
+Both sides timed out, so this is not a complete A/B. `compare_indoor_outputs.py`
+found no comparable JSON:
+
+```text
+matched_json_file_count: 0
+NO_COMPARABLE_JSON_FOUND
+FINAL: FAIL
+```
+
+GC timing summary:
+
+| run | status | CSV lines | node_group rows | removed_count | remove_mode | node_groups remove_duration |
+| --- | --- | ---: | ---: | ---: | --- | ---: |
+| baseline | timeout | 6,086 | 680 | 10,858 | individual | 366.131s |
+| candidate_batch | timeout | 7,155 | 799 | 15,758 | batch_remove | 46.350s |
+
+Candidate batch details:
+
+| metric | value |
+| --- | ---: |
+| batch_remove_count total | 15,758 |
+| batch_remove call rows | 781 |
+| average batch size | 20.177 |
+| max batch size | 695 |
+
+The candidate reached farther than baseline before timeout, advancing into
+`on_floor_freestanding_8` / `kitchen_0/0`. The timeout bottleneck there shifted
+to repeated `KitchenIslandFactory` proposal work. No traceback, OOM, kill, or
+segmentation fault was observed in the smoke log.
+
+### Judgment
+
+The timing signal is strong: opt-in `batch_remove` greatly reduced measured
+`node_groups` remove time in this timeout sample, even while removing more node
+groups because the candidate advanced farther. However, `batch_remove` may
+change Blender's internal deletion order or data-block lifecycle, and this run
+did not produce comparable JSON. It must not be mainlined from this smoke.
+
+The current primary cause remains heavy node group cleanup from indoor factories
+such as `LargeShelfFactory`, with repeated prefixes including
+`nodegroup_tagged_cube`, `nodegroup_division_board`, `nodegroup_screw_head`,
+and `nodegroup_side_board`. The earlier interval=20 deferred cleanup experiment
+remains rejected: broad delayed cleanup created burst removes and increased
+raw node group remove time.
+
+Next behavior-preserving work should run a complete same seed/gin/task A/B for
+this opt-in batch remove path, or a longer bounded profile if full completion
+still times out. If the speed signal holds and A/B passes, then consider the
+same path for a narrow opt-in production flag. If A/B fails or comparable JSON
+is still missing, return to precise reuse, caching, or reduced duplicate node
+group creation inside the dominant factories instead of broad deferred cleanup.
+
 ## 2026-06-19 - Node group GC attribution timing
 
 ### Round Goal

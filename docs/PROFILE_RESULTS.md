@@ -1,5 +1,81 @@
 # Profile Results
 
+## Node Group GC Batch Remove Smoke - 2026-06-19 18:09 CST
+
+Profile type: opt-in single-scene indoor coarse smoke for
+`INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1`. This is not a complete A/B because
+both runs hit the 1200s timeout and `compare_indoor_outputs.py` found no
+comparable JSON.
+
+Command:
+
+```bash
+PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python \
+EXPERIMENT_TIMEOUT_SECONDS=1200 \
+bash scripts/run_gc_batch_remove_experiment.sh
+```
+
+Output folders:
+
+```text
+outputs/gc_batch_remove_ab/baseline/coarse
+outputs/gc_batch_remove_ab/candidate_batch/coarse
+```
+
+Compare result:
+
+```text
+matched_json_file_count: 0
+NO_COMPARABLE_JSON_FOUND
+FINAL: FAIL
+```
+
+### Batch Remove Totals
+
+| run | status | CSV lines | node_group rows | removed_count | remove_mode | node_groups remove_duration |
+| --- | --- | ---: | ---: | ---: | --- | ---: |
+| baseline | timeout | 6,086 | 680 | 10,858 | individual | 366.131s |
+| candidate_batch | timeout | 7,155 | 799 | 15,758 | batch_remove | 46.350s |
+
+Candidate batch details:
+
+| metric | value |
+| --- | ---: |
+| batch_remove_duration total | 46.350s |
+| batch_remove_count total | 15,758 |
+| batch_remove call rows | 781 |
+| average batch size | 20.177 |
+| max batch size | 695 |
+
+The candidate advanced farther before timeout, reaching
+`on_floor_freestanding_8` / `kitchen_0/0`, where repeated
+`KitchenIslandFactory` attempts became the visible bottleneck. The baseline
+timed out earlier in `on_floor_freestanding_7` / `dining-room_0/0`.
+
+### Batch Remove Judgment
+
+The opt-in batch remove path substantially lowered measured `node_groups`
+remove duration in this timeout sample. It is still not accepted as a mainline
+optimization because both runs timed out and there was no comparable JSON.
+`bpy.data.batch_remove` may change Blender's internal deletion ordering or
+data-block lifecycle, so it must pass a same seed/gin/task A/B before being
+treated as behavior-preserving.
+
+The current root cause remains heavy node group churn from indoor factories,
+especially `LargeShelfFactory` and repeated prefixes such as
+`nodegroup_tagged_cube`, `nodegroup_division_board`,
+`nodegroup_screw_head`, and `nodegroup_side_board`. The interval=20 deferred
+cleanup result remains rejected because it created large burst removes and
+increased remove time.
+
+If this batch remove signal holds in a complete A/B, the next step is a longer
+profile and explicit output equivalence validation. If it cannot produce
+comparable JSON or output differences appear, continue with precise factory
+reuse/cache/reduced-duplicate node group creation rather than broad delayed
+cleanup. This remains single-scene indoor coarse work; multi-scene concurrency
+and `manage_jobs.num_concurrent` tuning are out of scope until single-scene
+behavior-preserving optimization is stable.
+
 ## Node Group GC Attribution Timing - 2026-06-19 17:15 CST
 
 Profile type: 600s timeout sample with GC, global timing, and asset factory

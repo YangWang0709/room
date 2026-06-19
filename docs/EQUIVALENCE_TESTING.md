@@ -48,6 +48,10 @@ performance optimizations:
 - Changing simulated annealing accept/reject logic.
 - Skipping Blender object creation or deletion when later code depends on those
   side effects.
+- Changing Blender data-block deletion mode or order. For example, using
+  `bpy.data.batch_remove` for node groups may change Blender's internal
+  deletion order or data-block lifecycle even when the removed object set is
+  unchanged.
 - Delaying or throttling `bpy.data` garbage collection. For example,
   `INFINIGEN_GC_NODE_GROUP_INTERVAL>1` can change node group data-block name
   allocation, lifetime, and residual data-block visibility before the next
@@ -96,6 +100,42 @@ python scripts/compare_indoor_outputs.py \
 If the script prints `NO_COMPARABLE_JSON_FOUND`, the run is not a pass. Record
 that no comparable JSON was available and add a better comparison target before
 using the run as evidence.
+
+## Node Group Batch Remove Experiment
+
+`INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1` is an opt-in experiment only. When
+unset, `GarbageCollect` keeps the original individual `node_groups.remove(obj)`
+loop. The experiment only targets `bpy.data.node_groups`; meshes, materials,
+textures, objects, and other targets continue to use the original individual
+remove path.
+
+The removed node group set and skip rules must stay unchanged:
+
+- Skip data-blocks with users when `keep_in_use=True`.
+- Skip names listed in `keep_names`.
+- Skip names containing `(no gc)`.
+
+Even with the same object set, `bpy.data.batch_remove` may change Blender's
+internal deletion order or data-block lifecycle. It must therefore pass a same
+seed/gin/task A/B before it can be considered behavior-preserving.
+
+Use the scripted A/B:
+
+```bash
+EXPERIMENT_TIMEOUT_SECONDS=1200 bash scripts/run_gc_batch_remove_experiment.sh
+```
+
+The 2026-06-19 smoke run produced a strong timing signal but did not validate
+equivalence: baseline and candidate both timed out, `compare_indoor_outputs.py`
+reported `NO_COMPARABLE_JSON_FOUND`, and the final compare status was `FAIL`.
+Partial timing showed baseline `node_groups` remove duration at 366.131s and
+candidate batch remove duration at 46.350s, while the candidate progressed
+farther and removed more node groups. This is not comparable A/B evidence.
+
+Do not use this experiment for concurrent throughput work. The current scope is
+single indoor coarse scene speed only. Do not tune `manage_jobs.num_concurrent`
+or run 32-thread/multiprocess benchmarks until single-scene
+behavior-preserving optimization is stable and validated.
 
 ## Node Group GC Throttling Experiment
 
@@ -155,6 +195,9 @@ test harness. It is not evidence that reducing rooms is a valid optimization.
 
 After the smoke test passes, repeat the A/B on the normal indoor coarse target,
 including the full room count and normal solve steps used by the baseline.
+Keep the scale-up focused on one scene until the behavior-preserving speedup is
+accepted. Multi-scene scheduling, 32-thread throughput, and
+`manage_jobs.num_concurrent` tuning belong to a later phase.
 
 ## Nondeterminism
 

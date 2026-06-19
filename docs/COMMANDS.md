@@ -346,6 +346,84 @@ generation first. Prefer precise reuse, caching, or reducing repeated node
 group creation over broad deferred cleanup. Any optimization must remain
 opt-in until same seed/gin/task A/B passes.
 
+## Run Node Group Batch Remove A/B Experiment
+
+The node group batch remove path is an opt-in single-scene experiment. Default
+behavior is unchanged unless this variable is explicitly set for the candidate:
+
+```text
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
+```
+
+Run the sequential baseline and candidate smoke:
+
+```bash
+EXPERIMENT_TIMEOUT_SECONDS=1200 bash scripts/run_gc_batch_remove_experiment.sh
+```
+
+On the host, if the active `python` does not have `bpy`, point the script at
+the Infinigen conda interpreter:
+
+```bash
+PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python \
+EXPERIMENT_TIMEOUT_SECONDS=1200 \
+bash scripts/run_gc_batch_remove_experiment.sh
+```
+
+The script runs:
+
+- baseline without `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS`:
+  `outputs/gc_batch_remove_ab/baseline/coarse`
+- candidate with `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1`:
+  `outputs/gc_batch_remove_ab/candidate_batch/coarse`
+
+Both use seed `0`, task `coarse`, `fast_solve.gin`, and these overrides:
+
+```text
+compose_indoors.terrain_enabled=False
+home_room_constraints.has_fewer_rooms=False
+restrict_solving.solve_max_rooms=10
+```
+
+Both enable:
+
+```text
+INFINIGEN_PROFILE_TIMING=1
+INFINIGEN_PROFILE_GC=1
+INFINIGEN_PROFILE_ASSET_FACTORY=1
+```
+
+After generation, the script runs:
+
+```bash
+python scripts/compare_indoor_outputs.py \
+  outputs/gc_batch_remove_ab/baseline/coarse \
+  outputs/gc_batch_remove_ab/candidate_batch/coarse
+```
+
+If either side times out, the output is only a smoke/profile sample, not a
+complete A/B equivalence result. If the compare prints
+`NO_COMPARABLE_JSON_FOUND`, the candidate must not be mainlined.
+
+Analyze the GC timing files:
+
+```bash
+python scripts/analyze_gc_timing.py \
+  outputs/gc_batch_remove_ab/baseline/coarse/infinigen_gc_timing.csv
+
+python scripts/analyze_gc_timing.py \
+  outputs/gc_batch_remove_ab/candidate_batch/coarse/infinigen_gc_timing.csv
+```
+
+The 2026-06-19 smoke timed out on both sides and produced no comparable JSON.
+It still showed a strong timing signal: baseline partial `node_groups`
+remove_duration was 366.131s, while the candidate partial was 46.350s with
+15,758 node groups removed via `batch_remove`. Treat that as profiling evidence
+only until a complete same seed/gin/task A/B passes.
+
+Do not use this script for concurrent generation or throughput benchmarking.
+Do not change `manage_jobs.num_concurrent` for this experiment.
+
 ## Run Node Group GC Throttling A/B Experiment
 
 The node group cleanup throttle is an opt-in experiment. Default behavior is

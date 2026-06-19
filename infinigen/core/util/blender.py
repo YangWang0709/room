@@ -39,6 +39,7 @@ GC_TIMING_ENV_VAR = "INFINIGEN_PROFILE_GC"
 GC_TIMING_CSV_NAME = "infinigen_gc_timing.csv"
 DEFAULT_GC_TIMING_CSV = Path("/tmp") / GC_TIMING_CSV_NAME
 GC_NODE_GROUP_INTERVAL_ENV_VAR = "INFINIGEN_GC_NODE_GROUP_INTERVAL"
+GC_BATCH_REMOVE_NODE_GROUPS_ENV_VAR = "INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS"
 
 GC_TIMING_FIELDNAMES = [
     "row_type",
@@ -70,6 +71,11 @@ GC_TIMING_FIELDNAMES = [
     "removed_name_sample",
     "removed_name_unique_prefix_count",
     "remove_duration",
+    "remove_mode",
+    "batch_remove_enabled",
+    "batch_remove_count",
+    "batch_remove_duration",
+    "individual_remove_duration",
     "node_group_interval",
     "node_group_cleanup_skipped",
     "node_group_cleanup_due",
@@ -92,6 +98,10 @@ def _env_truthy(name: str) -> bool:
 
 def _profile_gc_enabled() -> bool:
     return _env_truthy(GC_TIMING_ENV_VAR) or _env_truthy("INFINIGEN_PROFILE_TIMING")
+
+
+def _gc_batch_remove_node_groups_enabled() -> bool:
+    return _env_truthy(GC_BATCH_REMOVE_NODE_GROUPS_ENV_VAR)
 
 
 def _gc_node_group_interval() -> int:
@@ -230,6 +240,10 @@ def _is_bpy_data_node_groups(target) -> bool:
         return False
 
 
+def _use_batch_remove_for_target(target) -> bool:
+    return _gc_batch_remove_node_groups_enabled() and _is_bpy_data_node_groups(target)
+
+
 def _node_group_cleanup_decision(target, interval):
     global _GC_NODE_GROUP_CLEANUP_COUNTER
 
@@ -300,6 +314,11 @@ def _empty_gc_target_timing_row(
         "removed_name_sample": "",
         "removed_name_unique_prefix_count": "",
         "remove_duration": 0.0,
+        "remove_mode": "individual",
+        "batch_remove_enabled": False,
+        "batch_remove_count": 0,
+        "batch_remove_duration": 0.0,
+        "individual_remove_duration": 0.0,
         "node_group_interval": node_group_interval,
         "node_group_cleanup_skipped": False,
         "node_group_cleanup_due": "",
@@ -355,9 +374,14 @@ def _garbage_collect_timed(
         row.update(cleanup_decision)
         row["target_len_before"] = _safe_len(target)
         row["keep_names_count"] = _safe_len(orig)
+        batch_remove_enabled = _use_batch_remove_for_target(target)
+        row["batch_remove_enabled"] = batch_remove_enabled
+        if batch_remove_enabled:
+            row["remove_mode"] = "batch_remove"
         track_removed_names = row["target_name"] == "node_groups"
         removed_name_prefix_counts = Counter()
         removed_name_sample = []
+        to_remove = []
         start_time = time.perf_counter()
         try:
             if row["effective_cleanup"]:
@@ -379,14 +403,26 @@ def _garbage_collect_timed(
                         removed_name_prefix_counts[_node_group_name_prefix(name)] += 1
                         if len(removed_name_sample) < GC_REMOVED_NAME_SAMPLE_LIMIT:
                             removed_name_sample.append(name)
+                    row["removed_count"] += 1
+                    if batch_remove_enabled:
+                        to_remove.append(obj)
+                    else:
+                        remove_start_time = time.perf_counter()
+                        try:
+                            target.remove(obj)
+                        finally:
+                            remove_duration = time.perf_counter() - remove_start_time
+                            row["individual_remove_duration"] += remove_duration
+                            row["remove_duration"] += remove_duration
+                if batch_remove_enabled and to_remove:
+                    row["batch_remove_count"] = len(to_remove)
                     remove_start_time = time.perf_counter()
                     try:
-                        target.remove(obj)
+                        bpy.data.batch_remove(to_remove)
                     finally:
-                        row["remove_duration"] += (
-                            time.perf_counter() - remove_start_time
-                        )
-                    row["removed_count"] += 1
+                        remove_duration = time.perf_counter() - remove_start_time
+                        row["batch_remove_duration"] += remove_duration
+                        row["remove_duration"] += remove_duration
         finally:
             if track_removed_names:
                 row.update(
@@ -625,6 +661,21 @@ def garbage_collect(targets, keep_in_use=True, keep_names=None, verbose=False):
             cleanup_decision = _node_group_cleanup_decision(t, node_group_interval)
             if not cleanup_decision["effective_cleanup"]:
                 continue
+        if _use_batch_remove_for_target(t):
+            to_remove = []
+            for o in t:
+                if keep_in_use and o.users > 0:
+                    continue
+                if o.name in orig:
+                    continue
+                if "(no gc)" in o.name:
+                    continue
+                if verbose:
+                    print(f"Garbage collecting {o} from {t}")
+                to_remove.append(o)
+            if to_remove:
+                bpy.data.batch_remove(to_remove)
+            continue
         for o in t:
             if keep_in_use and o.users > 0:
                 continue
