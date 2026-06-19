@@ -13,6 +13,7 @@ build/
 coverage.xml
 
 */rclone.zip
+*.zip
 */miniconda.sh
 
 .vscode
@@ -45,6 +46,7 @@ Blender-FLIP-Fluids
 *.out
 profiles_*.npz
 outputs
+outputs/
 outputs_scratch
 snippets
 resources
@@ -86,6 +88,7 @@ articulated_asset_preview.html
 sim_testing/
 
 *.log
+*.prof
 
 *tmp*
 
