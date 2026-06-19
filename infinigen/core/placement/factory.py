@@ -139,6 +139,16 @@ def _empty_asset_factory_timing_row(
     }
 
 
+def _gc_attribution_kwargs(factory: "AssetFactory", inst_seed: int) -> dict:
+    if not butil._profile_gc_enabled():
+        return {}
+    return {
+        "generator_class": factory.__class__.__name__,
+        "factory_seed": getattr(factory, "factory_seed", ""),
+        "inst_seed": inst_seed,
+    }
+
+
 class AssetFactory:
     def __init__(self, factory_seed=None, coarse=False):
         self.factory_seed = factory_seed
@@ -269,6 +279,7 @@ class AssetFactory:
                 gc_targets,
                 verbose=False,
                 caller="AssetFactory.spawn_asset",
+                **_gc_attribution_kwargs(self, i),
             ),
         ):
             params = self.asset_parameters(distance, vis_distance)
@@ -358,6 +369,7 @@ class AssetFactory:
                 gc_targets,
                 verbose=False,
                 caller="AssetFactory.spawn_asset",
+                **_gc_attribution_kwargs(self, i),
             )
 
             with fixed_seed:

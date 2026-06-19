@@ -5,7 +5,8 @@ from __future__ import annotations
 
 import argparse
 import csv
-from collections import defaultdict
+import json
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Iterable
 
@@ -14,6 +15,9 @@ DEFAULT_TIMING_CSV = Path("/tmp/infinigen_gc_timing.csv")
 TARGET_LIMIT = 20
 SLOW_ROW_LIMIT = 50
 ZERO_REMOVE_LIMIT = 20
+NODE_GROUP_GENERATOR_LIMIT = 20
+NODE_GROUP_PREFIX_LIMIT = 50
+NODE_GROUP_SLOW_REMOVE_LIMIT = 50
 
 PHASES = ("enter_snapshot", "exit_cleanup")
 
@@ -35,6 +39,17 @@ TARGET_TABLE_COLUMNS = (
     "node_group_cleanup_due",
     "effective_cleanup",
     "duration",
+)
+
+NODE_GROUP_SLOW_REMOVE_COLUMNS = (
+    "context_id",
+    "generator_class",
+    "removed_count",
+    "remove_duration",
+    "target_len_before",
+    "target_len_after",
+    "removed_name_prefix_top",
+    "removed_name_sample",
 )
 
 
@@ -375,6 +390,187 @@ def node_group_exit_rows(targets: list[dict[str, str]]) -> list[dict[str, str]]:
     ]
 
 
+def parse_removed_name_prefix_top(row: dict[str, str]) -> list[tuple[str, int]]:
+    value = (row.get("removed_name_prefix_top") or "").strip()
+    if not value:
+        return []
+
+    try:
+        data = json.loads(value)
+    except json.JSONDecodeError:
+        pairs = []
+        for item in value.split(";"):
+            if not item:
+                continue
+            if "=" in item:
+                prefix, count = item.rsplit("=", 1)
+            elif ":" in item:
+                prefix, count = item.rsplit(":", 1)
+            else:
+                continue
+            try:
+                pairs.append((clean_label(prefix), int(float(count))))
+            except ValueError:
+                continue
+        return pairs
+
+    pairs = []
+    if not isinstance(data, list):
+        return pairs
+    for item in data:
+        if not isinstance(item, list | tuple) or len(item) < 2:
+            continue
+        try:
+            pairs.append((clean_label(str(item[0])), int(float(item[1]))))
+        except (TypeError, ValueError):
+            continue
+    return pairs
+
+
+def summarize_node_groups_by_generator(
+    targets: list[dict[str, str]]
+) -> list[dict[str, object]]:
+    groups: dict[str, dict[str, object]] = defaultdict(
+        lambda: {
+            "rows": 0,
+            "remove_duration": 0.0,
+            "removed_count": 0,
+            "target_duration": 0.0,
+        }
+    )
+
+    for row in node_group_exit_rows(targets):
+        generator_class = clean_label(row.get("generator_class"))
+        group = groups[generator_class]
+        group["rows"] = int(group["rows"]) + 1
+        group["remove_duration"] = float(group["remove_duration"]) + as_float(
+            row, "remove_duration"
+        )
+        group["removed_count"] = int(group["removed_count"]) + as_int(
+            row, "removed_count"
+        )
+        group["target_duration"] = float(group["target_duration"]) + as_float(
+            row, "duration"
+        )
+
+    summary = []
+    for generator_class, group in groups.items():
+        summary.append({"generator_class": generator_class, **group})
+    return summary
+
+
+def print_node_group_generator_duration_summary(
+    targets: list[dict[str, str]]
+) -> None:
+    print("\nG. node_groups remove_duration by generator_class (top 20)")
+    summary = sorted(
+        summarize_node_groups_by_generator(targets),
+        key=lambda item: float(item["remove_duration"]),
+        reverse=True,
+    )
+    print_table(
+        (
+            "generator_class",
+            "rows",
+            "remove_duration",
+            "removed_count",
+            "target_duration",
+        ),
+        (
+            (
+                item["generator_class"],
+                item["rows"],
+                item["remove_duration"],
+                item["removed_count"],
+                item["target_duration"],
+            )
+            for item in summary[:NODE_GROUP_GENERATOR_LIMIT]
+        ),
+    )
+
+
+def print_node_group_generator_removed_count_summary(
+    targets: list[dict[str, str]]
+) -> None:
+    print("\nH. node_groups removed_count by generator_class (top 20)")
+    summary = sorted(
+        summarize_node_groups_by_generator(targets),
+        key=lambda item: (int(item["removed_count"]), float(item["remove_duration"])),
+        reverse=True,
+    )
+    print_table(
+        (
+            "generator_class",
+            "removed_count",
+            "remove_duration",
+            "rows",
+            "target_duration",
+        ),
+        (
+            (
+                item["generator_class"],
+                item["removed_count"],
+                item["remove_duration"],
+                item["rows"],
+                item["target_duration"],
+            )
+            for item in summary[:NODE_GROUP_GENERATOR_LIMIT]
+        ),
+    )
+
+
+def removed_name_prefix_counts(targets: list[dict[str, str]]) -> Counter[str]:
+    prefix_counts: Counter[str] = Counter()
+    for row in node_group_exit_rows(targets):
+        for prefix, count in parse_removed_name_prefix_top(row):
+            prefix_counts[prefix] += count
+    return prefix_counts
+
+
+def print_removed_name_prefix_summary(targets: list[dict[str, str]]) -> None:
+    print("\nI. Removed node_group name prefixes (top 50)")
+    prefix_counts = removed_name_prefix_counts(targets)
+    print_table(
+        ("removed_name_prefix", "removed_count"),
+        (
+            (prefix, count)
+            for prefix, count in prefix_counts.most_common(NODE_GROUP_PREFIX_LIMIT)
+        ),
+    )
+
+
+def slow_node_group_remove_rows(
+    targets: list[dict[str, str]]
+) -> list[dict[str, object]]:
+    rows = []
+    for row in node_group_exit_rows(targets):
+        item: dict[str, object] = {
+            "context_id": row.get("context_id", ""),
+            "generator_class": clean_label(row.get("generator_class")),
+            "removed_count": as_int(row, "removed_count"),
+            "remove_duration": as_float(row, "remove_duration"),
+            "target_len_before": as_int(row, "target_len_before"),
+            "target_len_after": as_int(row, "target_len_after"),
+            "removed_name_prefix_top": row.get("removed_name_prefix_top", ""),
+            "removed_name_sample": row.get("removed_name_sample", ""),
+        }
+        rows.append(item)
+    return sorted(rows, key=lambda item: float(item["remove_duration"]), reverse=True)
+
+
+def print_slow_node_group_remove_rows(targets: list[dict[str, str]]) -> None:
+    print("\nJ. Slowest node_groups remove rows (top 50)")
+    print_table(
+        NODE_GROUP_SLOW_REMOVE_COLUMNS,
+        (
+            (item[column] for column in NODE_GROUP_SLOW_REMOVE_COLUMNS)
+            for item in slow_node_group_remove_rows(targets)[
+                :NODE_GROUP_SLOW_REMOVE_LIMIT
+            ]
+        ),
+    )
+
+
 def print_node_group_throttling_summary(targets: list[dict[str, str]]) -> None:
     print("\nF. Node group throttling summary")
     node_rows = node_group_exit_rows(targets)
@@ -452,7 +648,7 @@ def print_node_group_throttling_summary(targets: list[dict[str, str]]) -> None:
 
 
 def print_guidance(targets: list[dict[str, str]]) -> None:
-    print("\nG. GC guidance")
+    print("\nK. GC guidance")
     enter_total = phase_duration(targets, "enter_snapshot")
     exit_total = phase_duration(targets, "exit_cleanup")
     remove_total = sum(as_float(row, "remove_duration") for row in targets)
@@ -508,8 +704,9 @@ def print_guidance(targets: list[dict[str, str]]) -> None:
         )
     elif remove_total >= exit_scan_total and remove_total >= enter_total:
         print(
-            "  Judgment: remove calls dominate; next consider opt-in batch "
-            "remove or target-specific cleanup experiments."
+            "  Judgment: remove calls dominate; inspect attribution first, "
+            "then consider opt-in target-specific cleanup, reuse, or cache "
+            "experiments."
         )
     elif exit_scan_total >= enter_total and removed_rate < 0.01:
         print(
@@ -533,6 +730,67 @@ def print_guidance(targets: list[dict[str, str]]) -> None:
             "opt-in experiment scoped around that target first."
         )
 
+    generator_summary = sorted(
+        summarize_node_groups_by_generator(targets),
+        key=lambda item: float(item["remove_duration"]),
+        reverse=True,
+    )
+    known_generator_summary = [
+        item
+        for item in generator_summary
+        if item["generator_class"] != "(unknown)"
+    ]
+    node_remove_total = sum(
+        as_float(row, "remove_duration") for row in node_group_exit_rows(targets)
+    )
+    if known_generator_summary and node_remove_total:
+        top3_duration = sum(
+            float(item["remove_duration"]) for item in known_generator_summary[:3]
+        )
+        top3_share = top3_duration / node_remove_total
+        if top3_share >= 0.5:
+            print(
+                "  Attribution judgment: a small set of factories dominates "
+                "node_groups remove cost; next inspect those factories' "
+                "create_asset paths and node tree generation."
+            )
+        else:
+            print(
+                "  Attribution judgment: node_groups remove cost is spread "
+                "across factories; use slow rows plus prefix totals before "
+                "choosing an optimization target."
+            )
+    elif node_remove_total:
+        print(
+            "  Attribution judgment: generator_class metadata is missing for "
+            "these node_groups rows; collect a fresh attribution sample before "
+            "choosing factory-specific work."
+        )
+
+    prefix_counts = removed_name_prefix_counts(targets)
+    if prefix_counts:
+        prefix_total = sum(prefix_counts.values())
+        top_prefix, top_prefix_count = prefix_counts.most_common(1)[0]
+        top_prefix_share = top_prefix_count / prefix_total if prefix_total else 0.0
+        if top_prefix_share >= 0.05:
+            print(
+                "  Prefix judgment: repeated node_group prefixes are visible; "
+                "next consider whether those node groups can be reused, cached, "
+                "or created fewer times without changing behavior."
+            )
+        else:
+            print(
+                "  Prefix judgment: removed node_group names are highly "
+                "distributed in this sample; if inspection confirms they are "
+                "not reusable, continue toward a finer cleanup strategy instead "
+                "of broad deferred cleanup."
+            )
+        print(
+            "  Top removed_name_prefix: "
+            f"{top_prefix} ({top_prefix_count}/{prefix_total}, "
+            f"{top_prefix_share:.3%})"
+        )
+
 
 def main() -> None:
     args = parse_args()
@@ -551,6 +809,10 @@ def main() -> None:
     print_slow_target_rows(targets)
     print_zero_remove_rows(targets)
     print_node_group_throttling_summary(targets)
+    print_node_group_generator_duration_summary(targets)
+    print_node_group_generator_removed_count_summary(targets)
+    print_removed_name_prefix_summary(targets)
+    print_slow_node_group_remove_rows(targets)
     print_guidance(targets)
 
 

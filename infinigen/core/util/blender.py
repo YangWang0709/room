@@ -5,10 +5,13 @@
 
 
 import csv
+import json
 import logging
 import os
+import re
 import sys
 import time
+from collections import Counter
 from contextlib import nullcontext
 from itertools import chain, count
 from math import prod
@@ -41,6 +44,9 @@ GC_TIMING_FIELDNAMES = [
     "row_type",
     "context_id",
     "caller",
+    "generator_class",
+    "factory_seed",
+    "inst_seed",
     "target_count",
     "keep_in_use",
     "keep_orig",
@@ -59,6 +65,10 @@ GC_TIMING_FIELDNAMES = [
     "skipped_keep_name_count",
     "skipped_no_gc_count",
     "removed_count",
+    "removed_name_count",
+    "removed_name_prefix_top",
+    "removed_name_sample",
+    "removed_name_unique_prefix_count",
     "remove_duration",
     "node_group_interval",
     "node_group_cleanup_skipped",
@@ -71,6 +81,9 @@ _GC_TIMING_CONTEXT_COUNTER = count(1)
 _GC_TIMING_WRITE_FAILED = False
 _GC_NODE_GROUP_CLEANUP_COUNTER = 0
 _GC_NODE_GROUP_INTERVAL_WARNING_EMITTED = False
+_NODE_GROUP_NUMERIC_SUFFIX_RE = re.compile(r"\.\d{3,}$")
+GC_REMOVED_NAME_SAMPLE_LIMIT = 20
+GC_REMOVED_NAME_PREFIX_LIMIT = 20
 
 
 def _env_truthy(name: str) -> bool:
@@ -146,6 +159,35 @@ def _write_gc_timing_row(row: dict):
         logger.exception("Failed to write GarbageCollect timing CSV at %s", path)
 
 
+def _gc_metadata(
+    caller=None,
+    generator_class=None,
+    factory_seed=None,
+    inst_seed=None,
+    metadata=None,
+):
+    row_metadata = {
+        "caller": "unknown",
+        "generator_class": "",
+        "factory_seed": "",
+        "inst_seed": "",
+    }
+    if metadata:
+        for field in row_metadata:
+            if field in metadata and metadata[field] is not None:
+                row_metadata[field] = metadata[field]
+    explicit_values = {
+        "caller": caller,
+        "generator_class": generator_class,
+        "factory_seed": factory_seed,
+        "inst_seed": inst_seed,
+    }
+    for field, value in explicit_values.items():
+        if value is not None:
+            row_metadata[field] = value
+    return row_metadata
+
+
 def _safe_len(value):
     try:
         return len(value)
@@ -214,8 +256,33 @@ def _node_group_cleanup_decision(target, interval):
     }
 
 
-def _empty_gc_target_timing_row(context_id, phase, target, node_group_interval):
+def _node_group_name_prefix(name: str) -> str:
+    return _NODE_GROUP_NUMERIC_SUFFIX_RE.sub("", name)
+
+
+def _gc_removed_name_summary(prefix_counts, sample):
+    if not prefix_counts and not sample:
+        return {
+            "removed_name_count": 0,
+            "removed_name_prefix_top": "",
+            "removed_name_sample": "",
+            "removed_name_unique_prefix_count": 0,
+        }
+
     return {
+        "removed_name_count": sum(prefix_counts.values()),
+        "removed_name_prefix_top": json.dumps(
+            prefix_counts.most_common(GC_REMOVED_NAME_PREFIX_LIMIT)
+        ),
+        "removed_name_sample": json.dumps(sample[:GC_REMOVED_NAME_SAMPLE_LIMIT]),
+        "removed_name_unique_prefix_count": len(prefix_counts),
+    }
+
+
+def _empty_gc_target_timing_row(
+    context_id, phase, target, node_group_interval, metadata=None
+):
+    row = {
         "row_type": "target",
         "context_id": context_id,
         "phase": phase,
@@ -228,6 +295,10 @@ def _empty_gc_target_timing_row(context_id, phase, target, node_group_interval):
         "skipped_keep_name_count": 0,
         "skipped_no_gc_count": 0,
         "removed_count": 0,
+        "removed_name_count": "",
+        "removed_name_prefix_top": "",
+        "removed_name_sample": "",
+        "removed_name_unique_prefix_count": "",
         "remove_duration": 0.0,
         "node_group_interval": node_group_interval,
         "node_group_cleanup_skipped": False,
@@ -235,14 +306,17 @@ def _empty_gc_target_timing_row(context_id, phase, target, node_group_interval):
         "effective_cleanup": "",
         "duration": 0.0,
     }
+    if metadata:
+        row.update(metadata)
+    return row
 
 
-def _snapshot_gc_targets_timed(targets, context_id):
+def _snapshot_gc_targets_timed(targets, context_id, metadata=None):
     names = []
     node_group_interval = _gc_node_group_interval()
     for target in targets:
         row = _empty_gc_target_timing_row(
-            context_id, "enter_snapshot", target, node_group_interval
+            context_id, "enter_snapshot", target, node_group_interval, metadata
         )
         row["target_len_before"] = _safe_len(target)
         captured_names = set()
@@ -267,6 +341,7 @@ def _garbage_collect_timed(
     keep_names=None,
     verbose=False,
     context_id="",
+    metadata=None,
 ):
     if keep_names is None:
         keep_names = [[]] * len(targets)
@@ -274,12 +349,15 @@ def _garbage_collect_timed(
     node_group_interval = _gc_node_group_interval()
     for target, orig in zip(targets, keep_names):
         row = _empty_gc_target_timing_row(
-            context_id, "exit_cleanup", target, node_group_interval
+            context_id, "exit_cleanup", target, node_group_interval, metadata
         )
         cleanup_decision = _node_group_cleanup_decision(target, node_group_interval)
         row.update(cleanup_decision)
         row["target_len_before"] = _safe_len(target)
         row["keep_names_count"] = _safe_len(orig)
+        track_removed_names = row["target_name"] == "node_groups"
+        removed_name_prefix_counts = Counter()
+        removed_name_sample = []
         start_time = time.perf_counter()
         try:
             if row["effective_cleanup"]:
@@ -297,6 +375,10 @@ def _garbage_collect_timed(
                         continue
                     if verbose:
                         print(f"Garbage collecting {obj} from {target}")
+                    if track_removed_names:
+                        removed_name_prefix_counts[_node_group_name_prefix(name)] += 1
+                        if len(removed_name_sample) < GC_REMOVED_NAME_SAMPLE_LIMIT:
+                            removed_name_sample.append(name)
                     remove_start_time = time.perf_counter()
                     try:
                         target.remove(obj)
@@ -306,6 +388,12 @@ def _garbage_collect_timed(
                         )
                     row["removed_count"] += 1
         finally:
+            if track_removed_names:
+                row.update(
+                    _gc_removed_name_summary(
+                        removed_name_prefix_counts, removed_name_sample
+                    )
+                )
             row["target_len_after"] = _safe_len(target)
             row["duration"] = time.perf_counter() - start_time
             _write_gc_timing_row(row)
@@ -526,6 +614,7 @@ def garbage_collect(targets, keep_in_use=True, keep_names=None, verbose=False):
             keep_names=keep_names,
             verbose=verbose,
             context_id=f"direct-{next(_GC_TIMING_CONTEXT_COUNTER)}",
+            metadata=_gc_metadata(caller="garbage_collect"),
         )
         return
 
@@ -556,12 +645,23 @@ class GarbageCollect:
         keep_orig=True,
         verbose=False,
         caller=None,
+        generator_class=None,
+        factory_seed=None,
+        inst_seed=None,
+        metadata=None,
     ):
         self.targets = targets or get_all_bpy_data_targets()
         self.keep_in_use = keep_in_use
         self.keep_orig = keep_orig
         self.verbose = verbose
-        self.caller = caller or "unknown"
+        self._gc_metadata = _gc_metadata(
+            caller=caller,
+            generator_class=generator_class,
+            factory_seed=factory_seed,
+            inst_seed=inst_seed,
+            metadata=metadata,
+        )
+        self.caller = self._gc_metadata["caller"]
         self._gc_timing_enabled = False
         self._gc_context_id = ""
         self._gc_enter_duration = 0.0
@@ -577,7 +677,7 @@ class GarbageCollect:
             {
                 "row_type": "context",
                 "context_id": self._gc_context_id,
-                "caller": self.caller,
+                **self._gc_metadata,
                 "target_count": _safe_len(self.targets),
                 "keep_in_use": self.keep_in_use,
                 "keep_orig": self.keep_orig,
@@ -600,7 +700,7 @@ class GarbageCollect:
         start_time = time.perf_counter()
         try:
             self.names = _snapshot_gc_targets_timed(
-                self.targets, self._gc_context_id
+                self.targets, self._gc_context_id, self._gc_metadata
             )
         except BaseException as exc:
             self._gc_enter_duration = time.perf_counter() - start_time
@@ -627,6 +727,7 @@ class GarbageCollect:
                 keep_names=self.names,
                 verbose=self.verbose,
                 context_id=self._gc_context_id,
+                metadata=self._gc_metadata,
             )
         except BaseException as exc:
             self._gc_exit_duration = time.perf_counter() - start_time

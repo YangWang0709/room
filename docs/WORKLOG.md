@@ -1,5 +1,117 @@
 # Worklog
 
+## 2026-06-19 - Node group GC attribution timing
+
+### Round Goal
+
+Stop optimization experiments and add finer attribution for the measured
+`bpy.data.node_groups` remove hotspot. This round keeps default generation
+behavior unchanged: it does not change `GarbageCollect` cleanup conditions,
+cleanup order, solver flow, random number calls, proposal order, accept/reject
+logic, solve steps, gin configuration, or generated content.
+
+### Changes
+
+Added optional GC attribution metadata:
+
+- `infinigen/core/util/blender.py`
+- `infinigen/core/placement/factory.py`
+
+`GarbageCollect` now accepts optional metadata fields such as `caller`,
+`generator_class`, `factory_seed`, and `inst_seed`. `AssetFactory.spawn_asset`
+passes `generator_class`, `factory_seed`, `inst_seed`, and
+`caller="AssetFactory.spawn_asset"` only when GC timing is enabled, keeping the
+normal non-profiling path close to the previous overhead.
+
+Added bounded node group removal name summaries on timed
+`target_name == node_groups` / `exit_cleanup` rows:
+
+- `removed_name_count`
+- `removed_name_prefix_top`
+- `removed_name_sample`
+- `removed_name_unique_prefix_count`
+
+The summaries are bounded. They record top prefixes and a small sample instead
+of writing every removed node group name to the CSV. Prefixes strip Blender's
+numeric `.001`-style suffixes. Name capture happens in the existing cleanup
+loop immediately before `target.remove(obj)`, without a second traversal and
+without changing remove conditions or remove order.
+
+Updated GC analysis:
+
+- `scripts/analyze_gc_timing.py`
+
+The analyzer now reports node group remove totals by `generator_class`, removed
+counts by `generator_class`, removed node group name prefix totals, the slowest
+node group remove rows with attribution and name summaries, and guidance for
+factory-specific or prefix-specific follow-up.
+
+### Validation Notes
+
+Ran a fresh 600s attribution sample:
+
+```bash
+INFINIGEN_PROFILE_TIMING=1 INFINIGEN_PROFILE_GC=1 INFINIGEN_PROFILE_ASSET_FACTORY=1 timeout 600s python -m infinigen_examples.generate_indoors \
+  --seed 0 \
+  --task coarse \
+  --output_folder outputs/profile_gc_attribution/coarse \
+  -g fast_solve.gin \
+  -p compose_indoors.terrain_enabled=False \
+     home_room_constraints.has_fewer_rooms=False \
+     restrict_solving.solve_max_rooms=10
+```
+
+The run timed out as expected for a bounded sample. It produced:
+
+- CSV path: `outputs/profile_gc_attribution/coarse/infinigen_gc_timing.csv`
+- CSV lines: 4,741 including header, 4,740 data rows
+- context rows: 492
+- target rows: 4,248
+- `node_groups` exit rows: 529
+- `node_groups` remove duration: 185.030s
+
+Top `generator_class` by `node_groups` remove duration:
+
+| generator_class | remove_duration (s) | removed_count | rows |
+| --- | ---: | ---: | ---: |
+| LargeShelfFactory | 139.219 | 5,661 | 153 |
+| SimpleBookcaseFactory | 20.382 | 752 | 94 |
+| SimpleDeskFactory | 7.316 | 344 | 86 |
+| (unknown) | 6.834 | 179 | 38 |
+| BeverageFridgeFactory | 6.581 | 144 | 9 |
+
+Top removed node group prefixes:
+
+| removed_name_prefix | removed_count |
+| --- | ---: |
+| nodegroup_tagged_cube | 1,672 |
+| nodegroup_division_board | 1,586 |
+| nodegroup_screw_head | 1,586 |
+| nodegroup_side_board | 680 |
+| geometry_nodes | 333 |
+| nodegroup_bottom_board | 293 |
+| nodegroup_back_board | 247 |
+
+The slowest row was `direct-527` with no factory metadata, 135 removals, and
+5.985s remove duration. The next slow rows were all `LargeShelfFactory`, with
+repeated `nodegroup_division_board`, `nodegroup_screw_head`, and
+`nodegroup_tagged_cube` prefixes.
+
+### Judgment
+
+The earlier `INFINIGEN_GC_NODE_GROUP_INTERVAL=20` experiment is not an
+effective optimization. Both A/B sides timed out, no comparable JSON existed,
+and the candidate increased raw `node_groups_remove` from 369.071s to 443.414s
+despite skipping 558 node group cleanup opportunities. Naive deferred cleanup
+creates large burst removes and should not be promoted.
+
+The current next step is attribution-driven investigation. This sample points
+first at `LargeShelfFactory` and repeated shelf/bookcase node group prefixes.
+Follow-up optimization should prioritize precise reuse, caching, or reduced
+duplicate creation of equivalent node groups, not broader deferred cleanup.
+Any optimization still needs to be opt-in first and must pass same
+seed/gin/task A/B validation with `scripts/compare_indoor_outputs.py`.
+
 ## 2026-06-19 - Opt-in node group GC throttling experiment
 
 ### Round Goal

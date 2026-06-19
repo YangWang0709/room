@@ -120,6 +120,33 @@ or shows obvious errors or memory growth, it must not become a mainline
 optimization. If it passes, repeat with a longer profile and explicit memory
 observation before considering a narrower opt-in production path.
 
+### 2026-06-19 interval=20 result
+
+The interval=20 smoke did not validate the optimization. Both baseline and
+candidate timed out, `compare_indoor_outputs.py` found no comparable JSON, and
+the candidate increased raw `node_groups_remove` from 369.071s to 443.414s
+despite skipping 558 cleanup opportunities. This points to large burst removes
+from broad deferred cleanup.
+
+Do not promote interval=20 and do not continue by simply expanding the
+interval. The current next step is attribution: identify the factories and node
+group name prefixes that cause removal cost, then consider precise reuse,
+caching, or reduced duplicate node group creation. Any such optimization must
+be opt-in first and must pass the same seed/gin/task A/B workflow above.
+
+## Attribution-Only Instrumentation
+
+GC attribution timing is allowed as profiling instrumentation because it should
+not change generated behavior. The current instrumentation records optional
+`GarbageCollect` metadata such as `caller`, `generator_class`, `factory_seed`,
+and `inst_seed`, plus bounded node group name prefix/sample summaries when
+profiling is enabled.
+
+Attribution data is not equivalence evidence by itself. It only identifies the
+next optimization target. If attribution suggests a reusable node group prefix
+or a factory-specific cache, validate the resulting candidate with the required
+A/B workflow before treating it as behavior-preserving.
+
 ## Recommended Scale-Up
 
 Start with a small smoke A/B to verify the comparison workflow itself. A

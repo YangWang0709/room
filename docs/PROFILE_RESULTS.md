@@ -1,5 +1,106 @@
 # Profile Results
 
+## Node Group GC Attribution Timing - 2026-06-19 17:15 CST
+
+Profile type: 600s timeout sample with GC, global timing, and asset factory
+timing enabled. This is instrumentation only, not an optimization run. Default
+cleanup behavior, solver behavior, proposal order, random number consumption,
+accept/reject logic, solve steps, and gin configuration were unchanged.
+
+Command:
+
+```bash
+INFINIGEN_PROFILE_TIMING=1 INFINIGEN_PROFILE_GC=1 INFINIGEN_PROFILE_ASSET_FACTORY=1 timeout 600s python -m infinigen_examples.generate_indoors \
+  --seed 0 \
+  --task coarse \
+  --output_folder outputs/profile_gc_attribution/coarse \
+  -g fast_solve.gin \
+  -p compose_indoors.terrain_enabled=False \
+     home_room_constraints.has_fewer_rooms=False \
+     restrict_solving.solve_max_rooms=10
+```
+
+Timing CSV path:
+
+```text
+outputs/profile_gc_attribution/coarse/infinigen_gc_timing.csv
+```
+
+Rows:
+
+| metric | count |
+| --- | ---: |
+| CSV lines including header | 4,741 |
+| data rows | 4,740 |
+| context rows | 492 |
+| target rows | 4,248 |
+| `node_groups` exit rows | 529 |
+
+### GC Target Totals
+
+| target_name | rows | duration (s) | enter (s) | exit (s) | remove (s) | removed |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| node_groups | 1,022 | 185.260 | 0.062 | 185.199 | 185.030 | 7,478 |
+| meshes | 1,022 | 2.589 | 0.014 | 2.575 | 2.563 | 261 |
+| materials | 982 | 0.805 | 0.339 | 0.466 | 0.000 | 0 |
+
+### node_groups remove_duration by generator_class
+
+| generator_class | remove_duration (s) | removed_count | rows |
+| --- | ---: | ---: | ---: |
+| LargeShelfFactory | 139.219 | 5,661 | 153 |
+| SimpleBookcaseFactory | 20.382 | 752 | 94 |
+| SimpleDeskFactory | 7.316 | 344 | 86 |
+| (unknown) | 6.834 | 179 | 38 |
+| BeverageFridgeFactory | 6.581 | 144 | 9 |
+| BathtubFactory | 2.163 | 319 | 127 |
+| DishwasherFactory | 1.803 | 40 | 5 |
+| FloorLampFactory | 0.731 | 39 | 13 |
+
+### Removed node_group prefix totals
+
+| removed_name_prefix | removed_count |
+| --- | ---: |
+| nodegroup_tagged_cube | 1,672 |
+| nodegroup_division_board | 1,586 |
+| nodegroup_screw_head | 1,586 |
+| nodegroup_side_board | 680 |
+| geometry_nodes | 333 |
+| nodegroup_bottom_board | 293 |
+| nodegroup_back_board | 247 |
+| geo_attribute | 233 |
+| geo_radius | 96 |
+| nodegroup_attach_gadget | 94 |
+| nodegroup_division_boards | 94 |
+| nodegroup_text | 94 |
+
+### Slowest node_groups remove rows
+
+| context_id | generator_class | removed_count | remove_duration (s) | before | after | top prefixes |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| direct-527 | (unknown) | 135 | 5.985 | 1,038 | 903 | nodegroup_text:60; nodegroup_cube:23; nodegroup_center:12 |
+| 514 | LargeShelfFactory | 74 | 3.110 | 852 | 778 | nodegroup_division_board:21; nodegroup_screw_head:21; nodegroup_tagged_cube:21 |
+| 515 | LargeShelfFactory | 65 | 2.739 | 843 | 778 | nodegroup_division_board:18; nodegroup_screw_head:18; nodegroup_tagged_cube:18 |
+| 504 | LargeShelfFactory | 65 | 2.686 | 823 | 758 | nodegroup_division_board:18; nodegroup_screw_head:18; nodegroup_tagged_cube:18 |
+| 484 | LargeShelfFactory | 65 | 2.594 | 802 | 737 | nodegroup_division_board:18; nodegroup_screw_head:18; nodegroup_tagged_cube:18 |
+
+### Attribution Judgment
+
+The current dominant GC cost is still `bpy.data.node_groups` remove calls.
+This sample attributes most node group removal cost to `LargeShelfFactory`.
+Repeated prefixes are visible, especially `nodegroup_tagged_cube`,
+`nodegroup_division_board`, and `nodegroup_screw_head`.
+
+The next behavior-preserving optimization investigation should look at whether
+these repeated factory node groups can be reused, cached, or created fewer
+times without changing Blender-visible behavior. If they are parameterized or
+not safely reusable, continue toward finer cleanup strategy. Do not use broad
+deferred cleanup as the next main path.
+
+The interval=20 throttling result remains rejected as an optimization
+candidate: both sides timed out, there was no comparable JSON, and deferred
+cleanup produced large burst removes.
+
 ## Node Group GC Throttling Smoke - 2026-06-19 16:49 CST
 
 Profile type: opt-in behavior-preserving experiment smoke with

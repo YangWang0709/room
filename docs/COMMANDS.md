@@ -297,10 +297,64 @@ remove calls, or a specific `bpy.data` target. Current evidence points to
 `bpy.data.node_groups` removal, not `create_asset`, placeholder delete,
 `union_all_bbox`, or a C++ kernel candidate.
 
+## Run GarbageCollect Attribution Timing
+
+Use this when the question is which factory or node group name family causes
+`bpy.data.node_groups` remove cost:
+
+```bash
+INFINIGEN_PROFILE_TIMING=1 INFINIGEN_PROFILE_GC=1 INFINIGEN_PROFILE_ASSET_FACTORY=1 timeout 600s python -m infinigen_examples.generate_indoors \
+  --seed 0 \
+  --task coarse \
+  --output_folder outputs/profile_gc_attribution/coarse \
+  -g fast_solve.gin \
+  -p compose_indoors.terrain_enabled=False \
+     home_room_constraints.has_fewer_rooms=False \
+     restrict_solving.solve_max_rooms=10
+```
+
+Analyze the resulting CSV:
+
+```bash
+python scripts/analyze_gc_timing.py \
+  outputs/profile_gc_attribution/coarse/infinigen_gc_timing.csv
+```
+
+The analyzer reports:
+
+- `node_groups` remove duration by `generator_class`
+- `node_groups` removed count by `generator_class`
+- removed node group name prefix totals
+- slowest `node_groups` remove rows with `context_id`, `generator_class`,
+  remove counts, target sizes, top prefixes, and name samples
+
+Current sample output:
+
+```text
+outputs/profile_gc_attribution/coarse/infinigen_gc_timing.csv
+```
+
+The 2026-06-19 attribution sample produced 4,741 CSV lines including the
+header. `node_groups` remove duration was 185.030s. The top factory was
+`LargeShelfFactory` with 139.219s and 5,661 removed node groups. Top repeated
+prefixes were `nodegroup_tagged_cube`, `nodegroup_division_board`, and
+`nodegroup_screw_head`.
+
+Use this attribution before designing an optimization. If a few factories or
+prefixes dominate, inspect those factories' `create_asset` and node tree
+generation first. Prefer precise reuse, caching, or reducing repeated node
+group creation over broad deferred cleanup. Any optimization must remain
+opt-in until same seed/gin/task A/B passes.
+
 ## Run Node Group GC Throttling A/B Experiment
 
 The node group cleanup throttle is an opt-in experiment. Default behavior is
 unchanged when `INFINIGEN_GC_NODE_GROUP_INTERVAL` is unset or set to `1`.
+
+The interval=20 smoke on 2026-06-19 is not a valid speedup. Both runs timed
+out, no comparable JSON was produced, and raw `node_groups_remove` increased
+from 369.071s to 443.414s because deferred cleanup produced large burst
+removes. Do not continue by simply increasing this interval.
 
 Run the scripted baseline and candidate comparison:
 
