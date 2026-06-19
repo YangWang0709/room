@@ -1,5 +1,104 @@
 # Worklog
 
+## 2026-06-19 - Asset factory spawn timing
+
+### Round Goal
+
+Keep generation behavior unchanged while adding optional fine-grained timing
+inside `AssetFactory.spawn_asset` and using a bounded sample to identify the
+next real bottleneck inside factory spawning.
+
+### Changes
+
+Added optional `spawn_asset` timing:
+
+- `infinigen/core/placement/factory.py`
+
+Enable with either:
+
+```bash
+INFINIGEN_PROFILE_ASSET_FACTORY=1
+```
+
+or the existing:
+
+```bash
+INFINIGEN_PROFILE_TIMING=1
+```
+
+The timing CSV is `infinigen_asset_factory_timing.csv`. It is written to the
+current solver output folder when available, otherwise to:
+
+```text
+/tmp/infinigen_asset_factory_timing.csv
+```
+
+Recorded fields include generator class, factory seed, instance seed,
+user-provided placeholder flag, distance, visibility distance, spawn
+placeholder duration, placeholder finalization duration, asset-parameter
+duration, `create_asset` duration, parent/transform duration, placeholder
+delete duration, `GarbageCollect` context duration, total duration, success, and
+error type.
+
+The default non-timing `spawn_asset` path remains unchanged. The timing path
+does not change random number usage, does not reorder placeholder or asset
+creation, does not reorder object parent/transform/delete operations, and
+re-raises original exceptions.
+
+Added asset factory timing analysis:
+
+- `scripts/analyze_asset_factory_timing.py`
+
+The script summarizes generator totals, `create_asset`, placeholder delete,
+placeholder finalization, slowest calls, duration totals, and prints guidance on
+the dominant stage.
+
+### Validation Notes
+
+Ran a bounded 600s asset factory timing sample using:
+
+```bash
+INFINIGEN_PROFILE_TIMING=1 INFINIGEN_PROFILE_BBOX=1 INFINIGEN_PROFILE_ASSET_FACTORY=1 timeout 600s python -m infinigen_examples.generate_indoors \
+  --seed 0 \
+  --task coarse \
+  --output_folder outputs/profile_asset_factory_current/coarse \
+  -g fast_solve.gin \
+  -p compose_indoors.terrain_enabled=False \
+     home_room_constraints.has_fewer_rooms=False \
+     restrict_solving.solve_max_rooms=10
+```
+
+The sample produced 499 `AssetFactory.spawn_asset` timing rows at:
+
+```text
+outputs/profile_asset_factory_current/coarse/infinigen_asset_factory_timing.csv
+```
+
+Analyzer result:
+
+- total `spawn_asset` time: 276.641s
+- total `garbage_collect_context_duration`: 176.647s, 63.854%
+- total `create_asset_duration`: 98.738s, 35.692%
+- total `delete_placeholder_duration`: 0.225s, 0.082%
+- total `finalize_placeholders_duration`: 0.000s, 0.000%
+
+`garbage_collect_context_duration` is the dominant measured stage inside
+`spawn_asset`; `create_asset` is secondary. Placeholder delete and placeholder
+finalization are not primary in this sample.
+
+### Behavior Guardrails
+
+This round still does not optimize the solver, does not connect C++ to the
+solver path, and does not fix the suspected `union_all_bbox` issue. Bbox timing
+showed `union_all_bbox` at only 0.075s of 334.068s, or 0.023%, so default C++
+bbox integration is not the priority.
+
+The next optimization candidate should be behavior-preserving work around
+`AssetFactory.spawn_asset`, `GarbageCollect`, and factory lifecycle. Any delete
+batching, deferred cleanup, or factory bbox/cache experiment must start as an
+opt-in path and pass same seed/gin/task A/B output comparison before being
+accepted.
+
 ## 2026-06-19 - Optional geometry build flag and bbox timing
 
 ### Round Goal

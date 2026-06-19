@@ -3,30 +3,37 @@
 ## Suggested Next Round
 
 1. Keep the standalone geometry kernels out of the default indoor solver
-   path until an opt-in integration is implemented and validated.
-2. Use `INFINIGEN_PROFILE_BBOX=1` or `INFINIGEN_PROFILE_TIMING=1` to collect
-   `infinigen_bbox_timing.csv`, then run `scripts/analyze_bbox_timing.py`.
-3. Decide whether `union_all_bbox` is worth a C++ experiment only from the
-   measured `union_all_bbox_duration / total_duration` share. If it is low,
-   prioritize `spawn_asset`, object deletion, and factory lifecycle work
-   instead.
-   The 2026-06-19 600s sample measured `union_all_bbox` at 0.075s out of
+   path. The 2026-06-19 bbox sample measured `union_all_bbox` at 0.075s out of
    334.068s of `bbox_mesh_from_hipoly` time, or 0.023%, so do not prioritize
    default C++ bbox integration from current evidence.
-4. Run `python -m pytest tests/test_geometry_kernels.py -q` and
+2. Treat `AssetFactory.spawn_asset` / factory lifecycle as the current first
+   investigation target. The 2026-06-19 asset factory sample measured
+   `garbage_collect_context_duration` at 176.647s out of 276.641s of
+   `spawn_asset` time, or 63.854%; `create_asset_duration` was secondary at
+   98.738s, or 35.692%.
+3. Inspect `butil.GarbageCollect` target scanning and cleanup around repeated
+   failed/unaccepted asset spawns. Keep any experiment opt-in until same
+   seed/gin/task A/B proves equivalence.
+4. If trying delete batching, deferred cleanup, or factory bbox/cache reuse,
+   preserve random number consumption, proposal order, accept/reject decisions,
+   object parent/transform/delete semantics, and final output. Validate with
+   `scripts/compare_indoor_outputs.py`.
+5. Use `INFINIGEN_PROFILE_ASSET_FACTORY=1` or `INFINIGEN_PROFILE_TIMING=1` to
+   collect `infinigen_asset_factory_timing.csv`, then run
+   `scripts/analyze_asset_factory_timing.py`.
+6. Use `INFINIGEN_PROFILE_BBOX=1` or `INFINIGEN_PROFILE_TIMING=1` to collect
+   `infinigen_bbox_timing.csv`, then run `scripts/analyze_bbox_timing.py` only
+   if bbox behavior changes are under consideration.
+7. Run `python -m pytest tests/test_geometry_kernels.py -q` and
    `python scripts/bench_geometry_kernels.py` after every kernel change.
-5. When build environments cannot compile the geometry extension, use
+8. When build environments cannot compile the geometry extension, use
    `INFINIGEN_DISABLE_GEOMETRY_CPP=True python -m pip install -e .` and verify
    the NumPy fallback remains importable.
-6. Consider an opt-in experiment in
-   `infinigen/assets/utils/bbox_from_mesh.py`, limited first to replacing the
-   numeric `points.min(axis=0)` / `points.max(axis=0)` portion with
-   `bbox_min_max`, only if bbox timing justifies it.
-7. If adding that opt-in path, gate it behind a flag or experimental config so
-   the baseline generation behavior remains the default.
-8. Before any solver-facing use, run same seed/gin/task A/B with
+9. Consider an opt-in bbox C++ experiment only if a later timing sample
+   contradicts the current 0.023% `union_all_bbox` share.
+10. Before any solver-facing use, run same seed/gin/task A/B with
    `scripts/compare_indoor_outputs.py` and require matching coarse JSON.
-9. Do not fix the suspected `union_all_bbox` max update while doing this
+11. Do not fix the suspected `union_all_bbox` max update while doing this
    opt-in kernel integration. Treat that as a separate behavior change.
 
 ## Existing Optimization Guidance

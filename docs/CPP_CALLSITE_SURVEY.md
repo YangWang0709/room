@@ -216,3 +216,13 @@ uses only 8 points. Do not connect `bbox_min_max` to that path by default unless
 `infinigen_bbox_timing.csv` shows `union_all_bbox_duration` is a meaningful
 share of total `bbox_mesh_from_hipoly` time. Any integration must be opt-in and
 must pass same seed/gin/task A/B output comparison.
+
+The current bbox timing sample measured `union_all_bbox` at 0.075s out of
+334.068s, or 0.023%, so it is not a current C++ priority. The follow-up asset
+factory timing sample moved the first bottleneck to `AssetFactory.spawn_asset`
+and factory lifecycle, especially `GarbageCollect` context work. Those paths
+touch `bpy`, object creation/deletion, material/node data, parent/transform
+state, and seeded factory behavior, so they are not C++ call-site candidates.
+Any future delete batching, deferred cleanup, or factory bbox/cache experiment
+must be behavior-preserving and validated with same seed/gin/task A/B output
+comparison.

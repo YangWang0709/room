@@ -18,6 +18,20 @@ C++ should only be used for pure computation kernels. It must not change the
 solver control flow, proposal order, random number call order, accept/reject
 logic, or Blender `bpy` side effects.
 
+Later fine-grained samples sharpened this guidance:
+
+- `union_all_bbox_duration` was 0.075s of 334.068s of
+  `bbox_mesh_from_hipoly` time, or 0.023%; do not prioritize default C++
+  bbox integration from current evidence.
+- `AssetFactory.spawn_asset` timing showed 276.641s total, with
+  `garbage_collect_context_duration` at 176.647s, or 63.854%, and
+  `create_asset_duration` at 98.738s, or 35.692%.
+
+`spawn_asset`, `create_asset`, Blender object creation/deletion, material/node
+generation, parent/transform operations, and `bpy` data-block lifecycle are not
+C++ rewrite targets. They need behavior-preserving Python/Blender experiments
+and same seed/gin/task A/B validation.
+
 ## Current Prototype Status
 
 The first standalone Cython/C++ geometry kernel prototype now lives under:
@@ -62,6 +76,8 @@ same seed/gin/task A/B equivalence comparison. The next possible experiment is
 an opt-in `bbox_from_mesh.py` path for `bbox_min_max` / `bbox_union`, not a
 solver-control-flow rewrite, and only if bbox timing shows that
 `union_all_bbox` is a meaningful share of `bbox_mesh_from_hipoly`.
+Current bbox timing does not show that, so the next practical optimization
+target is factory lifecycle and `GarbageCollect` behavior, not C++ bbox.
 
 See also:
 

@@ -186,6 +186,61 @@ python scripts/analyze_bbox_timing.py outputs/profile_indoor_baseline/coarse/inf
 Use the `union_all_bbox_duration / total_duration` share from this script before
 considering any opt-in C++ bbox integration.
 
+## Run Asset Factory Spawn Timing
+
+Enable fine-grained `AssetFactory.spawn_asset` timing:
+
+```bash
+INFINIGEN_PROFILE_ASSET_FACTORY=1 bash scripts/profile_indoor_solver.sh
+```
+
+The existing solver timing flag also enables asset factory timing:
+
+```bash
+INFINIGEN_PROFILE_TIMING=1 INFINIGEN_PROFILE_ASSET_FACTORY=1 bash scripts/profile_indoor_solver.sh
+```
+
+When the solver output folder is available, asset factory timing is written to:
+
+```text
+<output_folder>/infinigen_asset_factory_timing.csv
+```
+
+Outside the solver path, the fallback path is:
+
+```text
+/tmp/infinigen_asset_factory_timing.csv
+```
+
+Analyze asset factory timing:
+
+```bash
+python scripts/analyze_asset_factory_timing.py /tmp/infinigen_asset_factory_timing.csv
+```
+
+or point it at the run output:
+
+```bash
+python scripts/analyze_asset_factory_timing.py outputs/profile_indoor_baseline/coarse/infinigen_asset_factory_timing.csv
+```
+
+Fresh-folder bounded sample used for the 2026-06-19 asset factory timing run:
+
+```bash
+INFINIGEN_PROFILE_TIMING=1 INFINIGEN_PROFILE_BBOX=1 INFINIGEN_PROFILE_ASSET_FACTORY=1 timeout 600s python -m infinigen_examples.generate_indoors \
+  --seed 0 \
+  --task coarse \
+  --output_folder outputs/profile_asset_factory_current/coarse \
+  -g fast_solve.gin \
+  -p compose_indoors.terrain_enabled=False \
+     home_room_constraints.has_fewer_rooms=False \
+     restrict_solving.solve_max_rooms=10
+```
+
+Use this timing to decide whether the next behavior-preserving experiment
+should inspect `create_asset`, placeholder deletion, placeholder finalization,
+or `GarbageCollect` context behavior.
+
 ## Single-Room Coarse Generation
 
 Single-room generation is useful only as a smoke test for scripts and workflow.

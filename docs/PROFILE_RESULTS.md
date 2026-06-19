@@ -1,5 +1,86 @@
 # Profile Results
 
+## Asset Factory Spawn Timing CSV - 2026-06-19 15:15 CST
+
+Profile type: 600s timeout sample with solver timing, bbox timing, and asset
+factory timing enabled. This is not a complete profile.
+
+Command:
+
+```bash
+INFINIGEN_PROFILE_TIMING=1 INFINIGEN_PROFILE_BBOX=1 INFINIGEN_PROFILE_ASSET_FACTORY=1 timeout 600s python -m infinigen_examples.generate_indoors \
+  --seed 0 \
+  --task coarse \
+  --output_folder outputs/profile_asset_factory_current/coarse \
+  -g fast_solve.gin \
+  -p compose_indoors.terrain_enabled=False \
+     home_room_constraints.has_fewer_rooms=False \
+     restrict_solving.solve_max_rooms=10
+```
+
+Timing CSV path:
+
+```text
+outputs/profile_asset_factory_current/coarse/infinigen_asset_factory_timing.csv
+```
+
+Rows:
+
+```text
+499 AssetFactory.spawn_asset rows
+```
+
+Analyzer command:
+
+```bash
+python scripts/analyze_asset_factory_timing.py outputs/profile_asset_factory_current/coarse/infinigen_asset_factory_timing.csv
+```
+
+### Asset Factory Duration Totals
+
+| duration_column | total (s) | pct_total |
+| --- | ---: | ---: |
+| spawn_placeholder_duration | 0.005 | 0.000 |
+| finalize_placeholders_duration | 0.000 | 0.000 |
+| asset_parameters_duration | 0.008 | 0.000 |
+| create_asset_duration | 98.738 | 0.357 |
+| parent_or_transform_duration | 0.952 | 0.003 |
+| delete_placeholder_duration | 0.225 | 0.001 |
+| garbage_collect_context_duration | 176.647 | 0.639 |
+| total_duration | 276.641 | 1.000 |
+
+### Asset Factory Generator Totals
+
+| generator_class | count | total (s) | mean (s) | max (s) |
+| --- | ---: | ---: | ---: | ---: |
+| LargeShelfFactory | 153 | 181.077 | 1.184 | 4.024 |
+| SimpleBookcaseFactory | 94 | 28.031 | 0.298 | 0.499 |
+| BathtubFactory | 127 | 27.427 | 0.216 | 0.629 |
+| BeverageFridgeFactory | 12 | 16.186 | 1.349 | 1.402 |
+| DishwasherFactory | 10 | 12.286 | 1.229 | 1.311 |
+| SimpleDeskFactory | 86 | 9.857 | 0.115 | 0.157 |
+| FloorLampFactory | 13 | 1.537 | 0.118 | 0.186 |
+| PointLampFactory | 4 | 0.241 | 0.060 | 0.068 |
+
+### Asset Factory Judgment
+
+The largest measured `spawn_asset` internal stage is
+`garbage_collect_context_duration`: 176.647s of 276.641s, or 63.854%.
+`create_asset_duration` is secondary at 98.738s, or 35.692%.
+`delete_placeholder_duration` and `finalize_placeholders_duration` are not
+primary in this sample.
+
+Next investigation should focus on behavior-preserving `GarbageCollect` target
+scanning/cleanup strategy and factory lifecycle work around heavy repeated
+asset spawning. If experimenting with delete batching, deferred cleanup, or
+factory bbox/cache behavior, keep it opt-in first and require same
+seed/gin/task A/B comparison with `scripts/compare_indoor_outputs.py`.
+
+This result reinforces the earlier bbox timing judgment:
+`union_all_bbox_duration` was only 0.075s out of 334.068s of
+`bbox_mesh_from_hipoly` time, or 0.023%, so default C++ bbox integration is not
+the priority.
+
 ## BBox Mesh Timing CSV - 2026-06-19 14:57 CST
 
 Profile type: 600s timeout sample with solver timing and bbox timing enabled.
