@@ -32,6 +32,39 @@ Timing CSV output:
 outputs/profile_indoor_baseline/coarse/indoor_solver_timing.csv
 ```
 
+## Run Bounded Timing Sample
+
+Use this when a full indoor coarse run is too slow:
+
+```bash
+INFINIGEN_PROFILE_TIMING=1 timeout 1800s bash scripts/profile_indoor_solver.sh
+```
+
+This preserves the normal room count, solve steps, object availability, and gin settings used by `scripts/profile_indoor_solver.sh`. A timeout sample is not a complete profile. Depending on how `timeout` terminates Python, `/tmp/indoors_coarse.prof` may not be written; use `indoor_solver_timing.csv` as the timing source for this workflow.
+
+## Analyze Solver Timing CSV
+
+Default path:
+
+```bash
+python scripts/analyze_indoor_timing.py
+```
+
+Explicit path:
+
+```bash
+python scripts/analyze_indoor_timing.py outputs/profile_indoor_baseline/coarse/indoor_solver_timing.csv
+```
+
+The script prints:
+
+- `apply_duration` by `generator_class`
+- Addition breakdowns by `generator_class`
+- duration totals by `move_type`
+- slowest proposal attempts
+- failed proposal clusters
+- C++ rewrite candidate guidance
+
 ## View Profile Top 80
 
 ```bash

@@ -1,5 +1,182 @@
 # Worklog
 
+## 2026-06-19 13:25 CST - Indoor solver timing CSV analysis
+
+### Round Goal
+
+Confirm the timing instrumentation push, run an indoor coarse timing profile without changing generation behavior, add a CSV analysis helper, and identify behavior-preserving optimization targets.
+
+### Git / Push
+
+Confirmed local branch:
+
+```text
+perf/indoor-isaac-speedup
+```
+
+Confirmed and pushed:
+
+```text
+f1825d95 Add indoor solver timing instrumentation
+```
+
+The commit was pushed to:
+
+```text
+myroom/perf/indoor-isaac-speedup
+```
+
+### Profile Run
+
+Command run inside the container:
+
+```bash
+cd /opt/infinigen
+source /root/miniconda3/etc/profile.d/conda.sh
+conda activate infinigen
+INFINIGEN_PROFILE_TIMING=1 timeout 1800s bash scripts/profile_indoor_solver.sh
+```
+
+This was a 1800s timeout sample, not a complete profile. It timed out during:
+
+```text
+on_floor_freestanding_8 / kitchen_0/0
+KitchenIslandFactory
+```
+
+Generated timing CSV:
+
+```text
+/opt/infinigen/outputs/profile_indoor_baseline/coarse/indoor_solver_timing.csv
+outputs/profile_indoor_baseline/coarse/indoor_solver_timing.csv
+```
+
+CSV rows: 3061 proposal-attempt rows, plus header.
+
+The cProfile output path was intended to be:
+
+```text
+/tmp/indoors_coarse.prof
+```
+
+This timeout run did not produce `/tmp/indoors_coarse.prof` in the container. The timing CSV is the source of truth for this round.
+
+### Changes
+
+Added a timing CSV summary helper:
+
+- `scripts/analyze_indoor_timing.py`
+
+Run it with:
+
+```bash
+python scripts/analyze_indoor_timing.py
+```
+
+or:
+
+```bash
+python scripts/analyze_indoor_timing.py path/to/indoor_solver_timing.csv
+```
+
+### Key Results
+
+Top `generator_class` by `apply_duration` total:
+
+| Rank | generator_class | count | apply total (s) | mean (s) | max (s) | failed | accepted |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | KitchenIslandFactory | 20 | 294.443 | 14.722 | 22.297 | 16 | 0 |
+| 2 | LargeShelfFactory | 153 | 232.303 | 1.518 | 4.444 | 131 | 6 |
+| 3 | TableDiningFactory | 63 | 84.746 | 1.345 | 1.469 | 54 | 1 |
+| 4 | BeverageFridgeFactory | 44 | 84.472 | 1.920 | 2.097 | 43 | 1 |
+| 5 | LargePlantContainerFactory | 585 | 64.825 | 0.111 | 0.301 | 537 | 8 |
+| 6 | SimpleBookcaseFactory | 90 | 51.549 | 0.573 | 0.936 | 61 | 7 |
+| 7 | (unknown) | 844 | 47.895 | 0.057 | 2.207 | 497 | 186 |
+| 8 | SimpleDeskFactory | 112 | 45.202 | 0.404 | 0.721 | 89 | 3 |
+| 9 | BathtubFactory | 126 | 43.983 | 0.349 | 0.845 | 125 | 1 |
+| 10 | OvenFactory | 56 | 38.936 | 0.695 | 0.773 | 55 | 1 |
+
+Slowest proposal attempts were all `KitchenIslandFactory` additions. Top 10 by `attempt_duration`:
+
+| Rank | iteration | attempt | attempts | attempt (s) | apply (s) | revert (s) | total step (s) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 4 | 4 | 5 | 22.500 | 22.297 | 0.187 | 72.358 |
+| 2 | 5 | 0 | 4 | 22.402 | 22.210 | 0.176 | 63.787 |
+| 3 | 3 | 4 | 5 | 21.782 | 21.592 | 0.174 | 88.518 |
+| 4 | 3 | 3 | 5 | 20.573 | 20.384 | 0.172 | 88.518 |
+| 5 | 7 | 0 | 4 | 18.840 | 18.646 | 0.179 | 55.705 |
+| 6 | 3 | 1 | 5 | 18.283 | 18.098 | 0.170 | 88.518 |
+| 7 | 3 | 2 | 5 | 18.126 | 17.941 | 0.169 | 88.518 |
+| 8 | 5 | 1 | 4 | 16.497 | 16.304 | 0.176 | 63.787 |
+| 9 | 4 | 1 | 5 | 16.362 | 16.173 | 0.174 | 72.358 |
+| 10 | 7 | 2 | 4 | 16.325 | 16.129 | 0.180 | 55.705 |
+
+Failed proposal clusters by failed attempt count:
+
+| Rank | generator_class | attempts | failed | failure rate | wasted apply (s) |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 1 | LargePlantContainerFactory | 585 | 537 | 0.918 | 61.787 |
+| 2 | (unknown) | 844 | 497 | 0.589 | 39.918 |
+| 3 | KitchenCabinetFactory | 205 | 196 | 0.956 | 15.978 |
+| 4 | CellShelfFactory | 152 | 134 | 0.882 | 12.558 |
+| 5 | LargeShelfFactory | 153 | 131 | 0.856 | 209.884 |
+| 6 | BathtubFactory | 126 | 125 | 0.992 | 43.868 |
+| 7 | BedFactory | 95 | 92 | 0.968 | 10.582 |
+| 8 | SingleCabinetFactory | 121 | 92 | 0.760 | 8.668 |
+| 9 | SimpleDeskFactory | 112 | 89 | 0.795 | 33.350 |
+| 10 | SimpleBookcaseFactory | 90 | 61 | 0.678 | 36.822 |
+
+Largest wasted apply time clusters:
+
+1. `KitchenIslandFactory` - 257.877s wasted apply
+2. `LargeShelfFactory` - 209.884s wasted apply
+3. `BeverageFridgeFactory` - 82.742s wasted apply
+4. `TableDiningFactory` - 72.458s wasted apply
+5. `LargePlantContainerFactory` - 61.787s wasted apply
+
+Move type totals:
+
+| move_type | count | apply (s) | evaluate (s) | revert (s) | accept (s) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Addition | 2217 | 1112.264 | 109.877 | 178.612 | 0.000 |
+| Resample | 114 | 27.863 | 2.396 | 8.204 | 0.662 |
+| RelationPlaneChange | 217 | 14.650 | 10.944 | 0.074 | 0.000 |
+| ReinitPoseMove | 111 | 3.942 | 14.598 | 0.042 | 0.000 |
+| TranslateMove | 261 | 1.363 | 27.042 | 0.069 | 0.000 |
+
+Overall row-level totals:
+
+- `apply_duration`: 1160.159s
+- `evaluate_duration`: 172.236s
+- `revert_duration`: 187.095s
+- `garbage_collect_duration`: 287.308s row-level sum, with repeated step-level rows; max observed 22.470s
+
+### Conclusion
+
+The main bottleneck in this timing sample is `Addition.apply`, especially failed or unaccepted heavy additions. `KitchenIslandFactory` dominates individual slow attempts and wasted apply time. `LargeShelfFactory` is the second largest wasted-apply cluster. Kitchen appliances and dining table proposals also contribute substantial repeated apply cost.
+
+`evaluate_duration`, `revert_duration`, and `garbage_collect_duration` are measurable and can spike, but they are not the primary driver in this CSV. Even the row-level, over-count-prone `garbage_collect_duration` total is below `apply_duration`, and the largest slow attempts are dominated by apply work.
+
+### Next Optimization Direction
+
+Prioritize behavior-preserving optimization before any C++ rewrite:
+
+1. Add cheap preflight rejection for expensive additions before full asset spawn/finalization, starting with `KitchenIslandFactory`, `LargeShelfFactory`, `BeverageFridgeFactory`, `DishwasherFactory`, `OvenFactory`, and `TableDiningFactory`.
+2. Cache deterministic placeholder, bbox, and high-poly mesh bound computations per factory/scale/seed where the generated geometry is equivalent.
+3. Defer expensive material/node/final object creation until after cheap geometric and relation checks when the exact same accepted asset can still be produced.
+4. Reduce repeated failed retry work inside a stage by memoizing local negative placement/relation candidates without changing object availability or solve-step counts.
+5. Investigate GC spikes as a secondary issue, but do not optimize it ahead of heavy addition apply cost.
+
+Potential C++ rewrite candidates, after Python-level behavior-preserving work:
+
+1. Numeric bbox min/max reductions and high-poly mesh bounds extraction.
+2. AABB overlap and broad-phase collision checks.
+3. Room/floor/wall bounds and containment checks over numeric arrays.
+4. Batch candidate collision matrix construction for many boxes.
+5. Constraint loss aggregation once inputs are already numeric arrays.
+
+Do not start by rewriting `bpy` object creation/deletion, `spawn_asset`, material/node generation, or the simulated annealing solver control flow in C++.
+
 ## 2026-06-19 - Indoor solver timing instrumentation
 
 ### Round Goal
