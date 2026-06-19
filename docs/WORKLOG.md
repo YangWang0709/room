@@ -1,5 +1,71 @@
 # Worklog
 
+## 2026-06-20 - Full 10-room batch remove equivalence result
+
+### Round Goal
+
+Run the full 10-room `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1` equivalence A/B
+without changing source, gin configuration, solver flow, proposal order,
+accept/reject logic, random number calls, object availability, or solve steps.
+Do not run the wall-clock A/B unless the full equivalence run completes and
+`scripts/compare_indoor_outputs.py` prints `FINAL: PASS`.
+
+### Command
+
+```bash
+PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python \
+EXPERIMENT_TIMEOUT_SECONDS=28800 \
+bash scripts/run_gc_batch_remove_equivalence.sh
+```
+
+The run used the normal full target: seed `0`, task `coarse`,
+`fast_solve.gin`, `compose_indoors.terrain_enabled=False`,
+`home_room_constraints.has_fewer_rooms=False`, and
+`restrict_solving.solve_max_rooms=10`. Heavy timing instrumentation was not
+enabled: `INFINIGEN_PROFILE_TIMING`, `INFINIGEN_PROFILE_GC`,
+`INFINIGEN_PROFILE_ASSET_FACTORY`, and `INFINIGEN_PROFILE_BBOX` were unset.
+
+### Result
+
+Both sides completed before the 28800s timeout:
+
+| run | status | pipeline `MAIN TOTAL` |
+| --- | --- | ---: |
+| baseline | complete | 4:11:49.774668 |
+| candidate_batch | complete | 3:07:38.553985 |
+
+The compare failed:
+
+```text
+matched_json_file_count: 2
+missing_files: 0
+extra_files: 0
+file_results:
+  DIFFERENT MaskTag.json numeric_max_abs_diff=1
+    - $.back.bottom: left 22, right 21
+    - $.front.top: left 21, right 22
+  SAME solve_state.json numeric_max_abs_diff=0
+numeric_max_abs_diff: 1
+FINAL: FAIL
+```
+
+No traceback, OOM, kill, or segmentation fault marker was found in the
+baseline, candidate, or compare logs.
+
+### Judgment
+
+This is a complete full 10-room A/B, but it is not behavior-equivalent because
+`MaskTag.json` differs. The shorter candidate `MAIN TOTAL` is not accepted as
+speed evidence because the equivalence gate failed. The wall-clock script was
+therefore not run.
+
+`INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1` must remain opt-in only. It must not
+be mainlined or promoted to a default-on path from this result. The next step is
+to understand the `MaskTag.json` difference, especially whether batch removal
+changes Blender data-block lifecycle, tag assignment, or deletion ordering in a
+way that is visible to generated outputs. A no-heavy-instrumentation wall-clock
+A/B should only be run after the full 10-room compare prints `FINAL: PASS`.
+
 ## 2026-06-19 - Batch remove validation and wall-clock scripts
 
 ### Round Goal

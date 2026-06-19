@@ -7,102 +7,109 @@
    not investigate 32-thread or multi-process throughput until single-scene
    behavior-preserving optimization is stable and A/B validated.
 2. Treat `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1` as the current opt-in
-   cleanup candidate. The 2026-06-19 smoke lowered timeout-sample
+   cleanup candidate only. The 2026-06-19 smoke lowered timeout-sample
    `node_groups` remove duration from 366.131s in the baseline to 46.350s in
    the candidate, while the candidate advanced farther and removed more node
-   groups. This is a strong timing signal, not a validated optimization.
-3. Run `scripts/run_gc_batch_remove_equivalence.sh` for the normal 10-room
-   same seed/gin/task A/B before considering any mainline use. The run must
-   complete on both sides and `scripts/compare_indoor_outputs.py` must print
-   `FINAL: PASS`.
-4. Run `scripts/run_gc_batch_remove_walltime.sh` after equivalence passes to
-   measure wall-clock speed without heavy timing instrumentation. A profiling
-   CSV speedup is not enough; the no-instrumentation wall-clock run must also
-   improve.
-5. Use `EXPERIMENT_SMOKE_SINGLE_ROOM=1` only as a harness smoke. Passing
+   groups. This remains a strong timing signal, not a validated optimization.
+3. Treat the 2026-06-20 full 10-room A/B as a completed equivalence failure.
+   Both baseline and candidate completed, but `compare_indoor_outputs.py`
+   printed `FINAL: FAIL`: `solve_state.json` was `SAME`, while
+   `MaskTag.json` differed with `numeric_max_abs_diff: 1` at
+   `$.back.bottom` and `$.front.top`.
+4. Do not run or interpret a full wall-clock A/B for batch remove until the
+   normal 10-room equivalence run prints `FINAL: PASS`. The 2026-06-20
+   wall-clock run was intentionally skipped because the equivalence gate failed.
+5. Investigate the `MaskTag.json` difference before any further promotion of
+   batch remove. Determine whether the front/back count swap is a real visible
+   behavior change, a comparison-scope issue, or a Blender data-block lifecycle
+   effect from `bpy.data.batch_remove`. Any code change or revised comparison
+   policy must be followed by a fresh same seed/gin/task 10-room A/B.
+6. Use `EXPERIMENT_SMOKE_SINGLE_ROOM=1` only as a harness smoke. Passing
    single-room A/B validates the script and catches obvious differences, but it
    does not prove the 10-room mainline target is behavior-preserving or faster.
    The 2026-06-19 single-room smoke did pass compare on both new scripts, but
    wall-clock was effectively flat at `0.999x`, so it is not speed evidence for
    the full target.
-6. If the normal 10-room A/B still cannot finish, keep the candidate opt-in and
-   record the timeout as not complete. Require comparable coarse JSON before
-   accepting behavior preservation.
-7. Keep `LargeShelfFactory` and repeated node group prefixes as the root-cause
+7. If reducing iteration cost for diagnosis, clearly label any smaller run as a
+   smoke or near-mainline diagnostic. A singleroom PASS or reduced-room PASS
+   must not replace the normal 10-room behavior-preserving proof.
+8. Keep `LargeShelfFactory` and repeated node group prefixes as the root-cause
    attribution target. The attribution sample measured `LargeShelfFactory` at
    139.219s and 5,661 removed node groups; repeated prefixes included
    `nodegroup_tagged_cube`, `nodegroup_division_board`,
    `nodegroup_screw_head`, and `nodegroup_side_board`.
-8. Do not continue expanding `INFINIGEN_GC_NODE_GROUP_INTERVAL` experiments.
+9. Do not continue expanding `INFINIGEN_GC_NODE_GROUP_INTERVAL` experiments.
    The interval=20 smoke was not a valid speedup: both baseline and candidate
    timed out, no comparable JSON was produced, and raw `node_groups_remove`
    increased from 369.071s to 443.414s. Naive deferred node group cleanup
    creates large burst removes and is not the main path.
-9. If batch remove passes A/B, run a longer profile and explicit output
-   equivalence validation before promoting the opt-in path. If it fails A/B or
-   still lacks comparable JSON, shift back to precise reuse, caching, or reduced
-   duplicate node group creation in the dominant factories instead of broad
-   delayed cleanup.
-10. Inspect the factory paths and node tree generation for the factories that
+10. If batch remove later passes full A/B, run
+   `scripts/run_gc_batch_remove_walltime.sh` to measure wall-clock speed without
+   heavy timing instrumentation before promoting the opt-in path. If the
+   `MaskTag.json` difference persists, keep batch remove opt-in/rejected for
+   mainline use and shift back to precise reuse, caching, or reduced duplicate
+   node group creation in the dominant factories instead of broad delayed
+   cleanup.
+11. Inspect the factory paths and node tree generation for the factories that
    dominate node group churn, starting with `LargeShelfFactory`, then
    `SimpleBookcaseFactory`, `SimpleDeskFactory`, `KitchenIslandFactory`, and
    the kitchen appliance factories observed in the batch smoke.
-11. If repeated node group prefixes are semantically equivalent for the same
+12. If repeated node group prefixes are semantically equivalent for the same
    factory parameters, consider an opt-in reuse/cache/reduce-duplicate-creation
    experiment. Preserve node group identity and Blender-visible lifecycle
    behavior unless same seed/gin/task A/B proves equivalence.
-12. If inspection shows the node group names are highly parameterized or not
+13. If inspection shows the node group names are highly parameterized or not
    safely reusable, continue with a finer cleanup strategy instead of broad
    delayed cleanup. Any cleanup strategy must remain opt-in until it passes
    A/B comparison.
-13. Keep the standalone geometry kernels out of the default indoor solver
+14. Keep the standalone geometry kernels out of the default indoor solver
    path. The 2026-06-19 bbox sample measured `union_all_bbox` at 0.075s out of
    334.068s of `bbox_mesh_from_hipoly` time, or 0.023%, so do not prioritize
    default C++ bbox integration from current evidence.
-14. Treat `AssetFactory.spawn_asset` / factory lifecycle as the current first
+15. Treat `AssetFactory.spawn_asset` / factory lifecycle as the current first
    investigation target. The latest GC sample measured
    `garbage_collect_context_duration` at 177.848s out of 278.502s of
    `spawn_asset` time, or 63.859%; `create_asset_duration` was secondary at
    99.383s, or 35.685%, and `delete_placeholder_duration` was only 0.228s, or
    0.082%.
-15. Treat `bpy.data.node_groups` removal as the current first behavior-preserving
+16. Treat `bpy.data.node_groups` removal as the current first behavior-preserving
    experiment target. The GC target sample measured 183.972s in target
    `exit_cleanup`, 183.378s in `remove_duration`, and 181.131s in
    `node_groups` alone. `enter_snapshot` was only 0.422s, and broad scan time
    excluding remove was about 0.594s.
-16. Use the opt-in `INFINIGEN_GC_NODE_GROUP_INTERVAL` experiment only behind the
+17. Use the opt-in `INFINIGEN_GC_NODE_GROUP_INTERVAL` experiment only behind the
    environment variable. Unset or `1` keeps default behavior; values greater
    than `1` throttle only `bpy.data.node_groups` cleanup. This may change
    Blender data-block name allocation or leave residual node groups, so it must
    pass same seed/gin/task A/B before being treated as usable.
-17. Do not treat the interval=20 smoke as a validated speedup. Both runs timed
+18. Do not treat the interval=20 smoke as a validated speedup. Both runs timed
    out, `compare_indoor_outputs.py` found no comparable JSON, and raw
    `node_groups_remove` increased from 369.071s to 443.414s in the partial
    sample despite 558 skipped cleanup opportunities. Prefer targeted node group
    attribution, reuse, or cache investigation instead of changing the interval.
-18. If trying GC scope adjustment, node-group-specific cleanup, less frequent
+19. If trying GC scope adjustment, node-group-specific cleanup, less frequent
    cleanup, deferred cleanup, batch cleanup, or factory bbox/cache reuse,
    preserve random number consumption, proposal order, accept/reject decisions,
    object parent/transform/delete semantics, and final output. Validate with
    `scripts/compare_indoor_outputs.py`.
-19. Use `INFINIGEN_PROFILE_GC=1` or `INFINIGEN_PROFILE_TIMING=1` to collect
+20. Use `INFINIGEN_PROFILE_GC=1` or `INFINIGEN_PROFILE_TIMING=1` to collect
    `infinigen_gc_timing.csv`, then run `scripts/analyze_gc_timing.py`.
-20. Use `INFINIGEN_PROFILE_ASSET_FACTORY=1` or `INFINIGEN_PROFILE_TIMING=1` to
+21. Use `INFINIGEN_PROFILE_ASSET_FACTORY=1` or `INFINIGEN_PROFILE_TIMING=1` to
    collect `infinigen_asset_factory_timing.csv`, then run
    `scripts/analyze_asset_factory_timing.py`.
-21. Use `INFINIGEN_PROFILE_BBOX=1` or `INFINIGEN_PROFILE_TIMING=1` to collect
+22. Use `INFINIGEN_PROFILE_BBOX=1` or `INFINIGEN_PROFILE_TIMING=1` to collect
    `infinigen_bbox_timing.csv`, then run `scripts/analyze_bbox_timing.py` only
    if bbox behavior changes are under consideration.
-22. Run `python -m pytest tests/test_geometry_kernels.py -q` and
+23. Run `python -m pytest tests/test_geometry_kernels.py -q` and
    `python scripts/bench_geometry_kernels.py` after every kernel change.
-23. When build environments cannot compile the geometry extension, use
+24. When build environments cannot compile the geometry extension, use
    `INFINIGEN_DISABLE_GEOMETRY_CPP=True python -m pip install -e .` and verify
    the NumPy fallback remains importable.
-24. Consider an opt-in bbox C++ experiment only if a later timing sample
+25. Consider an opt-in bbox C++ experiment only if a later timing sample
    contradicts the current 0.023% `union_all_bbox` share.
-25. Before any solver-facing use, run same seed/gin/task A/B with
+26. Before any solver-facing use, run same seed/gin/task A/B with
    `scripts/compare_indoor_outputs.py` and require matching coarse JSON.
-26. Do not fix the suspected `union_all_bbox` max update while doing this
+27. Do not fix the suspected `union_all_bbox` max update while doing this
    opt-in kernel integration. Treat that as a separate behavior change.
 
 ## Existing Optimization Guidance

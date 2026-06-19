@@ -1,9 +1,69 @@
 # Profile Results
 
+## Full 10-room Batch Remove Equivalence - 2026-06-20 02:02 CST
+
+Profile type: full same seed/gin/task indoor coarse equivalence A/B for the
+opt-in `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1` path. Heavy timing
+instrumentation was not enabled.
+
+Command:
+
+```bash
+PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python \
+EXPERIMENT_TIMEOUT_SECONDS=28800 \
+bash scripts/run_gc_batch_remove_equivalence.sh
+```
+
+Both runs completed:
+
+| stage | baseline | candidate_batch |
+| --- | ---: | ---: |
+| solve_large | 1:40:25.721646 | 0:58:14.904938 |
+| solve_medium | 0:46:32.156586 | 0:33:03.774877 |
+| solve_small | 0:36:56.979473 | 0:35:29.217619 |
+| populate_assets | 1:00:02.511682 | 0:54:56.777906 |
+| pipeline `MAIN TOTAL` | 4:11:49.774668 | 3:07:38.553985 |
+
+Compare result:
+
+```text
+matched_json_file_count: 2
+missing_files: 0
+extra_files: 0
+DIFFERENT MaskTag.json numeric_max_abs_diff=1
+SAME solve_state.json numeric_max_abs_diff=0
+numeric_max_abs_diff: 1
+FINAL: FAIL
+```
+
+The concrete JSON differences were:
+
+```text
+$.back.bottom: left 22, right 21
+$.front.top: left 21, right 22
+```
+
+No traceback, OOM, kill, or segmentation fault marker was found in the
+baseline, candidate, or compare logs.
+
+### Judgment
+
+This full A/B completed, but `batch_remove` did not pass equivalence. The
+candidate's shorter `MAIN TOTAL` is not accepted as performance evidence
+because the output comparison failed. The no-heavy-instrumentation wall-clock
+A/B was not run and max RSS was not collected for this full run.
+
+`INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1` remains an opt-in experiment only.
+Before any wall-clock acceptance or default-off acceleration-flag phase, the
+`MaskTag.json` difference must be explained and a full 10-room compare must
+print `FINAL: PASS`.
+
 ## Batch Remove Validation Status - 2026-06-19
 
 `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1` remains the strongest current
-single-scene indoor coarse candidate, but it has not passed a complete A/B.
+single-scene indoor coarse candidate from profiling, but the 2026-06-20 full
+10-room equivalence A/B completed and printed `FINAL: FAIL` due to a
+`MaskTag.json` difference. It has not passed the behavior-preserving gate.
 
 The 600s smoke evidence is profiling-only:
 
