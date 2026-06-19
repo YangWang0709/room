@@ -1,5 +1,44 @@
 # Profile Results
 
+## Batch Remove Validation Status - 2026-06-19
+
+`INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1` remains the strongest current
+single-scene indoor coarse candidate, but it has not passed a complete A/B.
+
+The 600s smoke evidence is profiling-only:
+
+- baseline `node_groups` remove_duration: 366.131s
+- candidate batch remove_duration: 46.350s
+- candidate removed more node groups: 15,758 vs 10,858
+- no traceback, OOM, kill, or segmentation fault was observed in the smoke log
+- both sides timed out
+- `matched_json_file_count: 0`
+- `NO_COMPARABLE_JSON_FOUND`
+- `FINAL: FAIL`
+
+The required acceptance evidence is now:
+
+1. Complete the normal 10-room baseline and candidate runs.
+2. Require `scripts/compare_indoor_outputs.py` to print `FINAL: PASS`.
+3. Show a no-heavy-instrumentation wall-clock improvement with
+   `scripts/run_gc_batch_remove_walltime.sh`.
+
+Use `scripts/run_gc_batch_remove_equivalence.sh` for the full A/B and
+`scripts/run_gc_batch_remove_walltime.sh` for the wall-clock measurement.
+`EXPERIMENT_SMOKE_SINGLE_ROOM=1` is allowed only as a smoke test for the
+scripts and obvious equivalence; it does not prove the 10-room mainline target.
+
+Single-room smoke was completed on 2026-06-19 only as harness validation. Both
+equivalence and wall-clock compares printed `FINAL: PASS` with
+`matched_json_file_count: 2` and `numeric_max_abs_diff: 0`. The wall-clock
+smoke recorded baseline `163.339s` / `2,357,896 KB` max RSS and candidate
+`163.462s` / `2,350,572 KB` max RSS, or `0.999x`. No traceback, OOM, kill, or
+segmentation fault was observed. This is not a 10-room performance proof.
+
+The current scope remains one indoor coarse scene. Do not use these results for
+multi-process throughput, `manage_jobs.num_concurrent`, or 32-thread benchmark
+claims.
+
 ## Node Group GC Batch Remove Smoke - 2026-06-19 18:09 CST
 
 Profile type: opt-in single-scene indoor coarse smoke for

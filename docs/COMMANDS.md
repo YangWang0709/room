@@ -346,7 +346,7 @@ generation first. Prefer precise reuse, caching, or reducing repeated node
 group creation over broad deferred cleanup. Any optimization must remain
 opt-in until same seed/gin/task A/B passes.
 
-## Run Node Group Batch Remove A/B Experiment
+## Run Node Group Batch Remove Equivalence A/B
 
 The node group batch remove path is an opt-in single-scene experiment. Default
 behavior is unchanged unless this variable is explicitly set for the candidate:
@@ -355,7 +355,131 @@ behavior is unchanged unless this variable is explicitly set for the candidate:
 INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
 ```
 
-Run the sequential baseline and candidate smoke:
+Run the full same seed/gin/task 10-room A/B without heavy timing
+instrumentation:
+
+```bash
+EXPERIMENT_TIMEOUT_SECONDS=14400 \
+bash scripts/run_gc_batch_remove_equivalence.sh
+```
+
+On the host, if the active `python` does not have `bpy`, point the script at
+the Infinigen conda interpreter:
+
+```bash
+PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python \
+EXPERIMENT_TIMEOUT_SECONDS=14400 \
+bash scripts/run_gc_batch_remove_equivalence.sh
+```
+
+The script runs:
+
+- baseline without `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS`:
+  `outputs/gc_batch_remove_equiv/baseline/coarse`
+- candidate with `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1`:
+  `outputs/gc_batch_remove_equiv/candidate_batch/coarse`
+
+Both use seed `0`, task `coarse`, `fast_solve.gin`, and these overrides:
+
+```text
+compose_indoors.terrain_enabled=False
+home_room_constraints.has_fewer_rooms=False
+restrict_solving.solve_max_rooms=10
+```
+
+The script explicitly unsets:
+
+```text
+INFINIGEN_PROFILE_TIMING
+INFINIGEN_PROFILE_GC
+INFINIGEN_PROFILE_ASSET_FACTORY
+INFINIGEN_PROFILE_BBOX
+```
+
+After generation, it runs:
+
+```bash
+python scripts/compare_indoor_outputs.py \
+  outputs/gc_batch_remove_equiv/baseline/coarse \
+  outputs/gc_batch_remove_equiv/candidate_batch/coarse
+```
+
+`EXPERIMENT_TIMEOUT_SECONDS` defaults to `14400`. Set it to `0` or an empty
+string to disable `timeout`. If either side times out or the compare prints
+`NO_COMPARABLE_JSON_FOUND`, the script reports that this is not a complete A/B
+and cannot be used as mainline evidence.
+
+Smoke mode:
+
+```bash
+EXPERIMENT_SMOKE_SINGLE_ROOM=1 \
+EXPERIMENT_TIMEOUT_SECONDS=3600 \
+bash scripts/run_gc_batch_remove_equivalence.sh
+```
+
+Smoke mode adds `singleroom.gin`, sets
+`home_room_constraints.has_fewer_rooms=True`, and sets
+`restrict_solving.solve_max_rooms=1`. A single-room PASS validates only the
+script and obvious equivalence. It does not prove the 10-room mainline target.
+
+2026-06-19 single-room smoke result: both new scripts completed and
+`compare_indoor_outputs.py` printed `FINAL: PASS` with two comparable JSON
+files. The wall-clock smoke was effectively flat, baseline `163.339s` versus
+candidate `163.462s` (`0.999x`), with no traceback, OOM, kill, or segmentation
+fault observed. Treat this as harness validation only.
+
+## Run Node Group Batch Remove Wall-Clock A/B
+
+Run the same baseline and candidate without heavy timing, recording wall time
+and max RSS:
+
+```bash
+EXPERIMENT_TIMEOUT_SECONDS=14400 \
+bash scripts/run_gc_batch_remove_walltime.sh
+```
+
+Host conda example:
+
+```bash
+PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python \
+EXPERIMENT_TIMEOUT_SECONDS=14400 \
+bash scripts/run_gc_batch_remove_walltime.sh
+```
+
+The script writes:
+
+```text
+outputs/gc_batch_remove_walltime/summary.txt
+outputs/gc_batch_remove_walltime/baseline.time.txt
+outputs/gc_batch_remove_walltime/candidate_batch.time.txt
+outputs/gc_batch_remove_walltime/compare.log
+```
+
+It records:
+
+- baseline and candidate exit code
+- shell-measured wall time
+- `/usr/bin/time -v` max RSS when available
+- `compare_indoor_outputs.py` result
+- explicit timeout or `NO_COMPARABLE_JSON_FOUND` warnings
+
+Smoke mode is available with:
+
+```bash
+EXPERIMENT_SMOKE_SINGLE_ROOM=1 \
+EXPERIMENT_TIMEOUT_SECONDS=3600 \
+bash scripts/run_gc_batch_remove_walltime.sh
+```
+
+Treat wall-clock speedup as accepted evidence only when both 10-room runs
+complete and `compare_indoor_outputs.py` prints `FINAL: PASS`.
+
+## Run Node Group Batch Remove Profiling Experiment
+
+This older script is for GC/profile timing attribution, not no-instrumentation
+wall-clock validation. It enables heavy timing and writes GC CSVs.
+
+Run the sequential baseline and candidate profiling smoke:
 
 ```bash
 EXPERIMENT_TIMEOUT_SECONDS=1200 bash scripts/run_gc_batch_remove_experiment.sh

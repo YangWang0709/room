@@ -1,5 +1,116 @@
 # Worklog
 
+## 2026-06-19 - Batch remove validation and wall-clock scripts
+
+### Round Goal
+
+Add the missing validation harnesses for the current strongest opt-in
+candidate, `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1`, without adding any new
+optimization. This round keeps the default behavior unchanged and does not
+change solver flow, random number calls, proposal order, accept/reject logic,
+solve steps for the normal 10-room target, object availability, or mainline gin
+configuration.
+
+### Changes
+
+Added `scripts/run_gc_batch_remove_equivalence.sh`.
+
+The script runs a sequential same seed/gin/task A/B:
+
+- baseline with `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS` unset:
+  `outputs/gc_batch_remove_equiv/baseline/coarse`
+- candidate with `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1`:
+  `outputs/gc_batch_remove_equiv/candidate_batch/coarse`
+
+By default both sides use seed `0`, task `coarse`, `fast_solve.gin`,
+`compose_indoors.terrain_enabled=False`,
+`home_room_constraints.has_fewer_rooms=False`, and
+`restrict_solving.solve_max_rooms=10`. The script explicitly unsets the heavy
+timing variables `INFINIGEN_PROFILE_TIMING`, `INFINIGEN_PROFILE_GC`,
+`INFINIGEN_PROFILE_ASSET_FACTORY`, and `INFINIGEN_PROFILE_BBOX`.
+
+`EXPERIMENT_TIMEOUT_SECONDS` defaults to `14400`. Setting it to `0` or an empty
+string disables `timeout`. After both runs, the script calls
+`scripts/compare_indoor_outputs.py` and prints an explicit warning when either
+side times out or when `NO_COMPARABLE_JSON_FOUND` appears.
+
+Added `scripts/run_gc_batch_remove_walltime.sh`.
+
+The wall-clock script uses the same baseline/candidate command shape without
+heavy instrumentation. It records per-run exit code, shell-measured wall time,
+and `/usr/bin/time -v` max RSS when available, then writes
+`outputs/gc_batch_remove_walltime/summary.txt` and runs
+`scripts/compare_indoor_outputs.py`.
+
+Both scripts support:
+
+```bash
+EXPERIMENT_SMOKE_SINGLE_ROOM=1
+```
+
+In smoke mode they add `singleroom.gin`, set
+`home_room_constraints.has_fewer_rooms=True`, and set
+`restrict_solving.solve_max_rooms=1`. This is only a script and obvious
+equivalence smoke. It does not prove that the normal 10-room indoor coarse path
+is behavior-preserving or faster.
+
+### Current Judgment
+
+Batch remove remains the strongest current single-scene candidate, but it has
+not passed a complete A/B. The 600s timeout smoke lowered measured
+`node_groups` remove duration from 366.131s to 46.350s while the candidate
+removed more node groups, but both sides timed out and no comparable JSON was
+produced. That is profiling evidence only.
+
+The acceptance bar is now explicit:
+
+1. Complete the normal 10-room baseline and candidate runs.
+2. Require `scripts/compare_indoor_outputs.py` to print `FINAL: PASS`.
+3. Show a wall-clock reduction with `scripts/run_gc_batch_remove_walltime.sh`
+   without heavy timing instrumentation.
+
+Until all three are true, `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1` must remain
+opt-in and must not be treated as mainline behavior.
+
+### Validation
+
+Static checks passed:
+
+```bash
+python -m py_compile scripts/compare_indoor_outputs.py
+bash -n scripts/run_gc_batch_remove_equivalence.sh
+bash -n scripts/run_gc_batch_remove_walltime.sh
+git diff --check
+```
+
+Single-room smoke was run only to validate the harness and catch obvious
+differences:
+
+```bash
+EXPERIMENT_SMOKE_SINGLE_ROOM=1 \
+EXPERIMENT_TIMEOUT_SECONDS=3600 \
+PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python \
+bash scripts/run_gc_batch_remove_equivalence.sh
+
+EXPERIMENT_SMOKE_SINGLE_ROOM=1 \
+EXPERIMENT_TIMEOUT_SECONDS=3600 \
+PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python \
+bash scripts/run_gc_batch_remove_walltime.sh
+```
+
+Both smoke compares passed with `matched_json_file_count: 2`,
+`MaskTag.json` and `solve_state.json` both `SAME`, and
+`numeric_max_abs_diff: 0`. The wall-clock smoke recorded:
+
+| run | status | wall seconds | max RSS KB |
+| --- | --- | ---: | ---: |
+| baseline | complete | 163.339 | 2,357,896 |
+| candidate_batch | complete | 163.462 | 2,350,572 |
+
+Smoke speedup was `0.999x`. No traceback, OOM, kill, or segmentation fault was
+observed in the smoke logs. This single-room result validates the scripts only;
+the normal 10-room A/B remains required.
+
 ## 2026-06-19 - Opt-in node group batch_remove experiment
 
 ### Round Goal

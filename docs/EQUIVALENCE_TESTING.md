@@ -119,11 +119,66 @@ Even with the same object set, `bpy.data.batch_remove` may change Blender's
 internal deletion order or data-block lifecycle. It must therefore pass a same
 seed/gin/task A/B before it can be considered behavior-preserving.
 
-Use the scripted A/B:
+Use the full equivalence A/B:
 
 ```bash
-EXPERIMENT_TIMEOUT_SECONDS=1200 bash scripts/run_gc_batch_remove_experiment.sh
+EXPERIMENT_TIMEOUT_SECONDS=14400 \
+bash scripts/run_gc_batch_remove_equivalence.sh
 ```
+
+This script does not enable `INFINIGEN_PROFILE_TIMING`,
+`INFINIGEN_PROFILE_GC`, `INFINIGEN_PROFILE_ASSET_FACTORY`, or
+`INFINIGEN_PROFILE_BBOX`. By default it uses the normal 10-room indoor coarse
+target:
+
+```text
+seed 0
+task coarse
+fast_solve.gin
+compose_indoors.terrain_enabled=False
+home_room_constraints.has_fewer_rooms=False
+restrict_solving.solve_max_rooms=10
+```
+
+It writes:
+
+```text
+outputs/gc_batch_remove_equiv/baseline/coarse
+outputs/gc_batch_remove_equiv/candidate_batch/coarse
+```
+
+Use the no-instrumentation wall-clock A/B after equivalence:
+
+```bash
+EXPERIMENT_TIMEOUT_SECONDS=14400 \
+bash scripts/run_gc_batch_remove_walltime.sh
+```
+
+The wall-clock script writes `outputs/gc_batch_remove_walltime/summary.txt`
+with per-run exit code, wall time, max RSS when available, speedup, and compare
+status.
+
+Both scripts support a single-room smoke:
+
+```bash
+EXPERIMENT_SMOKE_SINGLE_ROOM=1 \
+EXPERIMENT_TIMEOUT_SECONDS=3600 \
+bash scripts/run_gc_batch_remove_equivalence.sh
+```
+
+Smoke mode adds `singleroom.gin`, sets
+`home_room_constraints.has_fewer_rooms=True`, and sets
+`restrict_solving.solve_max_rooms=1`. A single-room PASS is useful only for
+checking the script and catching obvious differences. It is not evidence that
+the normal 10-room target is behavior-preserving or faster.
+
+The 2026-06-19 single-room smoke completed for both new scripts. Equivalence
+and wall-clock compares printed `FINAL: PASS` with `matched_json_file_count: 2`
+and `numeric_max_abs_diff: 0`. The wall-clock smoke measured baseline
+`163.339s` and candidate `163.462s`, or `0.999x`; max RSS was `2,357,896 KB`
+for baseline and `2,350,572 KB` for candidate. No traceback, OOM, kill, or
+segmentation fault was observed. This validates the harness only; the normal
+10-room A/B remains required.
 
 The 2026-06-19 smoke run produced a strong timing signal but did not validate
 equivalence: baseline and candidate both timed out, `compare_indoor_outputs.py`
@@ -131,6 +186,12 @@ reported `NO_COMPARABLE_JSON_FOUND`, and the final compare status was `FAIL`.
 Partial timing showed baseline `node_groups` remove duration at 366.131s and
 candidate batch remove duration at 46.350s, while the candidate progressed
 farther and removed more node groups. This is not comparable A/B evidence.
+
+Acceptance requires all of the following:
+
+1. The normal 10-room baseline and candidate both complete.
+2. `compare_indoor_outputs.py` prints `FINAL: PASS`.
+3. The no-heavy-instrumentation wall-clock script shows a speedup.
 
 Do not use this experiment for concurrent throughput work. The current scope is
 single indoor coarse scene speed only. Do not tune `manage_jobs.num_concurrent`
