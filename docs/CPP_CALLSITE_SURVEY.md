@@ -220,9 +220,15 @@ must pass same seed/gin/task A/B output comparison.
 The current bbox timing sample measured `union_all_bbox` at 0.075s out of
 334.068s, or 0.023%, so it is not a current C++ priority. The follow-up asset
 factory timing sample moved the first bottleneck to `AssetFactory.spawn_asset`
-and factory lifecycle, especially `GarbageCollect` context work. Those paths
-touch `bpy`, object creation/deletion, material/node data, parent/transform
-state, and seeded factory behavior, so they are not C++ call-site candidates.
-Any future delete batching, deferred cleanup, or factory bbox/cache experiment
-must be behavior-preserving and validated with same seed/gin/task A/B output
-comparison.
+and factory lifecycle, especially `GarbageCollect` context work. The GC target
+sample then localized that cost to `exit_cleanup` removal from
+`bpy.data.node_groups`: target `exit_cleanup` was 183.972s, `remove_duration`
+was 183.378s, `node_groups` alone was 181.131s, `enter_snapshot` was 0.422s,
+and broad scan time excluding remove was about 0.594s.
+
+Those paths touch `bpy`, object creation/deletion, material/node data,
+parent/transform state, `bpy.data` lifecycle, and seeded factory behavior, so
+they are not C++ call-site candidates. Any future GC scope adjustment, deferred
+cleanup, less frequent cleanup, batch cleanup, delete batching, or factory
+bbox/cache experiment must be opt-in, behavior-preserving, and validated with
+same seed/gin/task A/B output comparison.

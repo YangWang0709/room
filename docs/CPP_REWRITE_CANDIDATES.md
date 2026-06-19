@@ -23,14 +23,21 @@ Later fine-grained samples sharpened this guidance:
 - `union_all_bbox_duration` was 0.075s of 334.068s of
   `bbox_mesh_from_hipoly` time, or 0.023%; do not prioritize default C++
   bbox integration from current evidence.
-- `AssetFactory.spawn_asset` timing showed 276.641s total, with
-  `garbage_collect_context_duration` at 176.647s, or 63.854%, and
-  `create_asset_duration` at 98.738s, or 35.692%.
+- `AssetFactory.spawn_asset` timing showed 278.502s total in the latest short
+  sample, with `garbage_collect_context_duration` at 177.848s, or 63.859%,
+  `create_asset_duration` at 99.383s, or 35.685%, and
+  `delete_placeholder_duration` at 0.228s, or 0.082%.
+- `GarbageCollect` target timing showed the GC cost is concentrated in
+  `exit_cleanup` removal from `bpy.data.node_groups`: target `exit_cleanup`
+  was 183.972s, `remove_duration` was 183.378s, and `node_groups` alone was
+  181.131s. `enter_snapshot` was only 0.422s, and broad scan time excluding
+  remove was about 0.594s.
 
-`spawn_asset`, `create_asset`, Blender object creation/deletion, material/node
-generation, parent/transform operations, and `bpy` data-block lifecycle are not
-C++ rewrite targets. They need behavior-preserving Python/Blender experiments
-and same seed/gin/task A/B validation.
+`spawn_asset`, `create_asset`, `GarbageCollect`, Blender object
+creation/deletion, material/node generation, parent/transform operations, and
+`bpy` data-block lifecycle are not C++ rewrite targets. They need
+behavior-preserving Python/Blender experiments and same seed/gin/task A/B
+validation.
 
 ## Current Prototype Status
 
@@ -77,7 +84,8 @@ an opt-in `bbox_from_mesh.py` path for `bbox_min_max` / `bbox_union`, not a
 solver-control-flow rewrite, and only if bbox timing shows that
 `union_all_bbox` is a meaningful share of `bbox_mesh_from_hipoly`.
 Current bbox timing does not show that, so the next practical optimization
-target is factory lifecycle and `GarbageCollect` behavior, not C++ bbox.
+target is factory lifecycle and `GarbageCollect` behavior, especially
+`bpy.data.node_groups` cleanup, not C++ bbox.
 
 See also:
 
@@ -98,8 +106,8 @@ P2 candidates may be possible but need larger refactoring or have uncertain
 benefit.
 
 Not recommended means the code directly operates on Blender objects, creates or
-deletes objects, runs factory orchestration, builds materials/nodes, controls
-solver order, or consumes random numbers.
+deletes objects, runs factory orchestration, cleans up `bpy.data` lifecycle,
+builds materials/nodes, controls solver order, or consumes random numbers.
 
 ## P0 Candidates
 
@@ -380,9 +388,11 @@ solver order, or consumes random numbers.
   `Addition.revert`, `Resample.apply`, and `Resample.revert`.
 - Current logic: samples seeds, constructs factories, spawns placeholders or
   assets, finalizes Blender mesh objects, updates trimesh scene state, applies
-  relation constraints, and deletes rejected objects.
+  relation constraints, deletes rejected objects, and runs Blender data-block
+  cleanup through `GarbageCollect`.
 - Why it may be slow: this is the main hotspot, especially failed heavy
-  additions.
+  additions. The current GC sample points specifically to `bpy.data.node_groups`
+  removal during cleanup.
 - Touches `bpy`: yes.
 - Touches random numbers: yes for factory and instance seeds.
 - Inputs as primitive/NumPy array: no.

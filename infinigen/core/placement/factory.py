@@ -265,7 +265,11 @@ class AssetFactory:
         export_path = None
         with (
             FixedSeed(int_hash((self.factory_seed, i))),
-            butil.GarbageCollect(gc_targets, verbose=False),
+            butil.GarbageCollect(
+                gc_targets,
+                verbose=False,
+                caller="AssetFactory.spawn_asset",
+            ),
         ):
             params = self.asset_parameters(distance, vis_distance)
             params.update(kwargs)
@@ -350,7 +354,11 @@ class AssetFactory:
             ]
 
             fixed_seed = FixedSeed(int_hash((self.factory_seed, i)))
-            gc_context = butil.GarbageCollect(gc_targets, verbose=False)
+            gc_context = butil.GarbageCollect(
+                gc_targets,
+                verbose=False,
+                caller="AssetFactory.spawn_asset",
+            )
 
             with fixed_seed:
                 step_start_time = time.perf_counter()

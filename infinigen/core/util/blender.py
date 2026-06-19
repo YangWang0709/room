@@ -4,9 +4,13 @@
 # Authors: Alex Raistrick, Zeyu Ma, Lahav Lipson, Hei Law, Lingjie Mei, Karhan Kayan
 
 
+import csv
 import logging
+import os
+import sys
+import time
 from contextlib import nullcontext
-from itertools import chain
+from itertools import chain, count
 from math import prod
 from pathlib import Path
 
@@ -27,6 +31,200 @@ from . import math as mutil
 from .logging import Suppress
 
 logger = logging.getLogger(__name__)
+
+GC_TIMING_ENV_VAR = "INFINIGEN_PROFILE_GC"
+GC_TIMING_CSV_NAME = "infinigen_gc_timing.csv"
+DEFAULT_GC_TIMING_CSV = Path("/tmp") / GC_TIMING_CSV_NAME
+
+GC_TIMING_FIELDNAMES = [
+    "row_type",
+    "context_id",
+    "caller",
+    "target_count",
+    "keep_in_use",
+    "keep_orig",
+    "enter_total_duration",
+    "exit_total_duration",
+    "total_duration",
+    "success",
+    "error_type",
+    "phase",
+    "target_name",
+    "target_len_before",
+    "target_len_after",
+    "keep_names_count",
+    "scanned_count",
+    "skipped_in_use_count",
+    "skipped_keep_name_count",
+    "skipped_no_gc_count",
+    "removed_count",
+    "remove_duration",
+    "duration",
+]
+
+_GC_TIMING_CONTEXT_COUNTER = count(1)
+_GC_TIMING_WRITE_FAILED = False
+
+
+def _env_truthy(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _profile_gc_enabled() -> bool:
+    return _env_truthy(GC_TIMING_ENV_VAR) or _env_truthy("INFINIGEN_PROFILE_TIMING")
+
+
+def _gc_timing_csv_path() -> Path:
+    solver_timing = sys.modules.get(
+        "infinigen.core.constraints.example_solver.timing"
+    )
+    if solver_timing is not None:
+        current_output_folder = getattr(solver_timing, "current_output_folder", None)
+        if current_output_folder is not None:
+            output_folder = current_output_folder()
+            if output_folder is not None:
+                return Path(output_folder) / GC_TIMING_CSV_NAME
+    return DEFAULT_GC_TIMING_CSV
+
+
+def _write_gc_timing_row(row: dict):
+    global _GC_TIMING_WRITE_FAILED
+
+    if _GC_TIMING_WRITE_FAILED:
+        return
+
+    path = _gc_timing_csv_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_header = not path.exists() or path.stat().st_size == 0
+        with path.open("a", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=GC_TIMING_FIELDNAMES)
+            if write_header:
+                writer.writeheader()
+            writer.writerow(
+                {field: row.get(field, "") for field in GC_TIMING_FIELDNAMES}
+            )
+    except OSError:
+        _GC_TIMING_WRITE_FAILED = True
+        logger.exception("Failed to write GarbageCollect timing CSV at %s", path)
+
+
+def _safe_len(value):
+    try:
+        return len(value)
+    except Exception:
+        return ""
+
+
+def _bpy_data_target_name(target) -> str:
+    for name in (
+        "objects",
+        "collections",
+        "movieclips",
+        "particles",
+        "meshes",
+        "curves",
+        "armatures",
+        "node_groups",
+        "textures",
+        "materials",
+        "images",
+    ):
+        try:
+            candidate = getattr(bpy.data, name, None)
+            if candidate is target or candidate == target:
+                return name
+        except Exception:
+            continue
+
+    target_name = getattr(target, "name", "")
+    if target_name:
+        return str(target_name)
+    return target.__class__.__name__
+
+
+def _empty_gc_target_timing_row(context_id, phase, target):
+    return {
+        "row_type": "target",
+        "context_id": context_id,
+        "phase": phase,
+        "target_name": _bpy_data_target_name(target),
+        "target_len_before": "",
+        "target_len_after": "",
+        "keep_names_count": "",
+        "scanned_count": 0,
+        "skipped_in_use_count": 0,
+        "skipped_keep_name_count": 0,
+        "skipped_no_gc_count": 0,
+        "removed_count": 0,
+        "remove_duration": 0.0,
+        "duration": 0.0,
+    }
+
+
+def _snapshot_gc_targets_timed(targets, context_id):
+    names = []
+    for target in targets:
+        row = _empty_gc_target_timing_row(context_id, "enter_snapshot", target)
+        row["target_len_before"] = _safe_len(target)
+        captured_names = set()
+        start_time = time.perf_counter()
+        try:
+            for obj in target:
+                name = obj.name
+                captured_names.add(name)
+                row["scanned_count"] += 1
+            names.append(captured_names)
+        finally:
+            row["target_len_after"] = _safe_len(target)
+            row["keep_names_count"] = len(captured_names)
+            row["duration"] = time.perf_counter() - start_time
+            _write_gc_timing_row(row)
+    return names
+
+
+def _garbage_collect_timed(
+    targets,
+    keep_in_use=True,
+    keep_names=None,
+    verbose=False,
+    context_id="",
+):
+    if keep_names is None:
+        keep_names = [[]] * len(targets)
+
+    for target, orig in zip(targets, keep_names):
+        row = _empty_gc_target_timing_row(context_id, "exit_cleanup", target)
+        row["target_len_before"] = _safe_len(target)
+        row["keep_names_count"] = _safe_len(orig)
+        start_time = time.perf_counter()
+        try:
+            for obj in target:
+                row["scanned_count"] += 1
+                if keep_in_use and obj.users > 0:
+                    row["skipped_in_use_count"] += 1
+                    continue
+                name = obj.name
+                if name in orig:
+                    row["skipped_keep_name_count"] += 1
+                    continue
+                if "(no gc)" in name:
+                    row["skipped_no_gc_count"] += 1
+                    continue
+                if verbose:
+                    print(f"Garbage collecting {obj} from {target}")
+                remove_start_time = time.perf_counter()
+                try:
+                    target.remove(obj)
+                finally:
+                    row["remove_duration"] += (
+                        time.perf_counter() - remove_start_time
+                    )
+                row["removed_count"] += 1
+        finally:
+            row["target_len_after"] = _safe_len(target)
+            row["duration"] = time.perf_counter() - start_time
+            _write_gc_timing_row(row)
 
 
 @gin.configurable("geometry")
@@ -237,6 +435,16 @@ def garbage_collect(targets, keep_in_use=True, keep_names=None, verbose=False):
     if keep_names is None:
         keep_names = [[]] * len(targets)
 
+    if _profile_gc_enabled():
+        _garbage_collect_timed(
+            targets,
+            keep_in_use=keep_in_use,
+            keep_names=keep_names,
+            verbose=verbose,
+            context_id=f"direct-{next(_GC_TIMING_CONTEXT_COUNTER)}",
+        )
+        return
+
     for t, orig in zip(targets, keep_names):
         for o in t:
             if keep_in_use and o.users > 0:
@@ -251,22 +459,93 @@ def garbage_collect(targets, keep_in_use=True, keep_names=None, verbose=False):
 
 
 class GarbageCollect:
-    def __init__(self, targets=None, keep_in_use=True, keep_orig=True, verbose=False):
+    def __init__(
+        self,
+        targets=None,
+        keep_in_use=True,
+        keep_orig=True,
+        verbose=False,
+        caller=None,
+    ):
         self.targets = targets or get_all_bpy_data_targets()
         self.keep_in_use = keep_in_use
         self.keep_orig = keep_orig
         self.verbose = verbose
+        self.caller = caller or "unknown"
+        self._gc_timing_enabled = False
+        self._gc_context_id = ""
+        self._gc_enter_duration = 0.0
+        self._gc_exit_duration = 0.0
+
+    def _write_context_timing_row(self, success, error_type=""):
+        if not self._gc_timing_enabled:
+            return
+
+        total_duration = self._gc_enter_duration + self._gc_exit_duration
+
+        _write_gc_timing_row(
+            {
+                "row_type": "context",
+                "context_id": self._gc_context_id,
+                "caller": self.caller,
+                "target_count": _safe_len(self.targets),
+                "keep_in_use": self.keep_in_use,
+                "keep_orig": self.keep_orig,
+                "enter_total_duration": self._gc_enter_duration,
+                "exit_total_duration": self._gc_exit_duration,
+                "total_duration": total_duration,
+                "success": success,
+                "error_type": error_type,
+            }
+        )
 
     def __enter__(self):
-        self.names = [set(o.name for o in t) for t in self.targets]
+        self._gc_timing_enabled = _profile_gc_enabled()
+        if not self._gc_timing_enabled:
+            self.names = [set(o.name for o in t) for t in self.targets]
+            return
 
-    def __exit__(self, *_):
-        garbage_collect(
-            self.targets,
-            keep_in_use=self.keep_in_use,
-            keep_names=self.names,
-            verbose=self.verbose,
-        )
+        self._gc_context_id = next(_GC_TIMING_CONTEXT_COUNTER)
+        start_time = time.perf_counter()
+        try:
+            self.names = _snapshot_gc_targets_timed(
+                self.targets, self._gc_context_id
+            )
+        except BaseException as exc:
+            self._gc_enter_duration = time.perf_counter() - start_time
+            self._write_context_timing_row(False, exc.__class__.__name__)
+            raise
+        else:
+            self._gc_enter_duration = time.perf_counter() - start_time
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        if not self._gc_timing_enabled:
+            garbage_collect(
+                self.targets,
+                keep_in_use=self.keep_in_use,
+                keep_names=self.names,
+                verbose=self.verbose,
+            )
+            return
+
+        start_time = time.perf_counter()
+        try:
+            _garbage_collect_timed(
+                self.targets,
+                keep_in_use=self.keep_in_use,
+                keep_names=self.names,
+                verbose=self.verbose,
+                context_id=self._gc_context_id,
+            )
+        except BaseException as exc:
+            self._gc_exit_duration = time.perf_counter() - start_time
+            self._write_context_timing_row(False, exc.__class__.__name__)
+            raise
+        else:
+            self._gc_exit_duration = time.perf_counter() - start_time
+            success = exc_type is None
+            error_type = "" if exc_type is None else exc_type.__name__
+            self._write_context_timing_row(success, error_type)
 
 
 def select_none():

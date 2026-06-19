@@ -241,6 +241,62 @@ Use this timing to decide whether the next behavior-preserving experiment
 should inspect `create_asset`, placeholder deletion, placeholder finalization,
 or `GarbageCollect` context behavior.
 
+## Run GarbageCollect Target Timing
+
+Enable target-level `garbage_collect` / `GarbageCollect` timing:
+
+```bash
+INFINIGEN_PROFILE_GC=1 bash scripts/profile_indoor_solver.sh
+```
+
+The existing solver timing flag also enables GC timing:
+
+```bash
+INFINIGEN_PROFILE_TIMING=1 INFINIGEN_PROFILE_GC=1 bash scripts/profile_indoor_solver.sh
+```
+
+When the solver output folder is available, GC timing is written to:
+
+```text
+<output_folder>/infinigen_gc_timing.csv
+```
+
+Outside the solver path, the fallback path is:
+
+```text
+/tmp/infinigen_gc_timing.csv
+```
+
+Analyze GC timing:
+
+```bash
+python scripts/analyze_gc_timing.py /tmp/infinigen_gc_timing.csv
+```
+
+or point it at the run output:
+
+```bash
+python scripts/analyze_gc_timing.py outputs/profile_gc_current/coarse/infinigen_gc_timing.csv
+```
+
+Fresh-folder bounded sample used for the 2026-06-19 GC target timing run:
+
+```bash
+INFINIGEN_PROFILE_TIMING=1 INFINIGEN_PROFILE_BBOX=1 INFINIGEN_PROFILE_ASSET_FACTORY=1 INFINIGEN_PROFILE_GC=1 timeout 600s python -m infinigen_examples.generate_indoors \
+  --seed 0 \
+  --task coarse \
+  --output_folder outputs/profile_gc_current/coarse \
+  -g fast_solve.gin \
+  -p compose_indoors.terrain_enabled=False \
+     home_room_constraints.has_fewer_rooms=False \
+     restrict_solving.solve_max_rooms=10
+```
+
+Use this timing to decide whether GC cost is in enter snapshot, exit scan,
+remove calls, or a specific `bpy.data` target. Current evidence points to
+`bpy.data.node_groups` removal, not `create_asset`, placeholder delete,
+`union_all_bbox`, or a C++ kernel candidate.
+
 ## Single-Room Coarse Generation
 
 Single-room generation is useful only as a smoke test for scripts and workflow.

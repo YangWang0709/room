@@ -1,5 +1,86 @@
 # Profile Results
 
+## GarbageCollect Target Timing CSV - 2026-06-19 15:50 CST
+
+Profile type: 600s timeout sample with solver timing, bbox timing, asset
+factory timing, and GC target timing enabled. This is not a complete profile.
+
+Command:
+
+```bash
+INFINIGEN_PROFILE_TIMING=1 INFINIGEN_PROFILE_BBOX=1 INFINIGEN_PROFILE_ASSET_FACTORY=1 INFINIGEN_PROFILE_GC=1 timeout 600s python -m infinigen_examples.generate_indoors \
+  --seed 0 \
+  --task coarse \
+  --output_folder outputs/profile_gc_current/coarse \
+  -g fast_solve.gin \
+  -p compose_indoors.terrain_enabled=False \
+     home_room_constraints.has_fewer_rooms=False \
+     restrict_solving.solve_max_rooms=10
+```
+
+Timing CSV path:
+
+```text
+outputs/profile_gc_current/coarse/infinigen_gc_timing.csv
+```
+
+Rows:
+
+```text
+4821 GC timing rows
+501 context rows
+4320 target rows
+```
+
+Analyzer command:
+
+```bash
+python scripts/analyze_gc_timing.py outputs/profile_gc_current/coarse/infinigen_gc_timing.csv
+```
+
+### GC Phase Totals
+
+| metric | total |
+| --- | ---: |
+| target `enter_snapshot` duration | 0.422s |
+| target `exit_cleanup` duration | 183.972s |
+| `remove_duration` | 183.378s |
+| estimated exit scan duration excluding remove | 0.594s |
+| exit cleanup scanned count | 1,528,801 |
+| exit cleanup removed count | 7,843 |
+| exit cleanup removed rate | 0.513% |
+
+### GC Target Totals
+
+| target_name | rows | duration (s) | enter (s) | exit (s) | remove (s) | scanned | removed |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| node_groups | 1040 | 181.131 | 0.063 | 181.068 | 180.971 | 444,107 | 7,582 |
+| meshes | 1040 | 2.433 | 0.015 | 2.419 | 2.407 | 84,055 | 261 |
+| materials | 1000 | 0.829 | 0.345 | 0.485 | 0.000 | 2,497,028 | 0 |
+| objects | 40 | 0.001 | 0.000 | 0.001 | 0.000 | 2,955 | 0 |
+| textures | 1000 | 0.000 | 0.000 | 0.000 | 0.000 | 0 | 0 |
+
+### GC Judgment
+
+The current first measured cause inside `AssetFactory.spawn_asset` is
+`GarbageCollect` context work. In this fresh sample,
+`garbage_collect_context_duration` was 177.848s of 278.502s `spawn_asset` time,
+or 63.859%. `create_asset_duration` remained secondary at 99.383s, or
+35.685%, and `delete_placeholder_duration` was only 0.228s, or 0.082%.
+
+Within GC, the dominant internal stage is not enter snapshot and not broad
+scan. `exit_cleanup` dominates, and nearly all measured time is spent in
+`remove` calls on `bpy.data.node_groups`. The next behavior-preserving
+candidate should therefore be an opt-in node-group cleanup strategy, batch
+cleanup experiment, deferred cleanup experiment, or less-frequent cleanup
+experiment, each validated with same seed/gin/task A/B comparison.
+
+This is not a C++ candidate: `GarbageCollect` directly touches Blender
+`bpy.data` lifecycle. The earlier bbox judgment also still stands:
+`union_all_bbox_duration` was only 0.075s out of 334.068s of
+`bbox_mesh_from_hipoly` time, or 0.023%, so default C++ bbox integration is not
+the priority.
+
 ## Asset Factory Spawn Timing CSV - 2026-06-19 15:15 CST
 
 Profile type: 600s timeout sample with solver timing, bbox timing, and asset

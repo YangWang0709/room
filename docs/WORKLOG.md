@@ -1,5 +1,121 @@
 # Worklog
 
+## 2026-06-19 - GarbageCollect target timing
+
+### Round Goal
+
+Keep generation behavior unchanged while adding optional target-level timing
+inside `infinigen.core.util.blender.GarbageCollect` / `garbage_collect` and
+using a bounded sample to identify whether the GC cost is enter snapshot,
+exit cleanup scanning, removal, or a specific `bpy.data` target.
+
+### Changes
+
+Added optional GC timing:
+
+- `infinigen/core/util/blender.py`
+
+Enable with either:
+
+```bash
+INFINIGEN_PROFILE_GC=1
+```
+
+or the existing:
+
+```bash
+INFINIGEN_PROFILE_TIMING=1
+```
+
+The timing CSV is `infinigen_gc_timing.csv`. It is written to the current
+solver output folder when available, otherwise to:
+
+```text
+/tmp/infinigen_gc_timing.csv
+```
+
+Recorded rows include context-level timing for `GarbageCollect` enter/exit and
+target-level timing for `enter_snapshot` and `exit_cleanup`. Target rows record
+the `bpy.data` target name, target lengths, scanned count, skipped count,
+removed count, remove duration, and total target duration.
+
+The default non-timing `garbage_collect` / `GarbageCollect` behavior remains
+unchanged. The timing path preserves target traversal order, `keep_in_use`,
+`keep_names`, and `verbose` semantics, preserves remove conditions, and
+re-raises original exceptions.
+
+Added GC timing analysis:
+
+- `scripts/analyze_gc_timing.py`
+
+The script summarizes context count, enter versus exit totals, target duration
+totals, scan/remove counts, slowest target rows, zero-remove high-duration
+rows, and prints guidance for the next behavior-preserving experiment.
+
+### Validation Notes
+
+Ran a bounded 600s GC timing sample using:
+
+```bash
+INFINIGEN_PROFILE_TIMING=1 INFINIGEN_PROFILE_BBOX=1 INFINIGEN_PROFILE_ASSET_FACTORY=1 INFINIGEN_PROFILE_GC=1 timeout 600s python -m infinigen_examples.generate_indoors \
+  --seed 0 \
+  --task coarse \
+  --output_folder outputs/profile_gc_current/coarse \
+  -g fast_solve.gin \
+  -p compose_indoors.terrain_enabled=False \
+     home_room_constraints.has_fewer_rooms=False \
+     restrict_solving.solve_max_rooms=10
+```
+
+The sample produced 4821 GC timing rows at:
+
+```text
+outputs/profile_gc_current/coarse/infinigen_gc_timing.csv
+```
+
+Analyzer result:
+
+- context rows: 501
+- target rows: 4320
+- target `enter_snapshot` duration: 0.422s
+- target `exit_cleanup` duration: 183.972s
+- `remove_duration`: 183.378s
+- estimated exit scan time excluding remove: 0.594s
+- exit cleanup scanned count: 1,528,801
+- exit cleanup removed count: 7,843
+
+Target duration totals:
+
+- `node_groups`: 181.131s, with 7,582 removals
+- `meshes`: 2.433s, with 261 removals
+- `materials`: 0.829s, with 0 removals
+- `textures`: 0.000s, with 0 removals
+
+The current dominant GC cost is `exit_cleanup` removal from
+`bpy.data.node_groups`. `enter_snapshot` is not dominant, broad scan cost is not
+dominant, and zero-remove rows are low-duration in this sample.
+
+### Behavior Guardrails
+
+This round is timing only. It does not optimize the solver, does not reduce
+solve steps, does not disable objects, does not change gin configuration, does
+not change `GarbageCollect` behavior, and does not change generated content.
+
+The current first measured cause is `AssetFactory.spawn_asset` spending most of
+its measured internal time inside `GarbageCollect` context work. In the fresh GC
+sample, `garbage_collect_context_duration` was 177.848s of 278.502s
+`spawn_asset` time, or 63.859%. `create_asset_duration` was secondary at
+99.383s, or 35.685%; `delete_placeholder_duration` was only 0.228s, or 0.082%.
+
+The earlier bbox timing still stands: `union_all_bbox` was only 0.075s out of
+334.068s, or 0.023%, so default C++ bbox integration is not the priority.
+`GarbageCollect` touches Blender `bpy.data` lifecycle and is not a C++ rewrite
+target.
+
+Any future GC scope adjustment, deferred cleanup, less frequent cleanup, batch
+cleanup, or target-specific cleanup must start opt-in and pass same
+seed/gin/task A/B validation with `scripts/compare_indoor_outputs.py`.
+
 ## 2026-06-19 - Asset factory spawn timing
 
 ### Round Goal
