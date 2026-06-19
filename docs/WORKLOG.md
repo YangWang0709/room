@@ -1,5 +1,114 @@
 # Worklog
 
+## 2026-06-19 - Equivalence testing and C++ rewrite planning
+
+### Round Goal
+
+Add an A/B equivalence validation harness and document the C++ rewrite plan
+without optimizing solver behavior, changing gin configuration, reducing solve
+steps, disabling objects, changing random number order, or writing C++ code.
+
+### Changes
+
+Added A/B comparison tooling:
+
+- `scripts/compare_indoor_outputs.py`
+
+Added documentation:
+
+- `docs/EQUIVALENCE_TESTING.md`
+- `docs/CPP_REWRITE_CANDIDATES.md`
+
+Updated handoff docs to make the next phase explicit:
+
+- The next stage is behavior-preserving optimization.
+- Every optimization must pass A/B equivalence validation first.
+- C++ is only for pure computation kernels.
+- Reduced content or lower generation quality is not the main acceleration path.
+- The best current investigation target remains failed or unaccepted
+  `Addition.apply` work from heavy factories.
+- Cheap preflight rejection is risky unless it preserves random number order,
+  proposal order, accept/reject decisions, and final outputs.
+
+### A/B Comparator
+
+Run:
+
+```bash
+python scripts/compare_indoor_outputs.py outputs/a/coarse outputs/b/coarse
+```
+
+The script recursively pairs `.json` files by relative path, canonicalizes
+obvious run-specific fields and absolute output/temp paths, sorts known
+unordered tag lists such as `tags`, `child_tags`, and `parent_tags`, compares
+numeric values with `--rtol` and `--atol`, prints first differences, reports
+numeric `max_abs_diff`, and ends with `PASS` or `FAIL`.
+
+If no paired comparable JSON exists, it prints:
+
+```text
+NO_COMPARABLE_JSON_FOUND
+```
+
+That result is a failure, not a pass.
+
+### Smoke A/B
+
+Ran a small single-room coarse smoke A/B inside the existing `infinigen`
+container using the same seed, gin, task, and parameter overrides:
+
+```text
+outputs/ab_smoke_a/coarse
+outputs/ab_smoke_b/coarse
+```
+
+Compared on the host with:
+
+```bash
+python scripts/compare_indoor_outputs.py \
+  outputs/ab_smoke_a/coarse \
+  outputs/ab_smoke_b/coarse
+```
+
+Result:
+
+```text
+matched_json_file_count: 2
+SAME MaskTag.json numeric_max_abs_diff=0
+SAME solve_state.json numeric_max_abs_diff=0
+FINAL: PASS
+```
+
+This smoke only validates the comparison workflow. It is not evidence that
+reducing room count is an acceptable speed optimization.
+
+### C++ Rewrite Planning
+
+The top P0 candidates are extracted pure numeric kernels, not the current
+Blender wrappers:
+
+1. Batch bbox min/max reduction.
+2. Batch bbox union.
+3. AABB pair overlap matrix.
+4. Axis-aligned bounds and containment checks.
+5. Batch plane distance and support margin checks.
+
+Do not rewrite `Addition.apply`, `sample_rand_placeholder`, factory
+`spawn_asset` / `spawn_placeholder`, material/node generation, solver control
+flow, random sampling, proposal order, or accept/reject logic in C++.
+
+### Risk Notes
+
+`infinigen/assets/utils/bbox_from_mesh.py::union_all_bbox` still has suspicious
+logic:
+
+```python
+maxs = pmaxs if maxs is None else np.maximum(pmins, mins)
+```
+
+This round intentionally does not fix it. A fix may change generated geometry
+and needs a separate sanity test plus A/B equivalence validation.
+
 ## 2026-06-19 13:25 CST - Indoor solver timing CSV analysis
 
 ### Round Goal

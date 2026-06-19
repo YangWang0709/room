@@ -28,6 +28,19 @@ Rows:
 3061 proposal-attempt rows
 ```
 
+Current use of these results:
+
+- The next phase should be behavior-preserving optimization, guarded by A/B
+  output comparison.
+- Each optimization must pass `scripts/compare_indoor_outputs.py` against a
+  baseline generated with the same seed, gin configuration, task, and output
+  target.
+- C++ should only be considered for pure computation kernels that do not touch
+  `bpy`, random number generation, solver control flow, proposal order, or
+  accept/reject logic.
+- Reduced content, fewer rooms, fewer solve steps, disabled object classes, or
+  lower quality should not be used as the main acceleration strategy.
+
 The run timed out during `on_floor_freestanding_8 / kitchen_0/0` while attempting `KitchenIslandFactory`. The cProfile file `/tmp/indoors_coarse.prof` was not produced by this timeout run in the container, so this section is based on the timing CSV.
 
 ### generator_class apply_duration Top 10
@@ -110,6 +123,17 @@ Sorted by wasted apply time, the main clusters are:
 - max observed `garbage_collect_duration`: 22.470s
 
 Garbage collection can spike and should stay visible in future profiling, but heavy failed addition apply work is the first target.
+
+The most valuable next investigation is failed or unaccepted `Addition.apply`
+work in heavy factories. The current top apply clusters are
+`KitchenIslandFactory`, `LargeShelfFactory`, `TableDiningFactory`,
+`BeverageFridgeFactory`, `LargePlantContainerFactory`,
+`SimpleBookcaseFactory`, `SimpleDeskFactory`, `BathtubFactory`, and
+`OvenFactory`.
+
+Cheap preflight rejection is a promising but risky idea. It should not enter the
+main path unless A/B evidence shows it preserves random number consumption,
+proposal order, accept/reject decisions, and final outputs.
 
 ### Addition Breakdown
 
@@ -204,3 +228,6 @@ maxs = pmaxs if maxs is None else np.maximum(pmins, mins)
 ```
 
 This should be verified with a focused multi-child bounding-box sanity test in the next round before any fix is made.
+
+Fixing this may change generated geometry and must be treated as a separate
+behavior change with its own sanity test and A/B equivalence validation.

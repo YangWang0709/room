@@ -6,7 +6,9 @@ Accelerate Infinigen indoor scene generation for Isaac Sim static environment ex
 
 ## Current Priority
 
-Focus on the indoor coarse stage first.
+Focus on the indoor coarse stage first. The next phase is
+behavior-preserving optimization: keep the original generation behavior as the
+baseline and prove equivalence before accepting speed changes.
 
 ## Current Performance Judgment
 
@@ -47,12 +49,34 @@ cd /opt/infinigen
 ## Working Principles
 
 - Profile first, then optimize.
+- Run A/B equivalence validation before and after each optimization.
+- Use the same seed, gin configuration, task, and output target for each A/B.
 - Make small, reversible changes.
 - Do not start by rewriting Blender integration or moving large areas to C++.
+- Use C++ only for pure computation kernels that do not touch `bpy`, random
+  number generation, solver control flow, proposal order, or accept/reject
+  logic.
 - Do not directly break the original generation logic.
+- Do not use reduced content or lower generation quality as the main speedup
+  path.
 - Prefer new `fast` / `isaac` configuration paths for optimization experiments.
 - Do not commit large generated files such as `outputs`, `.blend`, `.usd`, `.usdc`, `.prof`, or `.zip`.
 - Do not save passwords, tokens, SSH private keys, or other secrets.
+
+## Current Optimization Guardrails
+
+- Current best target to investigate: failed or unaccepted `Addition.apply`
+  attempts from heavy factories such as `KitchenIslandFactory`,
+  `LargeShelfFactory`, `BeverageFridgeFactory`, `TableDiningFactory`, and
+  related indoor factories.
+- Cheap preflight rejection is risky. It can only become a mainline
+  optimization after proving it preserves random number consumption, proposal
+  order, accept/reject decisions, and final outputs.
+- Do not fix the suspected `union_all_bbox` issue while doing unrelated speed
+  work. Any fix may change generated geometry and needs a separate sanity test
+  plus A/B equivalence validation.
+- Use `scripts/compare_indoor_outputs.py` to compare coarse output JSON from
+  baseline and candidate runs.
 
 ## New Session Startup
 

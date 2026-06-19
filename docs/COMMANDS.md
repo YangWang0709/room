@@ -65,6 +65,33 @@ The script prints:
 - failed proposal clusters
 - C++ rewrite candidate guidance
 
+## Compare Indoor Coarse Outputs
+
+Use this for baseline versus candidate A/B validation:
+
+```bash
+python scripts/compare_indoor_outputs.py outputs/a/coarse outputs/b/coarse
+```
+
+With explicit tolerances and a larger diff budget:
+
+```bash
+python scripts/compare_indoor_outputs.py \
+  --rtol 1e-6 \
+  --atol 1e-6 \
+  --max-diffs 50 \
+  outputs/a/coarse \
+  outputs/b/coarse
+```
+
+The script recursively pairs `.json` files by relative path, canonicalizes
+obvious run-specific fields and output/temp paths, sorts known unordered tag
+lists such as `tags`, `child_tags`, and `parent_tags`, reports missing/extra
+files, prints per-file `SAME` or `DIFFERENT`, reports numeric `max_abs_diff`,
+and ends with `PASS` or `FAIL`.
+
+`NO_COMPARABLE_JSON_FOUND` is a failed validation, not a pass.
+
 ## View Profile Top 80
 
 ```bash
@@ -79,6 +106,9 @@ The default profile path is:
 
 ## Single-Room Coarse Generation
 
+Single-room generation is useful only as a smoke test for scripts and workflow.
+It is not evidence that reducing room count is a valid speed optimization.
+
 ```bash
 python -m infinigen_examples.generate_indoors \
   --seed 0 \
@@ -90,6 +120,40 @@ python -m infinigen_examples.generate_indoors \
      restrict_single_supported_roomtype=True \
      restrict_solving.solve_max_rooms=1
 ```
+
+## Smoke A/B Comparator Check
+
+Use the same seed, same gin files, same task, and same parameter overrides for
+both folders:
+
+```bash
+python -m infinigen_examples.generate_indoors \
+  --seed 0 \
+  --task coarse \
+  --output_folder outputs/ab_smoke_a/coarse \
+  -g fast_solve.gin \
+  -p compose_indoors.terrain_enabled=False \
+     home_room_constraints.has_fewer_rooms=True \
+     restrict_single_supported_roomtype=True \
+     restrict_solving.solve_max_rooms=1
+
+python -m infinigen_examples.generate_indoors \
+  --seed 0 \
+  --task coarse \
+  --output_folder outputs/ab_smoke_b/coarse \
+  -g fast_solve.gin \
+  -p compose_indoors.terrain_enabled=False \
+     home_room_constraints.has_fewer_rooms=True \
+     restrict_single_supported_roomtype=True \
+     restrict_solving.solve_max_rooms=1
+
+python scripts/compare_indoor_outputs.py \
+  outputs/ab_smoke_a/coarse \
+  outputs/ab_smoke_b/coarse
+```
+
+Do not use this reduced single-room smoke command as the main performance
+target. Full indoor coarse A/B must keep the normal room count and solve steps.
 
 ## Single-Room USDC Export
 
