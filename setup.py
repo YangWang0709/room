@@ -57,6 +57,15 @@ if is_build_step and not MINIMAL_INSTALL:
 
 cython_extensions = []
 
+cython_extensions.append(
+    Extension(
+        name="infinigen.core.constraints.cpp.geometry_kernels_cpp",
+        sources=["infinigen/core/constraints/cpp/geometry_kernels.pyx"],
+        include_dirs=[numpy.get_include()],
+        language="c++",
+    )
+)
+
 if not MINIMAL_INSTALL:
     if BUILD_BNURBS:
         cython_extensions.append(

@@ -1,5 +1,64 @@
 # Worklog
 
+## 2026-06-19 - Standalone C++ geometry kernel prototypes
+
+### Round Goal
+
+Add the first standalone Cython/C++ numeric kernel prototypes, Python fallback,
+unit tests, and microbenchmark without changing indoor solver behavior.
+
+### Changes
+
+Added a pure numeric kernel package:
+
+- `infinigen/core/constraints/cpp/__init__.py`
+- `infinigen/core/constraints/cpp/geometry_kernels.py`
+- `infinigen/core/constraints/cpp/geometry_kernels.pyx`
+
+Added tests and benchmarking:
+
+- `tests/test_geometry_kernels.py`
+- `scripts/bench_geometry_kernels.py`
+
+Updated the existing Cython build list in `setup.py` with:
+
+- `infinigen.core.constraints.cpp.geometry_kernels_cpp`
+
+The new kernels cover:
+
+1. `bbox_min_max(points)`
+2. `bbox_union(mins, maxs)`
+3. `aabb_overlap_matrix(mins_a, maxs_a, mins_b, maxs_b)`
+4. `aabb_contains(outer_min, outer_max, inner_min, inner_max)`
+
+### Behavior Guardrails
+
+This round does not import or call the new kernels from:
+
+- `union_all_bbox`
+- `validity.py`
+- evaluator modules
+- annealing
+- `Addition.apply`
+
+The new package does not import `bpy`, does not import `gin`, does not call
+random number generators, and does not touch `spawn_asset` or
+`spawn_placeholder`.
+
+Boundary contact is treated as inclusive overlap/containment in the standalone
+AABB helpers. This is conservative for a future broad-phase because touching
+pairs must still reach the existing exact collision/contact code.
+
+`infinigen/assets/utils/bbox_from_mesh.py::union_all_bbox` still has suspicious
+logic and remains unchanged:
+
+```python
+maxs = pmaxs if maxs is None else np.maximum(pmins, mins)
+```
+
+Any fix to that behavior remains separate work requiring a focused sanity test
+and same seed/gin/task A/B equivalence validation.
+
 ## 2026-06-19 - Equivalence testing and C++ rewrite planning
 
 ### Round Goal

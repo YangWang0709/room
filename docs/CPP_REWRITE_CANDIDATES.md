@@ -18,6 +18,43 @@ C++ should only be used for pure computation kernels. It must not change the
 solver control flow, proposal order, random number call order, accept/reject
 logic, or Blender `bpy` side effects.
 
+## Current Prototype Status
+
+The first standalone Cython/C++ geometry kernel prototype now lives under:
+
+```text
+infinigen/core/constraints/cpp/
+```
+
+Implemented helpers:
+
+1. `bbox_min_max(points)`
+2. `bbox_union(mins, maxs)`
+3. `aabb_overlap_matrix(mins_a, maxs_a, mins_b, maxs_b)`
+4. `aabb_contains(outer_min, outer_max, inner_min, inner_max)`
+
+The Python wrapper provides NumPy fallback when the compiled extension is not
+available. The extension module is:
+
+```text
+infinigen.core.constraints.cpp.geometry_kernels_cpp
+```
+
+These kernels are not connected to the indoor solver, evaluator,
+`union_all_bbox`, annealing, or `Addition.apply` by default. Therefore this
+prototype should not change generated scenes, random number consumption,
+proposal order, or accept/reject decisions.
+
+Boundary contact is currently treated as inclusive overlap/containment in the
+AABB prototype. That choice is documented in tests and keeps future broad-phase
+use conservative: a pair that touches at the boundary must not be filtered out
+before existing exact contact checks run.
+
+Before any default solver integration, rerun unit tests, microbenchmarks, and a
+same seed/gin/task A/B equivalence comparison. The next intended experiment is
+an opt-in `bbox_from_mesh.py` path for `bbox_min_max` / `bbox_union`, not a
+solver-control-flow rewrite.
+
 ## Priority Rules
 
 P0 candidates are pure computation, do not touch `bpy`, do not touch random

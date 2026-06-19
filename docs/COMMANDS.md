@@ -104,6 +104,32 @@ The default profile path is:
 /tmp/indoors_coarse.prof
 ```
 
+## Build Standalone Geometry Kernels
+
+The standalone Cython/C++ geometry kernels are optional. If the extension is
+not compiled, `infinigen.core.constraints.cpp.geometry_kernels` falls back to
+NumPy implementations.
+
+```bash
+python -m pip install -e .
+```
+
+Run fast unit tests:
+
+```bash
+python -m pytest tests/test_geometry_kernels.py -q
+```
+
+Run the microbenchmark:
+
+```bash
+python scripts/bench_geometry_kernels.py
+```
+
+These commands do not run indoor generation and do not connect the kernels to
+the solver. Before any future solver-facing opt-in integration, run a same
+seed/gin/task A/B comparison with `scripts/compare_indoor_outputs.py`.
+
 ## Single-Room Coarse Generation
 
 Single-room generation is useful only as a smoke test for scripts and workflow.

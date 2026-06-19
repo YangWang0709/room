@@ -2,6 +2,23 @@
 
 ## Suggested Next Round
 
+1. Keep the new standalone geometry kernels out of the default indoor solver
+   path until an opt-in integration is implemented and validated.
+2. Run `python -m pytest tests/test_geometry_kernels.py -q` and
+   `python scripts/bench_geometry_kernels.py` after every kernel change.
+3. Consider an opt-in experiment in
+   `infinigen/assets/utils/bbox_from_mesh.py`, limited first to replacing the
+   numeric `points.min(axis=0)` / `points.max(axis=0)` portion with
+   `bbox_min_max`.
+4. If adding that opt-in path, gate it behind a flag or experimental config so
+   the baseline generation behavior remains the default.
+5. Before any solver-facing use, run same seed/gin/task A/B with
+   `scripts/compare_indoor_outputs.py` and require matching coarse JSON.
+6. Do not fix the suspected `union_all_bbox` max update while doing this
+   opt-in kernel integration. Treat that as a separate behavior change.
+
+## Existing Optimization Guidance
+
 1. Start the behavior-preserving optimization phase by running an A/B baseline
    and candidate comparison with `scripts/compare_indoor_outputs.py`.
 2. Keep the same seed, gin files, gin parameter overrides, task, output target,
