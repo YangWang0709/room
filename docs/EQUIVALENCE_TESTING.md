@@ -48,6 +48,10 @@ performance optimizations:
 - Changing simulated annealing accept/reject logic.
 - Skipping Blender object creation or deletion when later code depends on those
   side effects.
+- Delaying or throttling `bpy.data` garbage collection. For example,
+  `INFINIGEN_GC_NODE_GROUP_INTERVAL>1` can change node group data-block name
+  allocation, lifetime, and residual data-block visibility before the next
+  cleanup.
 - Adding cheap preflight rejection that rejects a proposal earlier than the
   original path. Even when the rejection is logically correct, it can change
   random number consumption, proposal ordering, retry behavior, and final
@@ -92,6 +96,29 @@ python scripts/compare_indoor_outputs.py \
 If the script prints `NO_COMPARABLE_JSON_FOUND`, the run is not a pass. Record
 that no comparable JSON was available and add a better comparison target before
 using the run as evidence.
+
+## Node Group GC Throttling Experiment
+
+`INFINIGEN_GC_NODE_GROUP_INTERVAL` is an opt-in experiment only. When unset or
+set to `1`, `GarbageCollect` keeps the original behavior and cleans
+`bpy.data.node_groups` every time. Values greater than `1` skip node group
+cleanup opportunities until the interval is due, while other targets such as
+meshes, materials, and textures still use the normal cleanup path.
+
+This experiment is risky because delaying node group removal can change Blender
+data-block name allocation and can leave residual node groups visible to later
+contexts. It is not a C++ optimization; it touches `bpy.data` lifecycle state.
+
+Use the scripted A/B:
+
+```bash
+EXPERIMENT_TIMEOUT_SECONDS=1200 bash scripts/run_gc_node_group_experiment.sh
+```
+
+If the candidate differs from the baseline, times out without comparable JSON,
+or shows obvious errors or memory growth, it must not become a mainline
+optimization. If it passes, repeat with a longer profile and explicit memory
+observation before considering a narrower opt-in production path.
 
 ## Recommended Scale-Up
 

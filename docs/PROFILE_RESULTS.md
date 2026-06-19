@@ -1,5 +1,77 @@
 # Profile Results
 
+## Node Group GC Throttling Smoke - 2026-06-19 16:49 CST
+
+Profile type: opt-in behavior-preserving experiment smoke with
+`INFINIGEN_GC_NODE_GROUP_INTERVAL=20` candidate. Both runs used the same seed,
+task, gin file, and gin overrides. This is not a complete A/B because both
+baseline and candidate hit the 1200s timeout and no comparable coarse JSON was
+produced.
+
+Command:
+
+```bash
+EXPERIMENT_TIMEOUT_SECONDS=1200 bash scripts/run_gc_node_group_experiment.sh
+```
+
+Output folders:
+
+```text
+outputs/gc_node_group_ab/baseline/coarse
+outputs/gc_node_group_ab/candidate_interval20/coarse
+```
+
+Timing CSV paths:
+
+```text
+outputs/gc_node_group_ab/baseline/coarse/infinigen_gc_timing.csv
+outputs/gc_node_group_ab/candidate_interval20/coarse/infinigen_gc_timing.csv
+```
+
+Rows:
+
+| run | CSV rows | context rows | target rows | status |
+| --- | ---: | ---: | ---: | --- |
+| baseline interval=1 | 6,276 | 644 | 5,632 | timeout |
+| candidate interval=20 | 5,259 | 547 | 4,712 | timeout |
+
+Compare result:
+
+```text
+matched_json_file_count: 0
+NO_COMPARABLE_JSON_FOUND
+FINAL: FAIL
+```
+
+### Node Group Throttling Totals
+
+| run | interval | node_group_exit_rows | skipped | executed | node_groups_remove | max_node_groups |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| baseline | 1 | 702 | 0 | 702 | 369.071s | 1,678 |
+| candidate | 20 | 587 | 558 | 29 | 443.414s | 5,646 |
+
+The interval=20 candidate skipped 558 node group cleanup opportunities and
+executed only 29, but raw `node_groups_remove` did not decrease in this
+timeout sample. It increased by 74.343s, or about 20.1%, because the deferred
+cleanup produced much larger burst removals, including single cleanup rows of
+273.749s and 142.666s. The candidate advanced farther in solver stage progress
+before timeout, but the run is not comparable and cannot be accepted as an
+optimization.
+
+### Smoke Judgment
+
+Current first cause remains `bpy.data.node_groups` removal, not bbox and not a
+C++ numeric kernel. The interval=20 throttle remains an opt-in experiment only.
+Default behavior is unchanged when `INFINIGEN_GC_NODE_GROUP_INTERVAL` is unset
+or `1`.
+
+This smoke suggests that naive deferred node group cleanup can shift cost into
+large remove bursts and may also affect Blender data-block name allocation or
+leave residual data-blocks visible to later contexts. It must not become a
+mainline optimization without a completed same seed/gin/task A/B pass, longer
+profile, and memory observation. If further experiments continue, try smaller
+intervals or a more targeted cleanup policy and keep every candidate opt-in.
+
 ## GarbageCollect Target Timing CSV - 2026-06-19 15:50 CST
 
 Profile type: 600s timeout sample with solver timing, bbox timing, asset

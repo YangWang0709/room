@@ -297,6 +297,74 @@ remove calls, or a specific `bpy.data` target. Current evidence points to
 `bpy.data.node_groups` removal, not `create_asset`, placeholder delete,
 `union_all_bbox`, or a C++ kernel candidate.
 
+## Run Node Group GC Throttling A/B Experiment
+
+The node group cleanup throttle is an opt-in experiment. Default behavior is
+unchanged when `INFINIGEN_GC_NODE_GROUP_INTERVAL` is unset or set to `1`.
+
+Run the scripted baseline and candidate comparison:
+
+```bash
+EXPERIMENT_TIMEOUT_SECONDS=1200 bash scripts/run_gc_node_group_experiment.sh
+```
+
+On the host, if the active `python` does not have `bpy`, point the script at
+the Infinigen conda interpreter:
+
+```bash
+PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python \
+EXPERIMENT_TIMEOUT_SECONDS=1200 \
+bash scripts/run_gc_node_group_experiment.sh
+```
+
+The script runs:
+
+- baseline with `INFINIGEN_GC_NODE_GROUP_INTERVAL=1`:
+  `outputs/gc_node_group_ab/baseline/coarse`
+- candidate with `INFINIGEN_GC_NODE_GROUP_INTERVAL=20`:
+  `outputs/gc_node_group_ab/candidate_interval20/coarse`
+
+Both use seed `0`, task `coarse`, `fast_solve.gin`, and these overrides:
+
+```text
+compose_indoors.terrain_enabled=False
+home_room_constraints.has_fewer_rooms=False
+restrict_solving.solve_max_rooms=10
+```
+
+Both enable:
+
+```text
+INFINIGEN_PROFILE_TIMING=1
+INFINIGEN_PROFILE_GC=1
+INFINIGEN_PROFILE_ASSET_FACTORY=1
+```
+
+After generation, the script runs:
+
+```bash
+python scripts/compare_indoor_outputs.py \
+  outputs/gc_node_group_ab/baseline/coarse \
+  outputs/gc_node_group_ab/candidate_interval20/coarse
+```
+
+If either side times out, the output is only a smoke/profile sample, not a
+complete A/B equivalence result.
+
+Analyze the GC timing files:
+
+```bash
+python scripts/analyze_gc_timing.py \
+  outputs/gc_node_group_ab/baseline/coarse/infinigen_gc_timing.csv
+
+python scripts/analyze_gc_timing.py \
+  outputs/gc_node_group_ab/candidate_interval20/coarse/infinigen_gc_timing.csv
+```
+
+The analyzer reports interval values, skipped and executed node group cleanup
+counts, node group duration and remove duration totals, an estimated saved-time
+signal, and the maximum observed `node_groups` datablock count.
+
 ## Single-Room Coarse Generation
 
 Single-room generation is useful only as a smoke test for scripts and workflow.

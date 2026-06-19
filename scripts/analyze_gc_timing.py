@@ -30,6 +30,10 @@ TARGET_TABLE_COLUMNS = (
     "skipped_no_gc_count",
     "removed_count",
     "remove_duration",
+    "node_group_interval",
+    "node_group_cleanup_skipped",
+    "node_group_cleanup_due",
+    "effective_cleanup",
     "duration",
 )
 
@@ -73,6 +77,36 @@ def as_int(row: dict[str, str], key: str) -> int:
 
 def as_bool(row: dict[str, str], key: str) -> bool:
     return (row.get(key) or "").strip().lower() in {"1", "true", "yes", "y"}
+
+
+def has_value(row: dict[str, str], key: str) -> bool:
+    return bool((row.get(key) or "").strip())
+
+
+def cleanup_skipped(row: dict[str, str]) -> bool:
+    return as_bool(row, "node_group_cleanup_skipped")
+
+
+def cleanup_effective(row: dict[str, str]) -> bool:
+    if has_value(row, "effective_cleanup"):
+        return as_bool(row, "effective_cleanup")
+    return row.get("phase") == "exit_cleanup"
+
+
+def cleanup_due(row: dict[str, str]) -> bool:
+    if has_value(row, "node_group_cleanup_due"):
+        return as_bool(row, "node_group_cleanup_due")
+    return cleanup_effective(row)
+
+
+def as_optional_int(row: dict[str, str], key: str) -> int | None:
+    value = (row.get(key) or "").strip()
+    if not value:
+        return None
+    try:
+        return int(float(value))
+    except ValueError:
+        return None
 
 
 def clean_label(value: str | None) -> str:
@@ -294,6 +328,11 @@ def slow_target_rows(targets: list[dict[str, str]]) -> list[dict[str, object]]:
         ):
             item[key] = as_int(row, key)
         item["remove_duration"] = as_float(row, "remove_duration")
+        interval = as_optional_int(row, "node_group_interval")
+        item["node_group_interval"] = "" if interval is None else interval
+        item["node_group_cleanup_skipped"] = cleanup_skipped(row)
+        item["node_group_cleanup_due"] = cleanup_due(row)
+        item["effective_cleanup"] = cleanup_effective(row)
         item["duration"] = as_float(row, "duration")
         item["target_name"] = clean_label(row.get("target_name"))
         rows.append(item)
@@ -327,8 +366,93 @@ def print_zero_remove_rows(targets: list[dict[str, str]]) -> None:
     )
 
 
+def node_group_exit_rows(targets: list[dict[str, str]]) -> list[dict[str, str]]:
+    return [
+        row
+        for row in targets
+        if row.get("phase") == "exit_cleanup"
+        and clean_label(row.get("target_name")) == "node_groups"
+    ]
+
+
+def print_node_group_throttling_summary(targets: list[dict[str, str]]) -> None:
+    print("\nF. Node group throttling summary")
+    node_rows = node_group_exit_rows(targets)
+    intervals = sorted(
+        {
+            interval
+            for interval in (
+                as_optional_int(row, "node_group_interval") for row in node_rows
+            )
+            if interval is not None
+        }
+    )
+    interval_label = ",".join(str(interval) for interval in intervals) or "1"
+
+    skipped_rows = [row for row in node_rows if cleanup_skipped(row)]
+    executed_rows = [
+        row for row in node_rows if not cleanup_skipped(row) and cleanup_effective(row)
+    ]
+    node_duration = sum(as_float(row, "duration") for row in node_rows)
+    node_remove_duration = sum(as_float(row, "remove_duration") for row in node_rows)
+    executed_duration = sum(as_float(row, "duration") for row in executed_rows)
+    executed_remove_duration = sum(
+        as_float(row, "remove_duration") for row in executed_rows
+    )
+    skipped_duration = sum(as_float(row, "duration") for row in skipped_rows)
+    estimated_saved_time = (
+        executed_remove_duration / len(executed_rows) * len(skipped_rows)
+        if executed_rows
+        else 0.0
+    )
+    max_node_group_count = 0
+    for row in node_rows:
+        max_node_group_count = max(
+            max_node_group_count,
+            as_int(row, "target_len_before"),
+            as_int(row, "target_len_after"),
+        )
+
+    print_table(
+        (
+            "interval",
+            "node_group_exit_rows",
+            "skipped_cleanup",
+            "executed_cleanup",
+            "node_groups_duration",
+            "node_groups_remove",
+            "executed_duration",
+            "executed_remove",
+            "skipped_duration",
+            "estimated_saved_time",
+            "max_node_groups",
+        ),
+        (
+            (
+                interval_label,
+                len(node_rows),
+                len(skipped_rows),
+                len(executed_rows),
+                node_duration,
+                node_remove_duration,
+                executed_duration,
+                executed_remove_duration,
+                skipped_duration,
+                estimated_saved_time,
+                max_node_group_count,
+            ),
+        ),
+    )
+    if skipped_rows:
+        print(
+            "  Note: estimated_saved_time is a naive skipped-count estimate; "
+            "compare raw node_groups_remove totals and A/B output before "
+            "treating throttling as a speedup."
+        )
+
+
 def print_guidance(targets: list[dict[str, str]]) -> None:
-    print("\nF. GC guidance")
+    print("\nG. GC guidance")
     enter_total = phase_duration(targets, "enter_snapshot")
     exit_total = phase_duration(targets, "exit_cleanup")
     remove_total = sum(as_float(row, "remove_duration") for row in targets)
@@ -358,6 +482,17 @@ def print_guidance(targets: list[dict[str, str]]) -> None:
     print(f"  exit_cleanup_scanned_count: {scanned_total}")
     print(f"  exit_cleanup_removed_count: {removed_total}")
     print(f"  exit_cleanup_removed_rate: {removed_rate:.3%}")
+
+    node_rows = node_group_exit_rows(targets)
+    skipped_node_groups = sum(1 for row in node_rows if cleanup_skipped(row))
+    executed_node_groups = sum(
+        1
+        for row in node_rows
+        if not cleanup_skipped(row) and cleanup_effective(row)
+    )
+    if skipped_node_groups:
+        print(f"  node_group_cleanup_skipped_count: {skipped_node_groups}")
+        print(f"  node_group_cleanup_executed_count: {executed_node_groups}")
 
     if top_target:
         print(
@@ -415,6 +550,7 @@ def main() -> None:
     print_target_count_summary(targets)
     print_slow_target_rows(targets)
     print_zero_remove_rows(targets)
+    print_node_group_throttling_summary(targets)
     print_guidance(targets)
 
 

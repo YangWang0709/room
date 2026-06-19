@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 GC_TIMING_ENV_VAR = "INFINIGEN_PROFILE_GC"
 GC_TIMING_CSV_NAME = "infinigen_gc_timing.csv"
 DEFAULT_GC_TIMING_CSV = Path("/tmp") / GC_TIMING_CSV_NAME
+GC_NODE_GROUP_INTERVAL_ENV_VAR = "INFINIGEN_GC_NODE_GROUP_INTERVAL"
 
 GC_TIMING_FIELDNAMES = [
     "row_type",
@@ -59,11 +60,17 @@ GC_TIMING_FIELDNAMES = [
     "skipped_no_gc_count",
     "removed_count",
     "remove_duration",
+    "node_group_interval",
+    "node_group_cleanup_skipped",
+    "node_group_cleanup_due",
+    "effective_cleanup",
     "duration",
 ]
 
 _GC_TIMING_CONTEXT_COUNTER = count(1)
 _GC_TIMING_WRITE_FAILED = False
+_GC_NODE_GROUP_CLEANUP_COUNTER = 0
+_GC_NODE_GROUP_INTERVAL_WARNING_EMITTED = False
 
 
 def _env_truthy(name: str) -> bool:
@@ -72,6 +79,36 @@ def _env_truthy(name: str) -> bool:
 
 def _profile_gc_enabled() -> bool:
     return _env_truthy(GC_TIMING_ENV_VAR) or _env_truthy("INFINIGEN_PROFILE_TIMING")
+
+
+def _gc_node_group_interval() -> int:
+    raw_value = os.environ.get(GC_NODE_GROUP_INTERVAL_ENV_VAR)
+    if raw_value is None or raw_value.strip() == "":
+        return 1
+
+    try:
+        interval = int(raw_value)
+    except ValueError:
+        _warn_invalid_gc_node_group_interval(raw_value)
+        return 1
+
+    if interval <= 0:
+        _warn_invalid_gc_node_group_interval(raw_value)
+        return 1
+    return interval
+
+
+def _warn_invalid_gc_node_group_interval(raw_value):
+    global _GC_NODE_GROUP_INTERVAL_WARNING_EMITTED
+
+    if _GC_NODE_GROUP_INTERVAL_WARNING_EMITTED:
+        return
+    _GC_NODE_GROUP_INTERVAL_WARNING_EMITTED = True
+    logger.warning(
+        "%s must be a positive integer; got %r. Falling back to 1.",
+        GC_NODE_GROUP_INTERVAL_ENV_VAR,
+        raw_value,
+    )
 
 
 def _gc_timing_csv_path() -> Path:
@@ -143,7 +180,41 @@ def _bpy_data_target_name(target) -> str:
     return target.__class__.__name__
 
 
-def _empty_gc_target_timing_row(context_id, phase, target):
+def _is_bpy_data_node_groups(target) -> bool:
+    try:
+        node_groups = bpy.data.node_groups
+        return target is node_groups or target == node_groups
+    except Exception:
+        return False
+
+
+def _node_group_cleanup_decision(target, interval):
+    global _GC_NODE_GROUP_CLEANUP_COUNTER
+
+    if not _is_bpy_data_node_groups(target):
+        return {
+            "node_group_cleanup_skipped": False,
+            "node_group_cleanup_due": "",
+            "effective_cleanup": True,
+        }
+
+    if interval <= 1:
+        return {
+            "node_group_cleanup_skipped": False,
+            "node_group_cleanup_due": True,
+            "effective_cleanup": True,
+        }
+
+    _GC_NODE_GROUP_CLEANUP_COUNTER += 1
+    cleanup_due = _GC_NODE_GROUP_CLEANUP_COUNTER % interval == 0
+    return {
+        "node_group_cleanup_skipped": not cleanup_due,
+        "node_group_cleanup_due": cleanup_due,
+        "effective_cleanup": cleanup_due,
+    }
+
+
+def _empty_gc_target_timing_row(context_id, phase, target, node_group_interval):
     return {
         "row_type": "target",
         "context_id": context_id,
@@ -158,14 +229,21 @@ def _empty_gc_target_timing_row(context_id, phase, target):
         "skipped_no_gc_count": 0,
         "removed_count": 0,
         "remove_duration": 0.0,
+        "node_group_interval": node_group_interval,
+        "node_group_cleanup_skipped": False,
+        "node_group_cleanup_due": "",
+        "effective_cleanup": "",
         "duration": 0.0,
     }
 
 
 def _snapshot_gc_targets_timed(targets, context_id):
     names = []
+    node_group_interval = _gc_node_group_interval()
     for target in targets:
-        row = _empty_gc_target_timing_row(context_id, "enter_snapshot", target)
+        row = _empty_gc_target_timing_row(
+            context_id, "enter_snapshot", target, node_group_interval
+        )
         row["target_len_before"] = _safe_len(target)
         captured_names = set()
         start_time = time.perf_counter()
@@ -193,34 +271,40 @@ def _garbage_collect_timed(
     if keep_names is None:
         keep_names = [[]] * len(targets)
 
+    node_group_interval = _gc_node_group_interval()
     for target, orig in zip(targets, keep_names):
-        row = _empty_gc_target_timing_row(context_id, "exit_cleanup", target)
+        row = _empty_gc_target_timing_row(
+            context_id, "exit_cleanup", target, node_group_interval
+        )
+        cleanup_decision = _node_group_cleanup_decision(target, node_group_interval)
+        row.update(cleanup_decision)
         row["target_len_before"] = _safe_len(target)
         row["keep_names_count"] = _safe_len(orig)
         start_time = time.perf_counter()
         try:
-            for obj in target:
-                row["scanned_count"] += 1
-                if keep_in_use and obj.users > 0:
-                    row["skipped_in_use_count"] += 1
-                    continue
-                name = obj.name
-                if name in orig:
-                    row["skipped_keep_name_count"] += 1
-                    continue
-                if "(no gc)" in name:
-                    row["skipped_no_gc_count"] += 1
-                    continue
-                if verbose:
-                    print(f"Garbage collecting {obj} from {target}")
-                remove_start_time = time.perf_counter()
-                try:
-                    target.remove(obj)
-                finally:
-                    row["remove_duration"] += (
-                        time.perf_counter() - remove_start_time
-                    )
-                row["removed_count"] += 1
+            if row["effective_cleanup"]:
+                for obj in target:
+                    row["scanned_count"] += 1
+                    if keep_in_use and obj.users > 0:
+                        row["skipped_in_use_count"] += 1
+                        continue
+                    name = obj.name
+                    if name in orig:
+                        row["skipped_keep_name_count"] += 1
+                        continue
+                    if "(no gc)" in name:
+                        row["skipped_no_gc_count"] += 1
+                        continue
+                    if verbose:
+                        print(f"Garbage collecting {obj} from {target}")
+                    remove_start_time = time.perf_counter()
+                    try:
+                        target.remove(obj)
+                    finally:
+                        row["remove_duration"] += (
+                            time.perf_counter() - remove_start_time
+                        )
+                    row["removed_count"] += 1
         finally:
             row["target_len_after"] = _safe_len(target)
             row["duration"] = time.perf_counter() - start_time
@@ -445,7 +529,13 @@ def garbage_collect(targets, keep_in_use=True, keep_names=None, verbose=False):
         )
         return
 
+    node_group_interval = _gc_node_group_interval()
+    throttle_node_groups = node_group_interval > 1
     for t, orig in zip(targets, keep_names):
+        if throttle_node_groups and _is_bpy_data_node_groups(t):
+            cleanup_decision = _node_group_cleanup_decision(t, node_group_interval)
+            if not cleanup_decision["effective_cleanup"]:
+                continue
         for o in t:
             if keep_in_use and o.users > 0:
                 continue
@@ -496,6 +586,7 @@ class GarbageCollect:
                 "total_duration": total_duration,
                 "success": success,
                 "error_type": error_type,
+                "node_group_interval": _gc_node_group_interval(),
             }
         )
 

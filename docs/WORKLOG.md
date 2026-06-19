@@ -1,5 +1,107 @@
 # Worklog
 
+## 2026-06-19 - Opt-in node group GC throttling experiment
+
+### Round Goal
+
+Add the first behavior-preserving optimization experiment around the current
+measured GC hotspot while keeping default generation behavior unchanged. The
+latest GC target timing showed `bpy.data.node_groups` removal as the dominant
+cost: `enter_snapshot` was 0.422s, `exit_cleanup` was 183.972s,
+`remove_duration` was 183.378s, and `node_groups` alone was 181.131s.
+
+This round does not optimize the solver, does not change gin configuration,
+does not reduce solve steps, does not change random number calls, does not
+change proposal ordering, does not change accept/reject logic, does not fix
+`union_all_bbox`, and does not add C++ to Blender lifecycle code.
+
+### Changes
+
+Added an opt-in node group cleanup throttle:
+
+- `infinigen/core/util/blender.py`
+
+New environment variable:
+
+```bash
+INFINIGEN_GC_NODE_GROUP_INTERVAL=20
+```
+
+When unset or set to `1`, `GarbageCollect` keeps the original behavior and
+cleans `bpy.data.node_groups` every time. Values greater than `1` skip the
+first `N-1` node group cleanup opportunities and run the normal cleanup loop on
+the `N`th opportunity. The experiment only affects `bpy.data.node_groups`;
+other targets still use the original cleanup path each time.
+
+Invalid interval values such as `0`, negative numbers, or non-integers fall
+back to `1` and emit a warning once.
+
+Extended GC timing rows with:
+
+- `node_group_interval`
+- `node_group_cleanup_skipped`
+- `node_group_cleanup_due`
+- `effective_cleanup`
+
+Added analyzer support:
+
+- `scripts/analyze_gc_timing.py`
+
+The analyzer now reports interval values, skipped and executed node group
+cleanup counts, node group total duration, node group remove duration, a rough
+saved-time estimate, and maximum observed `node_groups` count.
+
+Added experiment runner:
+
+- `scripts/run_gc_node_group_experiment.sh`
+
+It runs a baseline with `INFINIGEN_GC_NODE_GROUP_INTERVAL=1`, a candidate with
+`INFINIGEN_GC_NODE_GROUP_INTERVAL=20`, and then compares the output folders
+with `scripts/compare_indoor_outputs.py`.
+
+### Behavior Guardrails
+
+Default behavior remains unchanged when the new environment variable is unset
+or `1`. The throttle path does not change node group remove conditions; when a
+node group cleanup is due, it still uses the existing `garbage_collect` loop.
+The experiment does not use `bpy.ops.outliner.orphans_purge`.
+
+This optimization candidate is risky because delaying node group removal may
+change Blender data-block name allocation or leave residual node groups visible
+to later contexts. If A/B comparison fails, the throttle must not become a
+mainline optimization. If A/B comparison passes, the next step is a longer
+profile plus memory observation.
+
+`GarbageCollect` touches `bpy.data` lifecycle and remains unsuitable for C++.
+The earlier bbox result still stands: `union_all_bbox` was only 0.075s out of
+334.068s, or 0.023%, so C++ bbox integration is not the current priority.
+
+### Smoke Result
+
+Ran the opt-in experiment with:
+
+```bash
+EXPERIMENT_TIMEOUT_SECONDS=1200 bash scripts/run_gc_node_group_experiment.sh
+```
+
+Both runs timed out, so this was not a complete A/B:
+
+- baseline interval=1: timeout, 6,276 GC timing rows
+- candidate interval=20: timeout, 5,259 GC timing rows
+- `compare_indoor_outputs.py`: `NO_COMPARABLE_JSON_FOUND`, `FINAL: FAIL`
+
+Node group cleanup summary:
+
+- baseline: 702 executed node group cleanups, 0 skipped,
+  `node_groups_remove` 369.071s, max node groups 1,678
+- candidate: 29 executed node group cleanups, 558 skipped,
+  `node_groups_remove` 443.414s, max node groups 5,646
+
+The candidate advanced farther before timeout, but raw node group remove time
+did not decrease. It increased by 74.343s in this partial sample, with large
+burst removals after deferred cleanup. This interval=20 experiment is not a
+validated speedup and must remain opt-in only.
+
 ## 2026-06-19 - GarbageCollect target timing
 
 ### Round Goal

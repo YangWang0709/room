@@ -12,34 +12,45 @@
    `spawn_asset` time, or 63.859%; `create_asset_duration` was secondary at
    99.383s, or 35.685%, and `delete_placeholder_duration` was only 0.228s, or
    0.082%.
-3. Focus the next behavior-preserving experiment on `butil.GarbageCollect`
-   `exit_cleanup` for `bpy.data.node_groups`. The GC target sample measured
-   183.972s in target `exit_cleanup`, 183.378s in `remove_duration`, and
-   181.131s in `node_groups` alone. `enter_snapshot` was only 0.422s, and
-   broad scan time excluding remove was about 0.594s.
-4. If trying GC scope adjustment, node-group-specific cleanup, less frequent
+3. Treat `bpy.data.node_groups` removal as the current first behavior-preserving
+   experiment target. The GC target sample measured 183.972s in target
+   `exit_cleanup`, 183.378s in `remove_duration`, and 181.131s in
+   `node_groups` alone. `enter_snapshot` was only 0.422s, and broad scan time
+   excluding remove was about 0.594s.
+4. Use the opt-in `INFINIGEN_GC_NODE_GROUP_INTERVAL` experiment only behind the
+   environment variable. Unset or `1` keeps default behavior; values greater
+   than `1` throttle only `bpy.data.node_groups` cleanup. This may change
+   Blender data-block name allocation or leave residual node groups, so it must
+   pass same seed/gin/task A/B before being treated as usable.
+5. Do not treat the interval=20 smoke as a validated speedup. Both runs timed
+   out, `compare_indoor_outputs.py` found no comparable JSON, and raw
+   `node_groups_remove` increased from 369.071s to 443.414s in the partial
+   sample despite 558 skipped cleanup opportunities. Any follow-up should try
+   smaller intervals or a more targeted node group policy and keep the
+   experiment opt-in.
+6. If trying GC scope adjustment, node-group-specific cleanup, less frequent
    cleanup, deferred cleanup, batch cleanup, or factory bbox/cache reuse,
    preserve random number consumption, proposal order, accept/reject decisions,
    object parent/transform/delete semantics, and final output. Validate with
    `scripts/compare_indoor_outputs.py`.
-5. Use `INFINIGEN_PROFILE_GC=1` or `INFINIGEN_PROFILE_TIMING=1` to collect
+7. Use `INFINIGEN_PROFILE_GC=1` or `INFINIGEN_PROFILE_TIMING=1` to collect
    `infinigen_gc_timing.csv`, then run `scripts/analyze_gc_timing.py`.
-6. Use `INFINIGEN_PROFILE_ASSET_FACTORY=1` or `INFINIGEN_PROFILE_TIMING=1` to
+8. Use `INFINIGEN_PROFILE_ASSET_FACTORY=1` or `INFINIGEN_PROFILE_TIMING=1` to
    collect `infinigen_asset_factory_timing.csv`, then run
    `scripts/analyze_asset_factory_timing.py`.
-7. Use `INFINIGEN_PROFILE_BBOX=1` or `INFINIGEN_PROFILE_TIMING=1` to collect
+9. Use `INFINIGEN_PROFILE_BBOX=1` or `INFINIGEN_PROFILE_TIMING=1` to collect
    `infinigen_bbox_timing.csv`, then run `scripts/analyze_bbox_timing.py` only
    if bbox behavior changes are under consideration.
-8. Run `python -m pytest tests/test_geometry_kernels.py -q` and
+10. Run `python -m pytest tests/test_geometry_kernels.py -q` and
    `python scripts/bench_geometry_kernels.py` after every kernel change.
-9. When build environments cannot compile the geometry extension, use
+11. When build environments cannot compile the geometry extension, use
    `INFINIGEN_DISABLE_GEOMETRY_CPP=True python -m pip install -e .` and verify
    the NumPy fallback remains importable.
-10. Consider an opt-in bbox C++ experiment only if a later timing sample
+12. Consider an opt-in bbox C++ experiment only if a later timing sample
    contradicts the current 0.023% `union_all_bbox` share.
-11. Before any solver-facing use, run same seed/gin/task A/B with
+13. Before any solver-facing use, run same seed/gin/task A/B with
    `scripts/compare_indoor_outputs.py` and require matching coarse JSON.
-12. Do not fix the suspected `union_all_bbox` max update while doing this
+14. Do not fix the suspected `union_all_bbox` max update while doing this
    opt-in kernel integration. Treat that as a separate behavior change.
 
 ## Existing Optimization Guidance
