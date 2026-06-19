@@ -52,6 +52,11 @@ FIELDNAMES = [
 ]
 
 _CURRENT_PROPOSAL_ROW = ContextVar("indoor_solver_timing_row", default=None)
+_CURRENT_OUTPUT_FOLDER = None
+
+
+def current_output_folder() -> Optional[Path]:
+    return _CURRENT_OUTPUT_FOLDER
 
 
 def callable_name(func) -> str:
@@ -98,10 +103,14 @@ def add_current_duration(field: str, duration: float) -> None:
 
 class SolverTimingLogger:
     def __init__(self, output_folder):
+        global _CURRENT_OUTPUT_FOLDER
+
         self.enabled = PROFILE_TIMING_ENABLED
         self.path = None
         self._file = None
         self._writer = None
+
+        _CURRENT_OUTPUT_FOLDER = Path(output_folder) if output_folder is not None else None
 
         if not self.enabled:
             return

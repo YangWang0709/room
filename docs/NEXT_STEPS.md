@@ -2,19 +2,31 @@
 
 ## Suggested Next Round
 
-1. Keep the new standalone geometry kernels out of the default indoor solver
+1. Keep the standalone geometry kernels out of the default indoor solver
    path until an opt-in integration is implemented and validated.
-2. Run `python -m pytest tests/test_geometry_kernels.py -q` and
+2. Use `INFINIGEN_PROFILE_BBOX=1` or `INFINIGEN_PROFILE_TIMING=1` to collect
+   `infinigen_bbox_timing.csv`, then run `scripts/analyze_bbox_timing.py`.
+3. Decide whether `union_all_bbox` is worth a C++ experiment only from the
+   measured `union_all_bbox_duration / total_duration` share. If it is low,
+   prioritize `spawn_asset`, object deletion, and factory lifecycle work
+   instead.
+   The 2026-06-19 600s sample measured `union_all_bbox` at 0.075s out of
+   334.068s of `bbox_mesh_from_hipoly` time, or 0.023%, so do not prioritize
+   default C++ bbox integration from current evidence.
+4. Run `python -m pytest tests/test_geometry_kernels.py -q` and
    `python scripts/bench_geometry_kernels.py` after every kernel change.
-3. Consider an opt-in experiment in
+5. When build environments cannot compile the geometry extension, use
+   `INFINIGEN_DISABLE_GEOMETRY_CPP=True python -m pip install -e .` and verify
+   the NumPy fallback remains importable.
+6. Consider an opt-in experiment in
    `infinigen/assets/utils/bbox_from_mesh.py`, limited first to replacing the
    numeric `points.min(axis=0)` / `points.max(axis=0)` portion with
-   `bbox_min_max`.
-4. If adding that opt-in path, gate it behind a flag or experimental config so
+   `bbox_min_max`, only if bbox timing justifies it.
+7. If adding that opt-in path, gate it behind a flag or experimental config so
    the baseline generation behavior remains the default.
-5. Before any solver-facing use, run same seed/gin/task A/B with
+8. Before any solver-facing use, run same seed/gin/task A/B with
    `scripts/compare_indoor_outputs.py` and require matching coarse JSON.
-6. Do not fix the suspected `union_all_bbox` max update while doing this
+9. Do not fix the suspected `union_all_bbox` max update while doing this
    opt-in kernel integration. Treat that as a separate behavior change.
 
 ## Existing Optimization Guidance

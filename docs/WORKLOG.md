@@ -1,5 +1,126 @@
 # Worklog
 
+## 2026-06-19 - Optional geometry build flag and bbox timing
+
+### Round Goal
+
+Keep the solver behavior unchanged while making the standalone geometry C++
+extension optional, adding fine-grained `bbox_mesh_from_hipoly` timing, and
+surveying real C++ call sites before any solver integration.
+
+### Changes
+
+Made the standalone geometry extension opt-out at build time:
+
+- `setup.py`
+
+Set:
+
+```bash
+INFINIGEN_DISABLE_GEOMETRY_CPP=True python -m pip install -e .
+```
+
+to skip `infinigen.core.constraints.cpp.geometry_kernels_cpp` while keeping the
+NumPy fallback importable and usable. The default build still attempts to build
+the extension. Terrain, bnurbs, and customgt build flags remain separate.
+
+Added optional bbox timing:
+
+- `infinigen/assets/utils/bbox_from_mesh.py`
+- `infinigen/core/constraints/example_solver/timing.py`
+
+Enable with either:
+
+```bash
+INFINIGEN_PROFILE_BBOX=1
+```
+
+or the existing:
+
+```bash
+INFINIGEN_PROFILE_TIMING=1
+```
+
+The timing CSV is `infinigen_bbox_timing.csv`. It is written to the current
+solver output folder when that is available, otherwise to:
+
+```text
+/tmp/infinigen_bbox_timing.csv
+```
+
+Recorded fields include generator class, factory seed, instance seed,
+`use_pholder`, spawn placeholder duration, spawn asset duration,
+`union_all_bbox` duration, bbox mesh creation duration, cleanup collection
+duration, delete duration, total duration, success, and error type. The timing
+path does not replace any bbox logic, does not call C++ kernels, does not change
+random number usage, and re-raises original exceptions.
+
+Added bbox timing analysis:
+
+- `scripts/analyze_bbox_timing.py`
+
+The script summarizes generator totals, slowest calls, duration totals, and
+prints guidance on whether `union_all_bbox` is large enough to justify an
+opt-in C++ bbox experiment.
+
+Added C++ call-site survey:
+
+- `docs/CPP_CALLSITE_SURVEY.md`
+
+The survey records candidate file paths, functions, current logic, estimated
+array scale, `bpy` and random-number contact, pure-array suitability, behavior
+risk, C++ suitability, and priority.
+
+### Behavior Guardrails
+
+This round still does not optimize the solver and does not connect C++ kernels
+to the indoor solver, evaluator, `Addition.apply`, or `union_all_bbox` by
+default.
+
+`infinigen/assets/utils/bbox_from_mesh.py::union_all_bbox` still has the
+suspected max update issue and remains unfixed:
+
+```python
+maxs = pmaxs if maxs is None else np.maximum(pmins, mins)
+```
+
+The next decision should be data-driven: use bbox timing to determine whether
+time is in `spawn_asset`, `delete`, or `union_all_bbox` before considering an
+opt-in C++ bbox integration. If C++ is integrated later, require same
+seed/gin/task A/B equivalence validation.
+
+### Validation Notes
+
+Ran a bounded 600s bbox timing sample using:
+
+```bash
+INFINIGEN_PROFILE_TIMING=1 INFINIGEN_PROFILE_BBOX=1 timeout 600s python -m infinigen_examples.generate_indoors \
+  --seed 0 \
+  --task coarse \
+  --output_folder outputs/profile_bbox_current/coarse \
+  -g fast_solve.gin \
+  -p compose_indoors.terrain_enabled=False \
+     home_room_constraints.has_fewer_rooms=False \
+     restrict_solving.solve_max_rooms=10
+```
+
+The sample produced 507 `bbox_mesh_from_hipoly` timing rows at:
+
+```text
+outputs/profile_bbox_current/coarse/infinigen_bbox_timing.csv
+```
+
+Analyzer result:
+
+- total `bbox_mesh_from_hipoly` time: 334.068s
+- total `spawn_asset_duration`: 266.233s, 79.7%
+- total `delete_duration`: 57.480s, 17.2%
+- total `union_all_bbox_duration`: 0.075s, 0.023%
+
+This sample does not justify prioritizing default C++ integration for
+`union_all_bbox` / `bbox_min_max`. The better next target remains
+Blender-heavy asset spawning, deletion, and factory lifecycle work.
+
 ## 2026-06-19 - Standalone C++ geometry kernel prototypes
 
 ### Round Goal

@@ -40,6 +40,13 @@ available. The extension module is:
 infinigen.core.constraints.cpp.geometry_kernels_cpp
 ```
 
+The extension build is optional. By default `python -m pip install -e .`
+attempts to build it. To force the fallback-only path:
+
+```bash
+INFINIGEN_DISABLE_GEOMETRY_CPP=True python -m pip install -e .
+```
+
 These kernels are not connected to the indoor solver, evaluator,
 `union_all_bbox`, annealing, or `Addition.apply` by default. Therefore this
 prototype should not change generated scenes, random number consumption,
@@ -50,10 +57,17 @@ AABB prototype. That choice is documented in tests and keeps future broad-phase
 use conservative: a pair that touches at the boundary must not be filtered out
 before existing exact contact checks run.
 
-Before any default solver integration, rerun unit tests, microbenchmarks, and a
-same seed/gin/task A/B equivalence comparison. The next intended experiment is
+Before any solver-facing integration, rerun unit tests, microbenchmarks, and a
+same seed/gin/task A/B equivalence comparison. The next possible experiment is
 an opt-in `bbox_from_mesh.py` path for `bbox_min_max` / `bbox_union`, not a
-solver-control-flow rewrite.
+solver-control-flow rewrite, and only if bbox timing shows that
+`union_all_bbox` is a meaningful share of `bbox_mesh_from_hipoly`.
+
+See also:
+
+```text
+docs/CPP_CALLSITE_SURVEY.md
+```
 
 ## Priority Rules
 
@@ -83,8 +97,10 @@ solver order, or consumes random numbers.
   with NumPy `min` and `max`.
 - Why it may be slow: `bbox_mesh_from_hipoly` was a major cProfile hotspot, and
   heavy factories repeatedly compute placeholder/high-poly bounds during failed
-  additions. The current full path is dominated by Blender/factory work, but the
-  numeric reduction is a safe kernel once the arrays already exist.
+  additions. Each mesh child contributes only 8 transformed bbox corners, so the
+  numeric reduction is not automatically high ROI. Use
+  `infinigen_bbox_timing.csv` to confirm whether `union_all_bbox_duration` is
+  meaningful before connecting C++.
 - Touches `bpy`: current wrapper yes; proposed C++ kernel no.
 - Touches random numbers: no.
 - Inputs as primitive/NumPy array: yes, transformed points as `float64[N, 3]` or
@@ -95,7 +111,8 @@ solver order, or consumes random numbers.
 - A/B equivalence method: unit-test against NumPy on saved arrays, then run same
   seed/gin/task A/B and compare `solve_state.json` plus other JSON with
   `scripts/compare_indoor_outputs.py`.
-- Priority: P0.
+- Priority: P0 only if bbox timing shows a large `union_all_bbox` share;
+  otherwise P1/P2 behind spawn/delete/factory lifecycle work.
 
 ### 2. Batch BBox Union
 
@@ -105,7 +122,9 @@ solver order, or consumes random numbers.
 - Current logic: `union_all_bbox` accumulates per-mesh min and max corners while
   iterating Blender mesh children.
 - Why it may be slow: repeated bbox aggregation is on the high-poly placeholder
-  path seen in the baseline profile.
+  path seen in the baseline profile. Timing now distinguishes spawn placeholder,
+  spawn asset, `union_all_bbox`, bbox mesh creation, cleanup collection, and
+  delete work.
 - Touches `bpy`: current wrapper yes; proposed C++ kernel no.
 - Touches random numbers: no.
 - Inputs as primitive/NumPy array: yes, `mins[B, 3]` and `maxs[B, 3]`.
@@ -118,7 +137,8 @@ solver order, or consumes random numbers.
 - A/B equivalence method: first compare against current behavior exactly,
   including the suspected behavior. Test any bug fix separately. Then run
   same seed/gin/task A/B with JSON comparison.
-- Priority: P0 for exact-behavior union kernel; bug fix is separate work.
+- Priority: P0 for exact-behavior union kernel only if new bbox timing shows it
+  is a large share; bug fix is separate work.
 
 ### 3. AABB Pair Overlap Matrix
 

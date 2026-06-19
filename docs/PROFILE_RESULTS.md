@@ -1,5 +1,79 @@
 # Profile Results
 
+## BBox Mesh Timing CSV - 2026-06-19 14:57 CST
+
+Profile type: 600s timeout sample with solver timing and bbox timing enabled.
+This is not a complete profile.
+
+Command:
+
+```bash
+INFINIGEN_PROFILE_TIMING=1 INFINIGEN_PROFILE_BBOX=1 timeout 600s python -m infinigen_examples.generate_indoors \
+  --seed 0 \
+  --task coarse \
+  --output_folder outputs/profile_bbox_current/coarse \
+  -g fast_solve.gin \
+  -p compose_indoors.terrain_enabled=False \
+     home_room_constraints.has_fewer_rooms=False \
+     restrict_solving.solve_max_rooms=10
+```
+
+The wrapper script `scripts/profile_indoor_solver.sh` could not be reused for
+this sample because its existing output folder contained root-owned files from a
+previous container run. The direct command above used the same seed, task, gin
+file, and gin overrides with a fresh output folder.
+
+Timing CSV path:
+
+```text
+outputs/profile_bbox_current/coarse/infinigen_bbox_timing.csv
+```
+
+Rows:
+
+```text
+507 bbox_mesh_from_hipoly rows
+```
+
+Analyzer command:
+
+```bash
+python scripts/analyze_bbox_timing.py outputs/profile_bbox_current/coarse/infinigen_bbox_timing.csv
+```
+
+### BBox Duration Totals
+
+| duration_column | total (s) | pct_total |
+| --- | ---: | ---: |
+| spawn_placeholder_duration | 9.076 | 0.027 |
+| spawn_asset_duration | 266.233 | 0.797 |
+| union_all_bbox_duration | 0.075 | 0.000 |
+| box_from_corners_duration | 1.175 | 0.004 |
+| cleanup_collect_duration | 0.013 | 0.000 |
+| delete_duration | 57.480 | 0.172 |
+| total_duration | 334.068 | 1.000 |
+
+### BBox Generator Totals Top 8
+
+| generator_class | count | total (s) | mean (s) | max (s) |
+| --- | ---: | ---: | ---: | ---: |
+| LargeShelfFactory | 153 | 203.963 | 1.333 | 4.333 |
+| SimpleBookcaseFactory | 94 | 42.881 | 0.456 | 0.747 |
+| BathtubFactory | 127 | 32.831 | 0.259 | 0.692 |
+| SimpleDeskFactory | 86 | 20.411 | 0.237 | 0.339 |
+| BeverageFridgeFactory | 8 | 12.745 | 1.593 | 1.667 |
+| OvenFactory | 21 | 10.850 | 0.517 | 0.542 |
+| DishwasherFactory | 5 | 7.251 | 1.450 | 1.529 |
+| FloorLampFactory | 13 | 3.135 | 0.241 | 0.363 |
+
+### BBox C++ Judgment
+
+`union_all_bbox` took 0.075s out of 334.068s of
+`bbox_mesh_from_hipoly` time, or 0.023%. Do not prioritize default C++
+integration for `bbox_min_max` / `union_all_bbox` from this sample. The useful
+target remains Blender-heavy `spawn_asset` and deletion/factory lifecycle work,
+especially `LargeShelfFactory` and related heavy addition attempts.
+
 ## Indoor Solver Timing CSV - 2026-06-19 13:25 CST
 
 Profile type: 1800s timeout sample with solver timing enabled. This is not a complete profile.

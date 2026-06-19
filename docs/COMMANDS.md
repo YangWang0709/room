@@ -114,6 +114,21 @@ NumPy implementations.
 python -m pip install -e .
 ```
 
+Disable only the standalone geometry extension build:
+
+```bash
+INFINIGEN_DISABLE_GEOMETRY_CPP=True python -m pip install -e .
+```
+
+This leaves the NumPy fallback importable:
+
+```bash
+python - <<'PY'
+from infinigen.core.constraints.cpp import geometry_kernels as g
+print("C_EXTENSION_AVAILABLE=", g.C_EXTENSION_AVAILABLE)
+PY
+```
+
 Run fast unit tests:
 
 ```bash
@@ -129,6 +144,47 @@ python scripts/bench_geometry_kernels.py
 These commands do not run indoor generation and do not connect the kernels to
 the solver. Before any future solver-facing opt-in integration, run a same
 seed/gin/task A/B comparison with `scripts/compare_indoor_outputs.py`.
+
+## Run BBox Mesh Timing
+
+Enable fine-grained `bbox_mesh_from_hipoly` timing:
+
+```bash
+INFINIGEN_PROFILE_BBOX=1 bash scripts/profile_indoor_solver.sh
+```
+
+The existing solver timing flag also enables bbox timing:
+
+```bash
+INFINIGEN_PROFILE_TIMING=1 INFINIGEN_PROFILE_BBOX=1 bash scripts/profile_indoor_solver.sh
+```
+
+When the solver output folder is available, bbox timing is written to:
+
+```text
+<output_folder>/infinigen_bbox_timing.csv
+```
+
+Outside the solver path, the fallback path is:
+
+```text
+/tmp/infinigen_bbox_timing.csv
+```
+
+Analyze bbox timing:
+
+```bash
+python scripts/analyze_bbox_timing.py /tmp/infinigen_bbox_timing.csv
+```
+
+or point it at the run output:
+
+```bash
+python scripts/analyze_bbox_timing.py outputs/profile_indoor_baseline/coarse/infinigen_bbox_timing.csv
+```
+
+Use the `union_all_bbox_duration / total_duration` share from this script before
+considering any opt-in C++ bbox integration.
 
 ## Single-Room Coarse Generation
 
