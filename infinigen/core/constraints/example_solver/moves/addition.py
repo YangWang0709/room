@@ -5,6 +5,7 @@
 # Authors: Alexander Raistrick
 
 import logging
+import time
 import typing
 from dataclasses import dataclass
 
@@ -16,6 +17,7 @@ from infinigen.core import tagging
 from infinigen.core import tags as t
 from infinigen.core.constraints import usage_lookup
 from infinigen.core.constraints.constraint_language.util import delete_obj
+from infinigen.core.constraints.example_solver import timing as solver_timing
 from infinigen.core.constraints.example_solver.geometry import (
     dof,
     parse_scene,
@@ -37,18 +39,28 @@ GLOBAL_GENERATOR_SINGLETON_CACHE = {}
 
 
 def sample_rand_placeholder(gen_class: type[AssetFactory]):
+    profile_timing = solver_timing.PROFILE_TIMING_ENABLED
     singleton_gen = usage_lookup.has_usage(gen_class, t.Semantics.SingleGenerator)
 
     if singleton_gen and gen_class in GLOBAL_GENERATOR_SINGLETON_CACHE:
         gen = GLOBAL_GENERATOR_SINGLETON_CACHE[gen_class]
     else:
         fac_seed = np.random.randint(1e7)
+        if profile_timing:
+            generator_init_start_time = time.perf_counter()
         gen = gen_class(fac_seed)
+        if profile_timing:
+            solver_timing.add_current_duration(
+                "addition_generator_init_duration",
+                time.perf_counter() - generator_init_start_time,
+            )
         if singleton_gen:
             GLOBAL_GENERATOR_SINGLETON_CACHE[gen_class] = gen
 
     inst_seed = np.random.randint(1e7)
 
+    if profile_timing:
+        spawn_start_time = time.perf_counter()
     if usage_lookup.has_usage(gen_class, t.Semantics.RealPlaceholder):
         new_obj = gen.spawn_placeholder(inst_seed, loc=(0, 0, 0), rot=(0, 0, 0))
     elif usage_lookup.has_usage(gen_class, t.Semantics.AssetAsPlaceholder):
@@ -57,17 +69,29 @@ def sample_rand_placeholder(gen_class: type[AssetFactory]):
         new_obj = bbox_from_mesh.bbox_mesh_from_hipoly(gen, inst_seed, use_pholder=True)
     else:
         new_obj = bbox_from_mesh.bbox_mesh_from_hipoly(gen, inst_seed)
+    if profile_timing:
+        solver_timing.add_current_duration(
+            "addition_spawn_placeholder_duration",
+            time.perf_counter() - spawn_start_time,
+        )
 
     if new_obj.type != "MESH":
         raise ValueError(f"Addition created {new_obj.name=} with type {new_obj.type}")
     if len(new_obj.data.polygons) == 0:
         raise ValueError(f"Addition created {new_obj.name=} with 0 faces")
 
+    if profile_timing:
+        finalize_start_time = time.perf_counter()
     butil.put_in_collection(
         list(butil.iter_object_tree(new_obj)), butil.get_collection("placeholders")
     )
     parse_scene.preprocess_obj(new_obj)
     tagging.tag_canonical_surfaces(new_obj)
+    if profile_timing:
+        solver_timing.add_current_duration(
+            "addition_placeholder_finalize_duration",
+            time.perf_counter() - finalize_start_time,
+        )
 
     return new_obj, gen
 
@@ -86,13 +110,30 @@ class Addition(moves.Move):
         return f"{self.__class__.__name__}({self.gen_class.__name__}, {len(self.relation_assignments)} relations)"
 
     def apply(self, state: State):
+        profile_timing = solver_timing.PROFILE_TIMING_ENABLED
         (target_name,) = self.names
         assert target_name not in state.objs
 
+        if profile_timing:
+            sample_start_time = time.perf_counter()
         self._new_obj, gen = sample_rand_placeholder(self.gen_class)
+        if profile_timing:
+            solver_timing.add_current_duration(
+                "addition_sample_placeholder_duration",
+                time.perf_counter() - sample_start_time,
+            )
 
+        if profile_timing:
+            parse_scene_start_time = time.perf_counter()
         parse_scene.add_to_scene(state.trimesh_scene, self._new_obj, preprocess=True)
+        if profile_timing:
+            solver_timing.add_current_duration(
+                "addition_parse_scene_duration",
+                time.perf_counter() - parse_scene_start_time,
+            )
 
+        if profile_timing:
+            state_update_start_time = time.perf_counter()
         tags = self.temp_force_tags.union(usage_lookup.usages_of_factory(gen.__class__))
 
         assert isinstance(self._new_obj, bpy.types.Object)
@@ -104,7 +145,20 @@ class Addition(moves.Move):
         )
 
         state.objs[target_name] = objstate
+        if profile_timing:
+            solver_timing.add_current_duration(
+                "addition_state_update_duration",
+                time.perf_counter() - state_update_start_time,
+            )
+
+        if profile_timing:
+            constraint_start_time = time.perf_counter()
         success = dof.try_apply_relation_constraints(state, target_name)
+        if profile_timing:
+            solver_timing.add_current_duration(
+                "addition_constraint_duration",
+                time.perf_counter() - constraint_start_time,
+            )
         logger.debug(f"{self} {success=}")
         return success
 

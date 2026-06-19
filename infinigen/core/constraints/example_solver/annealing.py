@@ -22,6 +22,7 @@ from infinigen.core.constraints.constraint_language import util as impl_util
 from infinigen.core.constraints.evaluator import eval_memo, evaluate
 from infinigen.core.util import blender as butil
 
+from . import timing as solver_timing
 from .moves import Move
 from .state_def import State
 
@@ -64,6 +65,7 @@ class SimulatedAnnealingSolver:
 
         self.eval_memo = {}
         self.stats = []
+        self.timing = solver_timing.SolverTimingLogger(output_folder)
 
     def save_stats(self, path):
         if len(self.stats) == 0:
@@ -192,8 +194,14 @@ class SimulatedAnnealingSolver:
         state: "State",
         temp: float,
         filter_domain: "r.Domain",
+        timing_rows=None,
     ) -> typing.Tuple["Move", "evaluate.EvalResult", int]:
         move_gen = propose_func(consgraph, state, filter_domain, temp)
+
+        timing_enabled = timing_rows is not None
+        move_gen_name = (
+            solver_timing.callable_name(propose_func) if timing_enabled else None
+        )
 
         move = None
         retry = None
@@ -204,15 +212,54 @@ class SimulatedAnnealingSolver:
                 )
                 break
 
-            succeeded = move.apply(state)
+            timing_row = None
+            attempt_start_time = None
+            if timing_enabled:
+                timing_row = self.timing.make_attempt_row(
+                    iteration=self.curr_iteration,
+                    attempt_index=retry,
+                    move_gen_func=move_gen_name,
+                    move=move,
+                    retry=retry,
+                )
+                timing_rows.append(timing_row)
+                attempt_start_time = time.perf_counter()
+                apply_start_time = time.perf_counter()
+                with solver_timing.proposal_context(timing_row):
+                    succeeded = move.apply(state)
+                timing_row["apply_duration"] = (
+                    time.perf_counter() - apply_start_time
+                )
+                timing_row["proposal_succeeded"] = succeeded
+            else:
+                succeeded = move.apply(state)
+
             if succeeded:
                 eval_memo.evict_memo_for_move(consgraph, state, self.eval_memo, move)
+                if timing_enabled:
+                    evaluate_start_time = time.perf_counter()
                 result = self._move(consgraph, state, move, filter_domain)
+                if timing_enabled:
+                    timing_row["evaluate_duration"] = (
+                        time.perf_counter() - evaluate_start_time
+                    )
+                    timing_row["attempt_duration"] = (
+                        time.perf_counter() - attempt_start_time
+                    )
                 return move, result, retry
 
             logger.debug(f"{retry=} reverting {move=}")
             eval_memo.evict_memo_for_move(consgraph, state, self.eval_memo, move)
+            if timing_enabled:
+                revert_start_time = time.perf_counter()
             move.revert(state)
+            if timing_enabled:
+                timing_row["revert_duration"] = (
+                    time.perf_counter() - revert_start_time
+                )
+                timing_row["attempt_duration"] = (
+                    time.perf_counter() - attempt_start_time
+                )
 
         else:
             logger.debug(f"{move_gen=} produced {retry} attempts and none were valid")
@@ -250,10 +297,20 @@ class SimulatedAnnealingSolver:
         return result
 
     def step(self, consgraph, state, move_gen_func, filter_domain):
+        timing_enabled = self.timing.enabled
+        step_start_time = time.perf_counter() if timing_enabled else None
+        initial_evaluate_duration = 0.0
+
         if self.curr_result is None:
+            if timing_enabled:
+                initial_evaluate_start_time = time.perf_counter()
             self.curr_result = evaluate.evaluate_problem(
                 consgraph, state, filter_domain
             )
+            if timing_enabled:
+                initial_evaluate_duration = (
+                    time.perf_counter() - initial_evaluate_start_time
+                )
 
         move_start_time = time.perf_counter()
 
@@ -267,9 +324,22 @@ class SimulatedAnnealingSolver:
         )
 
         temp = self.curr_temp()
+        timing_rows = [] if timing_enabled else None
         move, prop_result, retry = self.retry_attempt_proposals(
-            move_gen_func, consgraph, state, temp, filter_domain
+            move_gen_func, consgraph, state, temp, filter_domain, timing_rows
         )
+
+        if timing_enabled and len(timing_rows) == 0:
+            timing_rows.append(
+                self.timing.make_attempt_row(
+                    iteration=self.curr_iteration,
+                    attempt_index=None,
+                    move_gen_func=solver_timing.callable_name(move_gen_func),
+                    move=move,
+                    retry=retry,
+                )
+            )
+            timing_rows[-1]["attempt_count"] = 0
 
         if prop_result is None:
             # set null values for logging purposes
@@ -283,10 +353,23 @@ class SimulatedAnnealingSolver:
             accept_result = self.metrop_hastings_with_viol(prop_result, temp)
             if accept_result["accept"]:
                 self.curr_result = prop_result
+                if timing_enabled:
+                    accept_start_time = time.perf_counter()
                 move.accept(state)
+                if timing_enabled:
+                    timing_rows[-1]["accept_duration"] = (
+                        time.perf_counter() - accept_start_time
+                    )
+                    timing_rows[-1]["proposal_accepted"] = True
             else:
                 eval_memo.evict_memo_for_move(consgraph, state, self.eval_memo, move)
+                if timing_enabled:
+                    reject_revert_start_time = time.perf_counter()
                 move.revert(state)
+                if timing_enabled:
+                    timing_rows[-1]["revert_duration"] += (
+                        time.perf_counter() - reject_revert_start_time
+                    )
 
         dt = time.perf_counter() - move_start_time
         elapsed = time.perf_counter() - self.optim_start_time
@@ -361,8 +444,29 @@ class SimulatedAnnealingSolver:
 
             print(df)
 
+        garbage_collect_duration = 0.0
         if self.curr_iteration % BPY_GARBAGE_COLLECT_FREQUENCY == 0:
+            if timing_enabled:
+                garbage_collect_start_time = time.perf_counter()
             butil.garbage_collect(butil.get_all_bpy_data_targets())
+            if timing_enabled:
+                garbage_collect_duration = (
+                    time.perf_counter() - garbage_collect_start_time
+                )
+
+        if timing_enabled:
+            total_step_duration = time.perf_counter() - step_start_time
+            self.timing.write_rows(
+                timing_rows,
+                {
+                    "garbage_collect_duration": garbage_collect_duration,
+                    "total_step_duration": total_step_duration,
+                    "initial_evaluate_duration": initial_evaluate_duration,
+                    "elapsed_since_optim_start": (
+                        time.perf_counter() - self.optim_start_time
+                    ),
+                },
+            )
 
         if self.curr_iteration != 0 and self.curr_iteration % 50 == 0:
             print(f"CLUTTER REPORT {self.curr_iteration=}")

@@ -40,4 +40,45 @@ Constraint evaluation has measurable cost, but in this bounded sample it appears
 
 ## Next Profiling Need
 
-Run a full indoor coarse profile if practical. If a full run is too slow, keep this timeout profile as the initial baseline and add stage-level timing instrumentation around the solver/proposal stack.
+Run a full indoor coarse profile if practical. If a full run is too slow, keep this timeout profile as the initial baseline and use the opt-in solver timing CSV to break down the proposal stack.
+
+## Solver Timing CSV - 2026-06-19
+
+Opt-in timing instrumentation now writes:
+
+```text
+<output_folder>/indoor_solver_timing.csv
+```
+
+Enable it before starting Python:
+
+```bash
+INFINIGEN_PROFILE_TIMING=1 bash scripts/profile_indoor_solver.sh
+```
+
+The CSV is proposal-attempt level. If a step has multiple retries, step-level fields such as `total_step_duration` and `garbage_collect_duration` repeat across rows for that iteration; group by `iteration` and take one value when doing step-level aggregates.
+
+Important columns:
+
+- `move_gen_func`, `move_type`, `generator_class`
+- `retry`, `attempt_index`, `attempt_count`
+- `proposal_succeeded`, `proposal_accepted`
+- `apply_duration`, `evaluate_duration`, `revert_duration`, `accept_duration`
+- `garbage_collect_duration`, `total_step_duration`
+- `addition_sample_placeholder_duration`
+- `addition_generator_init_duration`
+- `addition_spawn_placeholder_duration`
+- `addition_placeholder_finalize_duration`
+- `addition_parse_scene_duration`
+- `addition_state_update_duration`
+- `addition_constraint_duration`
+
+## Deferred Sanity Check
+
+`infinigen/assets/utils/bbox_from_mesh.py::union_all_bbox` has suspicious `maxs` update logic:
+
+```python
+maxs = pmaxs if maxs is None else np.maximum(pmins, mins)
+```
+
+This should be verified with a focused multi-child bounding-box sanity test in the next round before any fix is made.

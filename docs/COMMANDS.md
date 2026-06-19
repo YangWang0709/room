@@ -20,6 +20,18 @@ cd /opt/infinigen
 bash scripts/profile_indoor_solver.sh
 ```
 
+## Run Indoor Coarse Profile With Solver Timing
+
+```bash
+INFINIGEN_PROFILE_TIMING=1 bash scripts/profile_indoor_solver.sh
+```
+
+Timing CSV output:
+
+```text
+outputs/profile_indoor_baseline/coarse/indoor_solver_timing.csv
+```
+
 ## View Profile Top 80
 
 ```bash

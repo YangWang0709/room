@@ -1,5 +1,50 @@
 # Worklog
 
+## 2026-06-19 - Indoor solver timing instrumentation
+
+### Round Goal
+
+Add fine-grained, opt-in timing instrumentation for the indoor coarse solver without changing solver behavior, gin configuration, solve steps, object availability, or caching behavior.
+
+### Changes
+
+Added solver timing helpers:
+
+- `infinigen/core/constraints/example_solver/timing.py`
+
+Instrumented solver proposal steps:
+
+- `SimulatedAnnealingSolver.retry_attempt_proposals`
+- `SimulatedAnnealingSolver.step`
+- `Addition.apply`
+- `sample_rand_placeholder`
+
+Timing is disabled by default. Enable it by setting:
+
+```bash
+INFINIGEN_PROFILE_TIMING=1
+```
+
+When enabled, the solver writes:
+
+```text
+<output_folder>/indoor_solver_timing.csv
+```
+
+The CSV records proposal-attempt rows with move generator name, move type, generator class when present, retry index, apply/evaluate/revert/accept/garbage-collect durations, total step duration, proposal success, and proposal acceptance.
+
+### Notes
+
+This round intentionally did not optimize or change generation logic.
+
+`infinigen/assets/utils/bbox_from_mesh.py` has a suspected bug in `union_all_bbox`:
+
+```python
+maxs = pmaxs if maxs is None else np.maximum(pmins, mins)
+```
+
+This looks like it may use `pmins, mins` where `pmaxs, maxs` was intended. Do not fix as part of the timing round; add a focused sanity test in the next round before changing it.
+
 ## 2026-06-19 12:22 CST - Indoor coarse profiling baseline
 
 ### Round Goal
