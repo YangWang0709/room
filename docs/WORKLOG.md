@@ -1,5 +1,124 @@
 # Worklog
 
+## 2026-06-20 - Full baseline determinism check
+
+### Round Goal
+
+Run one full 10-room baseline repeat, without source changes, new
+optimizations, batch-remove behavior changes, walltime benchmarking, gin
+changes, profiling timing env vars, or committed generated outputs. Compare it
+against the existing full baseline from the batch-remove A/B to determine
+whether the current strict JSON gate is deterministic for the baseline itself.
+
+Existing baseline A:
+
+```text
+outputs/gc_batch_remove_equiv/baseline/coarse
+```
+
+New baseline B:
+
+```text
+outputs/determinism_full_baseline_b/coarse
+```
+
+The baseline B command used seed `0`, task `coarse`, `fast_solve.gin`,
+`compose_indoors.terrain_enabled=False`,
+`home_room_constraints.has_fewer_rooms=False`, and
+`restrict_solving.solve_max_rooms=10`. The environment explicitly left
+`INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS` unset and did not enable
+`INFINIGEN_PROFILE_TIMING`, `INFINIGEN_PROFILE_GC`,
+`INFINIGEN_PROFILE_ASSET_FACTORY`, `INFINIGEN_PROFILE_BBOX`, or
+`INFINIGEN_GC_NODE_GROUP_INTERVAL`.
+
+### Baseline B Result
+
+The full baseline B run completed with exit code `0`:
+
+| stage | time |
+| --- | ---: |
+| solve_large | 1:43:27.660911 |
+| solve_medium | 0:49:11.966927 |
+| solve_small | 0:39:34.920525 |
+| populate_assets | 1:04:21.216173 |
+| MAIN TOTAL | 4:25:03.044391 |
+
+No timeout, traceback, OOM, killed, or segmentation fault marker was found.
+Blender printed a small non-fatal `Not freed memory blocks` shutdown message
+after saving.
+
+### JSON Compare
+
+Command:
+
+```bash
+python scripts/compare_indoor_outputs.py \
+  outputs/gc_batch_remove_equiv/baseline/coarse \
+  outputs/determinism_full_baseline_b/coarse
+```
+
+Result:
+
+```text
+matched_json_file_count: 2
+missing_files: 0
+extra_files: 0
+DIFFERENT MaskTag.json numeric_max_abs_diff=1
+  $.back.bottom: left 22, right 21
+  $.front.top: left 21, right 22
+SAME solve_state.json numeric_max_abs_diff=0
+numeric_max_abs_diff: 1
+FINAL: FAIL
+```
+
+This is the same `MaskTag.json` label-ID swap previously observed in the full
+baseline-vs-batch A/B.
+
+### Static Blend Diagnostic
+
+`scripts/compare_blend_static_scene.py` was run as a diagnostic only. It is not
+the deciding gate for this round because the single-room baseline A/A already
+showed saved `.blend` static-scene instability.
+
+Result summary:
+
+```text
+STATIC_SCENE_FAIL
+USD_RELEVANT_DIFF: yes
+UNUSED_DATABLOCK_DIFF: no
+UNUSED_DATABLOCK_DIFF_ONLY: no
+DIFF_CLASS: USD_RELEVANT_DIFF
+static_scene_diff_count: 60
+unused_datablock_diff_count: 0
+```
+
+Both blends had 809 objects, the same object type counts, 744 linked mesh
+datablocks, 1165 linked materials, 163 linked node groups, 2139 total node
+groups, and 1977 unused node groups. The differences were linked scene
+differences, including `NatureShelfTrinketsFactory` mesh vertex/edge/polygon
+counts and small pillow/towel transform differences.
+
+### Judgment
+
+The full 10-room baseline is not deterministic under the current strict JSON
+gate: `solve_state.json` is stable, but `MaskTag.json` can swap the
+`back.bottom` and `front.top` tag label IDs `21` and `22` even without
+`INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1`.
+
+Therefore the earlier full baseline-vs-batch `MaskTag.json` difference is not,
+by itself, evidence that batch remove changed generation behavior. The saved
+blend static-scene differences also cannot be used alone as a batch-remove
+rejection reason, because baseline-vs-baseline now fails the static scene
+diagnostic as well.
+
+This does not validate batch remove. The opt-in candidate still has not passed
+an agreed relevant equivalence gate, and it must remain opt-in. Do not run
+walltime for acceptance, do not mainline batch remove, and do not relax
+`scripts/compare_indoor_outputs.py` in the same round. The next work should
+define or root-cause the baseline nondeterminism, especially the MaskTag label
+ID insertion order and saved-blend linked-scene variation, before using the
+strict gate to judge batch remove.
+
 ## 2026-06-20 - Determinism and static blend diagnostics
 
 ### Round Goal
@@ -116,11 +235,11 @@ and GT/mask/segmentation equivalence, with baseline A/A variability measured
 first.
 
 The full 10-room A/A was not run in this round because smoke static-scene A/A
-already failed. The next diagnostic step is a carefully budgeted full baseline
-A/A using the new script. If full baseline-vs-baseline also has MaskTag or
-static-scene differences, the strict gate needs to be redefined before blaming
-batch remove. If full baseline A/A passes but baseline-vs-batch fails, then
-batch remove is a stronger suspect for changing the static scene.
+already failed. A later round did run the full baseline repeat; see
+`2026-06-20 - Full baseline determinism check` above. That later result showed
+baseline-vs-baseline also has the `MaskTag.json` label-ID swap and linked
+static-scene diagnostic differences, so the strict/static gates need
+baseline-calibration before blaming batch remove.
 
 ## 2026-06-20 - MaskTag difference investigation
 

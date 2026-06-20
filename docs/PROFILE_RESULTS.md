@@ -1,5 +1,94 @@
 # Profile Results
 
+## Full Baseline Determinism Check - 2026-06-20
+
+Profile type: full same-seed baseline A/A determinism diagnostic for the
+normal 10-room indoor coarse target. No optimization was added, no source was
+changed, no gin was changed, no batch-remove behavior was changed, no walltime
+benchmark was run, and generated outputs were not committed.
+
+Compared folders:
+
+```text
+baseline A: outputs/gc_batch_remove_equiv/baseline/coarse
+baseline B: outputs/determinism_full_baseline_b/coarse
+```
+
+Baseline B command characteristics:
+
+```text
+seed 0
+task coarse
+fast_solve.gin
+compose_indoors.terrain_enabled=False
+home_room_constraints.has_fewer_rooms=False
+restrict_solving.solve_max_rooms=10
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS unset
+heavy profiling timing env vars unset
+```
+
+Run completion:
+
+| stage | baseline B |
+| --- | ---: |
+| solve_large | 1:43:27.660911 |
+| solve_medium | 0:49:11.966927 |
+| solve_small | 0:39:34.920525 |
+| populate_assets | 1:04:21.216173 |
+| pipeline `MAIN TOTAL` | 4:25:03.044391 |
+
+The run completed with exit code `0`. No timeout, traceback, OOM, killed, or
+segfault marker was found. Blender printed a small non-fatal `Not freed memory
+blocks` message during shutdown after the blend was saved.
+
+JSON comparison:
+
+```text
+matched_json_file_count: 2
+missing_files: 0
+extra_files: 0
+DIFFERENT MaskTag.json numeric_max_abs_diff=1
+  $.back.bottom: left 22, right 21
+  $.front.top: left 21, right 22
+SAME solve_state.json numeric_max_abs_diff=0
+numeric_max_abs_diff: 1
+FINAL: FAIL
+```
+
+Static blend comparison was run as diagnostic evidence only:
+
+| metric | baseline A | baseline B |
+| --- | ---: | ---: |
+| objects | 809 | 809 |
+| linked mesh datablocks | 744 | 744 |
+| linked materials | 1165 | 1165 |
+| linked node groups | 163 | 163 |
+| all node groups | 2139 | 2139 |
+| unused node groups | 1977 | 1977 |
+
+Static comparison result:
+
+```text
+STATIC_SCENE_FAIL
+USD_RELEVANT_DIFF: yes
+UNUSED_DATABLOCK_DIFF: no
+UNUSED_DATABLOCK_DIFF_ONLY: no
+static_scene_diff_count: 60
+unused_datablock_diff_count: 0
+```
+
+The linked-scene differences included `NatureShelfTrinketsFactory` mesh
+vertex/edge/polygon counts and small pillow/towel transform differences.
+
+Judgment: full baseline A/A is stable for the canonicalized solver state but
+not stable under the current strict JSON gate because `MaskTag.json` can swap
+the `back.bottom` and `front.top` label IDs `21` and `22`. The same swap seen
+in baseline-vs-batch is therefore not sufficient evidence that batch remove
+changed behavior. The saved blend diagnostic also fails baseline-vs-baseline,
+so static blend differences alone cannot reject batch remove. Batch remove
+remains opt-in until a baseline-calibrated relevant equivalence gate is defined
+and passed.
+
 ## Determinism Ablation - 2026-06-20
 
 Profile type: same-seed A/A determinism diagnostic for indoor coarse outputs.
@@ -63,10 +152,12 @@ mesh vertex/edge/polygon counts. `unused_datablock_diff_count` was `0` for both
 pairs.
 
 Judgment: the current JSON gate is deterministic for this smoke, but the saved
-blend static scene summary is not. The earlier full baseline-vs-batch `.blend`
-differences are therefore not yet evidence that batch remove caused static
-scene changes. A full 10-room baseline A/A is required before drawing mainline
-static-scene determinism conclusions.
+blend static scene summary is not. The later full 10-room baseline A/A recorded
+above showed that the normal target is not deterministic under the current
+strict JSON gate either: `solve_state.json` stayed `SAME`, while
+`MaskTag.json` repeated the `back.bottom` / `front.top` label-ID swap. The
+later full static blend diagnostic also failed baseline-vs-baseline, so these
+differences are not batch-remove-specific rejection evidence by themselves.
 
 ## MaskTag Difference Investigation - 2026-06-20
 

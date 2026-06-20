@@ -14,6 +14,71 @@ outputs/gc_batch_remove_equiv/baseline/coarse
 outputs/gc_batch_remove_equiv/candidate_batch/coarse
 ```
 
+## Full Baseline A/A Follow-Up
+
+A later full 10-room baseline repeat compared the existing baseline A against a
+new baseline B without enabling batch remove:
+
+```text
+baseline A: outputs/gc_batch_remove_equiv/baseline/coarse
+baseline B: outputs/determinism_full_baseline_b/coarse
+```
+
+Baseline B used the same seed, task, gin, and overrides as the original full
+target:
+
+```text
+seed 0
+task coarse
+fast_solve.gin
+compose_indoors.terrain_enabled=False
+home_room_constraints.has_fewer_rooms=False
+restrict_solving.solve_max_rooms=10
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS unset
+```
+
+The full baseline B run completed with `MAIN TOTAL` `4:25:03.044391`. No
+timeout, traceback, OOM, killed, or segfault marker was found.
+
+`scripts/compare_indoor_outputs.py` reported:
+
+```text
+matched_json_file_count: 2
+DIFFERENT MaskTag.json numeric_max_abs_diff=1
+  $.back.bottom: left 22, right 21
+  $.front.top: left 21, right 22
+SAME solve_state.json numeric_max_abs_diff=0
+numeric_max_abs_diff: 1
+FINAL: FAIL
+```
+
+This is the same `back.bottom` / `front.top` label-ID swap observed in the
+full baseline-vs-batch A/B. Therefore this `MaskTag.json` difference is not
+currently attributable to `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1`.
+
+The read-only static blend diagnostic also failed for full
+baseline-vs-baseline:
+
+```text
+STATIC_SCENE_FAIL
+USD_RELEVANT_DIFF: yes
+UNUSED_DATABLOCK_DIFF: no
+UNUSED_DATABLOCK_DIFF_ONLY: no
+static_scene_diff_count: 60
+unused_datablock_diff_count: 0
+```
+
+The diagnostic found matching object counts and linked datablock counts but
+linked scene differences, including `NatureShelfTrinketsFactory` mesh
+vertex/edge/polygon counts and small pillow/towel transform differences. Since
+both single-room and full baseline A/A can fail the static blend diagnostic,
+saved `.blend` static-scene differences are not a batch-remove-specific
+rejection signal by themselves.
+
+The important stable evidence remains `solve_state.json SAME`. The current
+strict JSON gate is not baseline-deterministic because `MaskTag.json` label ID
+insertion order can vary even under baseline behavior.
+
 ## Generation Path
 
 For the indoor coarse task, `MaskTag.json` is written from the global tag
@@ -262,8 +327,9 @@ introduced by `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1`. At least in the smoke
 configuration, baseline same-seed A/A is JSON-deterministic but not saved-blend
 static-scene deterministic under the new comparator.
 
-The full 10-room A/A was not run in this round because the smoke static scene
-comparison already failed for baseline-vs-baseline. A full 10-room A/A is still
-required before making mainline conclusions about full-scene static determinism
-or about whether batch remove changes the static scene beyond existing baseline
-variability.
+A later full 10-room baseline A/A is recorded above. It showed the same
+`MaskTag.json` `back.bottom` / `front.top` label-ID swap and also failed the
+static blend diagnostic. That full result supersedes the earlier "full A/A
+still required" note: baseline variability is now confirmed on the normal
+10-room target for both the current strict JSON gate and the saved-blend static
+diagnostic.

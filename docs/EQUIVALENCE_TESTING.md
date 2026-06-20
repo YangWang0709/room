@@ -181,6 +181,46 @@ unused-datablock-only differences. This means smoke same-seed baseline is JSON
 deterministic but not saved-blend static-scene deterministic under the new
 summary comparator.
 
+The 2026-06-20 full 10-room baseline A/A result used:
+
+```text
+baseline A: outputs/gc_batch_remove_equiv/baseline/coarse
+baseline B: outputs/determinism_full_baseline_b/coarse
+```
+
+Baseline B completed with `MAIN TOTAL` `4:25:03.044391`, no timeout, and no
+traceback, OOM, killed, or segfault marker. It used the original baseline
+behavior with `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS` unset.
+
+Full baseline A/A JSON comparison:
+
+```text
+matched_json_file_count: 2
+DIFFERENT MaskTag.json numeric_max_abs_diff=1
+  $.back.bottom: left 22, right 21
+  $.front.top: left 21, right 22
+SAME solve_state.json numeric_max_abs_diff=0
+numeric_max_abs_diff: 1
+FINAL: FAIL
+```
+
+Full baseline A/A static blend diagnostic:
+
+```text
+STATIC_SCENE_FAIL
+USD_RELEVANT_DIFF: yes
+UNUSED_DATABLOCK_DIFF: no
+UNUSED_DATABLOCK_DIFF_ONLY: no
+static_scene_diff_count: 60
+unused_datablock_diff_count: 0
+```
+
+This full result changes the interpretation of the batch-remove A/B: the
+`MaskTag.json` `front.top` / `back.bottom` label-ID swap and saved-blend
+static-scene differences can occur in baseline-vs-baseline. They are not, by
+themselves, evidence that `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1` changed
+the scene.
+
 Interpretation rules:
 
 1. If baseline-vs-baseline fails for `MaskTag.json` or linked static scene
@@ -194,6 +234,12 @@ Interpretation rules:
    relevant to USD/Isaac static scenes.
 4. Do not promote `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1` until the relevant
    gate passes on the normal 10-room target.
+5. Do not treat a current strict JSON failure as an optimization rejection when
+   the same JSON difference appears in baseline A/A. First decide whether the
+   nondeterministic field is part of strict reproducibility, GT annotation
+   equivalence, Isaac static scene equivalence, or a known baseline artifact.
+6. Any compare-policy change must be proposed separately from optimization
+   work. Do not silently relax `scripts/compare_indoor_outputs.py`.
 
 ## Node Group Batch Remove Experiment
 

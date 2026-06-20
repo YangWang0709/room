@@ -1,5 +1,73 @@
 # Next Steps
 
+## Latest Full Baseline Determinism Check
+
+A full 10-room baseline repeat was completed to test whether the existing full
+baseline is deterministic under the current strict JSON gate.
+
+Compared folders:
+
+```text
+outputs/gc_batch_remove_equiv/baseline/coarse
+outputs/determinism_full_baseline_b/coarse
+```
+
+The new baseline B run used the original baseline behavior: seed `0`, task
+`coarse`, `fast_solve.gin`, `compose_indoors.terrain_enabled=False`,
+`home_room_constraints.has_fewer_rooms=False`, and
+`restrict_solving.solve_max_rooms=10`. `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS`
+was unset, and heavy profiling timing env vars were not enabled.
+
+Baseline B completed with `MAIN TOTAL` `4:25:03.044391`. No timeout,
+traceback, OOM, killed, or segfault marker was found.
+
+`scripts/compare_indoor_outputs.py` result:
+
+```text
+matched_json_file_count: 2
+DIFFERENT MaskTag.json numeric_max_abs_diff=1
+  $.back.bottom: left 22, right 21
+  $.front.top: left 21, right 22
+SAME solve_state.json numeric_max_abs_diff=0
+numeric_max_abs_diff: 1
+FINAL: FAIL
+```
+
+The full baseline A/A repeats the same `MaskTag.json` label-ID swap seen in
+the full baseline-vs-batch A/B. This means the `MaskTag.json` swap is not
+currently attributable to `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1`.
+
+Static blend comparison was run only as diagnostic evidence:
+
+```text
+STATIC_SCENE_FAIL
+USD_RELEVANT_DIFF: yes
+UNUSED_DATABLOCK_DIFF: no
+UNUSED_DATABLOCK_DIFF_ONLY: no
+static_scene_diff_count: 60
+unused_datablock_diff_count: 0
+```
+
+Because both single-room and full baseline-vs-baseline comparisons can fail the
+saved-blend static scene diagnostic, saved `.blend` static-scene differences
+alone are not a valid batch-remove rejection reason.
+
+Updated next diagnostic order:
+
+1. Keep `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1` opt-in; do not mainline it.
+2. Do not run walltime for acceptance while the strict/relevant gate is
+   undefined or failing under baseline A/A.
+3. Treat `solve_state.json SAME` as the strongest current evidence that the
+   solver state is stable for the full baseline repeat.
+4. Root-cause or explicitly scope the baseline nondeterminism in
+   `MaskTag.json` label-ID assignment and saved-blend linked scene summaries.
+5. Do not relax `scripts/compare_indoor_outputs.py` in the same round as an
+   optimization. Any gate split must be a separate compare-policy proposal.
+6. If a future gate distinguishes strict JSON, Isaac static scene, and
+   GT/segmentation equivalence, calibrate that gate against baseline A/A first.
+7. Only after the relevant baseline-calibrated gate is defined should
+   baseline-vs-batch be used to decide whether batch remove changes the scene.
+
 ## Latest Determinism Ablation
 
 Before judging `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1`, confirm baseline
@@ -31,13 +99,14 @@ Next diagnostic order:
 1. Keep batch remove opt-in and do not mainline it.
 2. Do not run walltime for acceptance while the relevant equivalence gate is
    failing or undefined.
-3. Run a full 10-room baseline A/A with `scripts/run_determinism_ablation.sh`
-   when there is enough time budget.
-4. If full baseline-vs-baseline shows MaskTag or linked static-scene
-   differences, redefine the strict/static gates before blaming batch remove.
-5. If full baseline-vs-baseline passes but full baseline-vs-batch fails, treat
-   batch remove as a likely source of static scene change and continue
-   root-cause analysis.
+3. Use the completed full 10-room baseline A/A recorded above as the current
+   baseline-calibration evidence.
+4. Because full baseline-vs-baseline shows the same MaskTag label-ID swap and
+   linked static-scene diagnostic differences, redefine the strict/static gates
+   before blaming batch remove.
+5. If a later baseline-calibrated gate passes for baseline-vs-baseline but
+   fails for baseline-vs-batch, treat batch remove as a likely source of scene
+   change and continue root-cause analysis.
 6. Keep unused Blender datablock differences separate from USD-relevant linked
    scene differences. Unused node group differences alone should not be treated
    the same as object, mesh, material-slot, transform, or linked node-tree
@@ -62,11 +131,14 @@ semantic tag lookup and GT/tag-segmentation interpretation; the inspected USD
 export and Isaac Sim static import paths do not read it.
 
 Do not conclude that the current candidate is Isaac-static-equivalent. A
-read-only Blender summary of the saved blends found matching object names and
-counts but different mesh totals, several mesh/material/transform differences,
-and extra candidate node groups. Before any walltime run or promotion of
-batch remove, the next work must explain those static-scene differences or
-produce a fresh A/B where the USD-relevant scene is proven equivalent.
+read-only Blender summary of the saved baseline-vs-batch blends found matching
+object names and counts but different mesh totals, several
+mesh/material/transform differences, and extra candidate node groups. However,
+the later full baseline A/A also failed the static blend diagnostic with linked
+scene differences, so saved `.blend` static differences are not currently a
+batch-remove-specific rejection signal. Before any walltime run or promotion
+of batch remove, define a baseline-calibrated relevant gate or root-cause the
+baseline nondeterminism.
 
 If a future run has only a pure `MaskTag.json` ID-order difference and no
 USD-relevant scene differences, it may be worth proposing separate validation
