@@ -1,5 +1,52 @@
 # Next Steps
 
+## Latest Determinism Ablation
+
+Before judging `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1`, confirm baseline
+self-determinism. The new tools are:
+
+```bash
+python scripts/compare_blend_static_scene.py outputs/a/coarse outputs/b/coarse
+EXPERIMENT_SMOKE_SINGLE_ROOM=1 EXPERIMENT_TIMEOUT_SECONDS=3600 bash scripts/run_determinism_ablation.sh
+```
+
+The 2026-06-20 smoke A/A completed without timeout or error markers. Both
+baseline A/A and candidate A/A passed `scripts/compare_indoor_outputs.py`:
+`MaskTag.json` and `solve_state.json` were `SAME`, and
+`numeric_max_abs_diff` was `0`.
+
+Both smoke A/A pairs failed `scripts/compare_blend_static_scene.py` with
+`STATIC_SCENE_FAIL` and `USD_RELEVANT_DIFF: yes`. The differences were linked
+scene differences, not unused-datablock-only differences. They included
+wall/floor/ceiling material slot changes and some wall mesh vertex/edge/polygon
+count changes, while object counts and object type counts matched.
+
+This means the saved `.blend` differences in the previous full
+baseline-vs-batch A/B cannot yet be attributed to batch remove. At least in
+smoke mode, baseline same-seed A/A is JSON-deterministic but not static-blend
+deterministic under the new comparator.
+
+Next diagnostic order:
+
+1. Keep batch remove opt-in and do not mainline it.
+2. Do not run walltime for acceptance while the relevant equivalence gate is
+   failing or undefined.
+3. Run a full 10-room baseline A/A with `scripts/run_determinism_ablation.sh`
+   when there is enough time budget.
+4. If full baseline-vs-baseline shows MaskTag or linked static-scene
+   differences, redefine the strict/static gates before blaming batch remove.
+5. If full baseline-vs-baseline passes but full baseline-vs-batch fails, treat
+   batch remove as a likely source of static scene change and continue
+   root-cause analysis.
+6. Keep unused Blender datablock differences separate from USD-relevant linked
+   scene differences. Unused node group differences alone should not be treated
+   the same as object, mesh, material-slot, transform, or linked node-tree
+   differences.
+7. If `MaskTag.json` proves to affect only GT annotation and not the linked
+   static scene, consider a separately reviewed Isaac-static-scene-specific
+   equivalence gate. Do not relax `compare_indoor_outputs.py` in the same
+   round as an optimization.
+
 ## Latest MaskTag Investigation
 
 The full 10-room `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1` A/B completed and

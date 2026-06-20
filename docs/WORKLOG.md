@@ -1,5 +1,127 @@
 # Worklog
 
+## 2026-06-20 - Determinism and static blend diagnostics
+
+### Round Goal
+
+Add diagnostics to decide whether saved `.blend` static-scene differences in
+the full 10-room batch-remove A/B are introduced by
+`INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1` or can appear in same-seed baseline
+A/A runs. Do not add an optimization, change batch-remove behavior, change gin,
+change solver flow, change random number/proposal/accept-reject behavior, run
+walltime, or commit generated outputs.
+
+### Changes
+
+Added `scripts/compare_blend_static_scene.py`.
+
+The script accepts either two `.blend` files or two coarse output folders
+containing `scene.blend`. When run from normal Python it re-executes itself
+under Blender background mode using `BLENDER_BIN`, `blender` on PATH, or the
+repo-local `blender/blender`. It opens the blends read-only and does not save.
+
+It compares a USD/Isaac-relevant linked static scene summary:
+
+- object count, object names, object type, parent, render/viewport visibility
+- object location, rotation, scale, and world matrix with tolerance
+- per-object mesh datablock name and vertex/edge/polygon counts
+- per-object material slot names and linked material names
+- linked node group names reachable from object modifiers and material node
+  trees
+
+It also reports unused mesh/material/node group datablocks separately. Unused
+datablock differences are not treated as static scene mismatches unless linked
+scene data also differs. Final output includes `STATIC_SCENE_PASS` or
+`STATIC_SCENE_FAIL`, `USD_RELEVANT_DIFF`, `UNUSED_DATABLOCK_DIFF`, and
+`UNUSED_DATABLOCK_DIFF_ONLY`.
+
+Added `scripts/run_determinism_ablation.sh`.
+
+The script runs same-seed A/A pairs for the current indoor coarse target. It
+supports:
+
+```bash
+PYTHON_BIN=...
+EXPERIMENT_TIMEOUT_SECONDS=...
+EXPERIMENT_SMOKE_SINGLE_ROOM=1
+RUN_BASELINE_AA=1
+RUN_CANDIDATE_AA=auto
+```
+
+The normal mode uses seed `0`, task `coarse`, `fast_solve.gin`,
+`compose_indoors.terrain_enabled=False`,
+`home_room_constraints.has_fewer_rooms=False`, and
+`restrict_solving.solve_max_rooms=10`. Smoke mode adds `singleroom.gin`, sets
+`home_room_constraints.has_fewer_rooms=True`, and sets
+`restrict_solving.solve_max_rooms=1`. Baseline A/A runs with
+`INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS` unset. Candidate A/A runs with
+`INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1`; in `auto` mode it runs by default
+only for smoke.
+
+### Smoke Result
+
+Command:
+
+```bash
+EXPERIMENT_SMOKE_SINGLE_ROOM=1 \
+EXPERIMENT_TIMEOUT_SECONDS=3600 \
+PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python \
+bash scripts/run_determinism_ablation.sh
+```
+
+The script exited with status `1` because static blend comparison failed, not
+because generation failed. All four generation runs completed:
+
+| pair | run | `MAIN TOTAL` |
+| --- | --- | ---: |
+| baseline A/A | baseline_a | 0:02:44.950478 |
+| baseline A/A | baseline_b | 0:02:43.698548 |
+| candidate A/A | candidate_a | 0:02:47.432543 |
+| candidate A/A | candidate_b | 0:02:46.587387 |
+
+JSON compare:
+
+| pair | result |
+| --- | --- |
+| baseline_a vs baseline_b | `FINAL: PASS`, `MaskTag.json` SAME, `solve_state.json` SAME, `numeric_max_abs_diff: 0` |
+| candidate_a vs candidate_b | `FINAL: PASS`, `MaskTag.json` SAME, `solve_state.json` SAME, `numeric_max_abs_diff: 0` |
+
+Static blend compare:
+
+| pair | result | diff summary |
+| --- | --- | --- |
+| baseline_a vs baseline_b | `STATIC_SCENE_FAIL`, `USD_RELEVANT_DIFF: yes` | 23 linked scene diffs, no unused datablock diffs |
+| candidate_a vs candidate_b | `STATIC_SCENE_FAIL`, `USD_RELEVANT_DIFF: yes` | 26 linked scene diffs, no unused datablock diffs |
+
+In both pairs, object count was 179 with object type counts
+`LIGHT: 19`, `MESH: 154`, `CAMERA: 2`, and `EMPTY: 4`. Linked mesh and material
+counts matched. The static differences were linked scene differences, mainly
+room wall/floor/ceiling material slot differences and some wall mesh
+vertex/edge/polygon count differences. They were not unused-data-block-only
+differences.
+
+### Judgment
+
+This smoke shows that same-seed baseline A/A is deterministic for the current
+JSON gate, but not deterministic for the saved `.blend` static scene summary.
+Therefore the saved blend differences observed in the earlier full
+baseline-vs-batch A/B are not yet proven to be introduced by batch remove.
+
+Do not use this as an acceptance result for batch remove. The full 10-room
+batch-remove A/B still has a clear runtime signal (`4:11:49.774668` baseline
+versus `3:07:38.553985` candidate), but strict equivalence still fails and
+batch remove remains opt-in only. Before mainlining or running walltime, the
+gate must distinguish strict JSON equivalence, Isaac static scene equivalence,
+and GT/mask/segmentation equivalence, with baseline A/A variability measured
+first.
+
+The full 10-room A/A was not run in this round because smoke static-scene A/A
+already failed. The next diagnostic step is a carefully budgeted full baseline
+A/A using the new script. If full baseline-vs-baseline also has MaskTag or
+static-scene differences, the strict gate needs to be redefined before blaming
+batch remove. If full baseline A/A passes but baseline-vs-batch fails, then
+batch remove is a stronger suspect for changing the static scene.
+
 ## 2026-06-20 - MaskTag difference investigation
 
 ### Round Goal

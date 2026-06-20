@@ -101,6 +101,100 @@ If the script prints `NO_COMPARABLE_JSON_FOUND`, the run is not a pass. Record
 that no comparable JSON was available and add a better comparison target before
 using the run as evidence.
 
+## Static Blend Scene Comparison
+
+`scripts/compare_blend_static_scene.py` compares two saved `.blend` files, or
+two coarse output folders containing `scene.blend`, without saving anything:
+
+```bash
+python scripts/compare_blend_static_scene.py outputs/a/coarse outputs/b/coarse
+python scripts/compare_blend_static_scene.py left.blend right.blend
+```
+
+When `bpy` is not importable from the active Python, the script re-runs itself
+under Blender background mode. Set `BLENDER_BIN=/path/to/blender` if the repo
+local Blender is not available.
+
+The comparison focuses on the linked static scene that matters for USD/Isaac
+static import:
+
+- object count, object names, object types, parents, and visibility
+- object location, rotation, scale, and world matrix with tolerance
+- linked mesh datablock names and per-object vertex/edge/polygon counts
+- material slot names and linked material names
+- linked node group names from modifiers and material node trees
+
+It also reports unused mesh/material/node group datablocks separately. Unused
+datablock differences should be investigated, but they are not the same as
+USD-relevant linked scene differences. The final labels are:
+
+```text
+STATIC_SCENE_PASS
+STATIC_SCENE_FAIL
+USD_RELEVANT_DIFF: yes|no
+UNUSED_DATABLOCK_DIFF: yes|no
+UNUSED_DATABLOCK_DIFF_ONLY: yes|no
+DIFF_CLASS: USD_RELEVANT_DIFF|UNUSED_DATABLOCK_DIFF_ONLY|NO_DIFF
+```
+
+Do not use this script to relax the JSON gate by default. Use it to decide
+whether a strict JSON failure is accompanied by USD-relevant linked scene
+changes, and to separate linked scene differences from unused Blender
+datablock churn.
+
+## Determinism Ablation
+
+Before attributing a baseline-vs-candidate difference to an optimization,
+verify that the baseline can reproduce itself under the same seed and
+configuration:
+
+```bash
+EXPERIMENT_SMOKE_SINGLE_ROOM=1 \
+EXPERIMENT_TIMEOUT_SECONDS=3600 \
+PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python \
+bash scripts/run_determinism_ablation.sh
+```
+
+For a full 10-room diagnostic:
+
+```bash
+EXPERIMENT_TIMEOUT_SECONDS=28800 \
+PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python \
+bash scripts/run_determinism_ablation.sh
+```
+
+By default, full mode runs baseline A/A only. Set `RUN_CANDIDATE_AA=1` to also
+run candidate A/A. Smoke mode runs both baseline A/A and candidate A/A in
+`auto` mode.
+
+The 2026-06-20 smoke A/A result:
+
+- baseline A/A JSON compare: `FINAL: PASS`
+- candidate A/A JSON compare: `FINAL: PASS`
+- baseline A/A static blend compare: `STATIC_SCENE_FAIL`,
+  `USD_RELEVANT_DIFF: yes`
+- candidate A/A static blend compare: `STATIC_SCENE_FAIL`,
+  `USD_RELEVANT_DIFF: yes`
+
+Both static failures were linked scene differences, not
+unused-datablock-only differences. This means smoke same-seed baseline is JSON
+deterministic but not saved-blend static-scene deterministic under the new
+summary comparator.
+
+Interpretation rules:
+
+1. If baseline-vs-baseline fails for `MaskTag.json` or linked static scene
+   data, redefine the relevant gate before blaming the optimization.
+2. If baseline-vs-baseline passes but baseline-vs-candidate fails, the
+   optimization is a stronger suspect and should remain opt-in while the
+   concrete difference is investigated.
+3. Keep strict equivalence, Isaac static scene equivalence, and GT annotation
+   equivalence separate. `MaskTag.json` is directly relevant to GT/tag
+   segmentation, while linked object/mesh/material/transform differences are
+   relevant to USD/Isaac static scenes.
+4. Do not promote `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1` until the relevant
+   gate passes on the normal 10-room target.
+
 ## Node Group Batch Remove Experiment
 
 `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1` is an opt-in experiment only. When

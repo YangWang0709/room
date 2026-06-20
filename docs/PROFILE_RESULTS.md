@@ -1,5 +1,73 @@
 # Profile Results
 
+## Determinism Ablation - 2026-06-20
+
+Profile type: same-seed A/A determinism diagnostic for indoor coarse outputs.
+No optimization was added, no batch-remove behavior was changed, no wall-clock
+benchmark was run, and generated outputs were not committed.
+
+Tools added:
+
+- `scripts/compare_blend_static_scene.py`
+- `scripts/run_determinism_ablation.sh`
+
+Smoke command:
+
+```bash
+EXPERIMENT_SMOKE_SINGLE_ROOM=1 \
+EXPERIMENT_TIMEOUT_SECONDS=3600 \
+PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python \
+bash scripts/run_determinism_ablation.sh
+```
+
+Run completion:
+
+| pair | run | status | `MAIN TOTAL` |
+| --- | --- | --- | ---: |
+| baseline A/A | baseline_a | complete | 0:02:44.950478 |
+| baseline A/A | baseline_b | complete | 0:02:43.698548 |
+| candidate A/A | candidate_a | complete | 0:02:47.432543 |
+| candidate A/A | candidate_b | complete | 0:02:46.587387 |
+
+No timeout, traceback, OOM, killed, or segfault marker was found.
+
+JSON comparison:
+
+```text
+baseline_a vs baseline_b:
+  matched_json_file_count: 2
+  SAME MaskTag.json numeric_max_abs_diff=0
+  SAME solve_state.json numeric_max_abs_diff=0
+  numeric_max_abs_diff: 0
+  FINAL: PASS
+
+candidate_a vs candidate_b:
+  matched_json_file_count: 2
+  SAME MaskTag.json numeric_max_abs_diff=0
+  SAME solve_state.json numeric_max_abs_diff=0
+  numeric_max_abs_diff: 0
+  FINAL: PASS
+```
+
+Static blend comparison:
+
+| pair | result | unused-only? | linked diff count |
+| --- | --- | --- | ---: |
+| baseline_a vs baseline_b | `STATIC_SCENE_FAIL`, `USD_RELEVANT_DIFF: yes` | no | 23 |
+| candidate_a vs candidate_b | `STATIC_SCENE_FAIL`, `USD_RELEVANT_DIFF: yes` | no | 26 |
+
+Both static comparisons had matching object counts, object type counts, linked
+mesh counts, linked material counts, and linked node group counts. Both still
+had linked scene differences in material slot assignment and some room wall
+mesh vertex/edge/polygon counts. `unused_datablock_diff_count` was `0` for both
+pairs.
+
+Judgment: the current JSON gate is deterministic for this smoke, but the saved
+blend static scene summary is not. The earlier full baseline-vs-batch `.blend`
+differences are therefore not yet evidence that batch remove caused static
+scene changes. A full 10-room baseline A/A is required before drawing mainline
+static-scene determinism conclusions.
+
 ## MaskTag Difference Investigation - 2026-06-20
 
 Profile type: post-run artifact investigation for the completed full same

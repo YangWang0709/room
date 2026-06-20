@@ -218,3 +218,52 @@ purposes:
 
 Any adjustment to `compare_indoor_outputs.py` should be proposed and reviewed
 separately. It should not be made as part of this batch-remove investigation.
+
+## Determinism Follow-Up
+
+The next diagnostic round added a read-only static blend comparator and an A/A
+ablation script:
+
+```bash
+python scripts/compare_blend_static_scene.py LEFT.blend RIGHT.blend
+python scripts/compare_blend_static_scene.py outputs/a/coarse outputs/b/coarse
+
+EXPERIMENT_SMOKE_SINGLE_ROOM=1 \
+EXPERIMENT_TIMEOUT_SECONDS=3600 \
+PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python \
+bash scripts/run_determinism_ablation.sh
+```
+
+`scripts/compare_blend_static_scene.py` opens `scene.blend` in Blender
+background mode, does not save, and compares a USD/Isaac-relevant static scene
+summary: object names/counts/types, transforms, per-object mesh vertex/edge/
+polygon counts, material slots, linked material names, and linked node group
+names. It separately reports unused mesh/material/node group datablocks and
+prints either `STATIC_SCENE_PASS` or `STATIC_SCENE_FAIL`, plus
+`USD_RELEVANT_DIFF`, `UNUSED_DATABLOCK_DIFF_ONLY`, or `NO_DIFF`.
+
+The 2026-06-20 smoke A/A result was:
+
+| pair | JSON compare | static blend compare | notes |
+| --- | --- | --- | --- |
+| baseline_a vs baseline_b | `FINAL: PASS` | `STATIC_SCENE_FAIL` / `USD_RELEVANT_DIFF: yes` | 23 linked static-scene diffs, no unused-only diffs |
+| candidate_a vs candidate_b | `FINAL: PASS` | `STATIC_SCENE_FAIL` / `USD_RELEVANT_DIFF: yes` | 26 linked static-scene diffs, no unused-only diffs |
+
+Both baseline smoke runs completed, and both candidate smoke runs completed.
+No timeout, traceback, OOM, killed, or segfault marker was found. The JSON
+compare saw `MaskTag.json` and `solve_state.json` as exactly same in both
+pairs. The static blend comparator still found linked scene differences,
+mainly wall/floor/ceiling material slot differences and some wall mesh
+vertex/edge/polygon count differences. Object counts and object type counts
+matched in both pairs.
+
+This means the saved `.blend` static-scene differences are not proven to be
+introduced by `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1`. At least in the smoke
+configuration, baseline same-seed A/A is JSON-deterministic but not saved-blend
+static-scene deterministic under the new comparator.
+
+The full 10-room A/A was not run in this round because the smoke static scene
+comparison already failed for baseline-vs-baseline. A full 10-room A/A is still
+required before making mainline conclusions about full-scene static determinism
+or about whether batch remove changes the static scene beyond existing baseline
+variability.
