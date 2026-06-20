@@ -1,5 +1,32 @@
 # Next Steps
 
+## Latest MaskTag Investigation
+
+The full 10-room `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1` A/B completed and
+has a clear runtime signal: baseline `MAIN TOTAL` was `4:11:49.774668`, while
+candidate_batch was `3:07:38.553985`. The signal is not accepted as a validated
+speedup because strict equivalence still failed.
+
+The only comparable JSON failure was `MaskTag.json`: `front.top` and
+`back.bottom` swapped tag IDs `21` and `22`. `solve_state.json` was equal after
+the compare script's canonicalization, so this does not by itself show a solver
+layout change. `MaskTag.json` is a tag-to-integer-label mapping used for
+semantic tag lookup and GT/tag-segmentation interpretation; the inspected USD
+export and Isaac Sim static import paths do not read it.
+
+Do not conclude that the current candidate is Isaac-static-equivalent. A
+read-only Blender summary of the saved blends found matching object names and
+counts but different mesh totals, several mesh/material/transform differences,
+and extra candidate node groups. Before any walltime run or promotion of
+batch remove, the next work must explain those static-scene differences or
+produce a fresh A/B where the USD-relevant scene is proven equivalent.
+
+If a future run has only a pure `MaskTag.json` ID-order difference and no
+USD-relevant scene differences, it may be worth proposing separate validation
+gates for strict equivalence, Isaac static scene equivalence, and GT annotation
+equivalence. That should be a separate compare-policy proposal, not an
+immediate relaxation.
+
 ## Suggested Next Round
 
 1. Keep the current optimization scope to a single indoor coarse scene. Do not
@@ -22,8 +49,11 @@
 5. Investigate the `MaskTag.json` difference before any further promotion of
    batch remove. Determine whether the front/back count swap is a real visible
    behavior change, a comparison-scope issue, or a Blender data-block lifecycle
-   effect from `bpy.data.batch_remove`. Any code change or revised comparison
-   policy must be followed by a fresh same seed/gin/task 10-room A/B.
+   effect from `bpy.data.batch_remove`. This investigation found that
+   `MaskTag.json` itself is a tag-label mapping, but the saved blends also
+   differ in mesh/material/transform summaries. Any code change or revised
+   comparison policy must be followed by a fresh same seed/gin/task 10-room
+   A/B.
 6. Use `EXPERIMENT_SMOKE_SINGLE_ROOM=1` only as a harness smoke. Passing
    single-room A/B validates the script and catches obvious differences, but it
    does not prove the 10-room mainline target is behavior-preserving or faster.
@@ -46,10 +76,12 @@
 10. If batch remove later passes full A/B, run
    `scripts/run_gc_batch_remove_walltime.sh` to measure wall-clock speed without
    heavy timing instrumentation before promoting the opt-in path. If the
-   `MaskTag.json` difference persists, keep batch remove opt-in/rejected for
-   mainline use and shift back to precise reuse, caching, or reduced duplicate
-   node group creation in the dominant factories instead of broad delayed
-   cleanup.
+   `MaskTag.json` difference persists, first determine whether it is a pure
+   GT/tag-label mapping difference or accompanied by USD-relevant static scene
+   differences. Keep batch remove opt-in/rejected for mainline use until the
+   relevant equivalence gate passes, and shift back to precise reuse, caching,
+   or reduced duplicate node group creation in the dominant factories instead
+   of broad delayed cleanup if the scene differences remain unexplained.
 11. Inspect the factory paths and node tree generation for the factories that
    dominate node group churn, starting with `LargeShelfFactory`, then
    `SimpleBookcaseFactory`, `SimpleDeskFactory`, `KitchenIslandFactory`, and

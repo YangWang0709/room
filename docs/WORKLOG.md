@@ -1,5 +1,74 @@
 # Worklog
 
+## 2026-06-20 - MaskTag difference investigation
+
+### Round Goal
+
+Investigate the `MaskTag.json` difference from the completed full 10-room
+`INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1` A/B without adding an optimization,
+changing batch removal behavior, changing solver flow, changing random number
+or proposal order, changing accept/reject logic, running walltime, or relaxing
+`scripts/compare_indoor_outputs.py`.
+
+### Findings
+
+`MaskTag.json` is written by `infinigen/core/execute_tasks.py` through
+`infinigen/core/tagging.py::AutoTag.save_tag`. It serializes
+`tag_system.tag_dict`, the mapping from semantic tag names to integer IDs used
+by the per-face Blender mesh attribute named `MaskTag`.
+
+`back.bottom` and `front.top` are combined canonical surface tags. Canonical
+`back` is local x minimum, `front` is local x maximum, `bottom` is local z
+minimum, and `top` is local z maximum. The values `21` and `22` are tag label
+IDs, not object IDs, mesh IDs, material IDs, proposal IDs, or collection IDs.
+
+The two `MaskTag.json` files had the same 119 keys. The only differences were:
+
+| tag ID | baseline | candidate_batch |
+| ---: | --- | --- |
+| 21 | `front.top` | `back.bottom` |
+| 22 | `back.bottom` | `front.top` |
+
+`solve_state.json` is not byte-identical, but it is equal after
+`scripts/compare_indoor_outputs.py` canonicalization. The byte difference comes
+from unordered tag-list ordering such as `-Subpart(front)` and
+`-Subpart(back)` appearing in opposite order. This supports the previous
+`SAME solve_state.json numeric_max_abs_diff=0` result.
+
+Additional output checks found that this A/B is not Isaac static scene
+equivalent from the saved blend evidence:
+
+- `pipeline_coarse.csv` object counts matched at every stage, but memory
+  columns differed.
+- `optim_records.csv` had the same 5830 rows. Ignoring timing columns, only 23
+  floating point text differences were found, with maximum absolute difference
+  `1.4210854715202004e-14`; no accept/reject or move sequence difference was
+  found by this check.
+- `polycounts.txt` differed, with candidate having more vertices/faces/tris.
+- Blender background inspection found matching object names and object counts,
+  but different total mesh vertices/polygons, 3 object transform differences
+  above `1e-9`, 31 mesh-info differences, material-name differences, and 25
+  extra candidate node groups.
+
+### Judgment
+
+The `MaskTag.json` ID swap alone is an annotation/tag mapping difference. It
+does not by itself prove a furniture layout, geometry, or material change. The
+inspected USD export and Isaac Sim helper paths do not read `MaskTag.json`, so
+the JSON mapping alone should not affect Isaac Sim static USD import.
+
+However, this specific full 10-room A/B cannot be treated as strict-equivalent
+or Isaac-static-equivalent because the saved `scene.blend` and polycount
+evidence show non-JSON scene differences. `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1`
+therefore remains opt-in only. Do not run the wall-clock A/B, do not mainline
+batch remove, and do not relax the compare gate from this result.
+
+If future evidence shows a pure `MaskTag.json` ID-order difference while the
+USD-relevant scene is proven equivalent, consider proposing separate gates for
+strict equivalence, Isaac static scene equivalence, and GT annotation
+equivalence. That is only a recommendation; no compare rule was changed in this
+round.
+
 ## 2026-06-20 - Full 10-room batch remove equivalence result
 
 ### Round Goal
