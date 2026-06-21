@@ -10,6 +10,87 @@ random number flow was changed, no proposal / accept / reject logic was
 changed, no `batch_remove` behavior was changed, no C++ path was connected,
 and no concurrent benchmark was run.
 
+## Timing Sample - 2026-06-21
+
+A bounded timing sample was collected with:
+
+```bash
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
+INFINIGEN_PROFILE_SHELF_NODEGROUPS=1
+--seed 0
+--task coarse
+-g fast_solve.gin
+restrict_solving.solve_max_rooms=10
+populate_doors.door_chance=0
+```
+
+The valid run used the current host checkout at
+`9f183b83346acb90c66c9a39aa48c7090ce01287`. The `/opt/infinigen`
+container checkout was stale during this round, so the container attempt is
+not used as timing evidence.
+
+The valid run timed out at `3600s`, so this is not a complete coarse profile.
+It still produced:
+
+```text
+outputs/profile_shelf_nodegroups_seed0/coarse/infinigen_shelf_nodegroup_timing.csv
+```
+
+CSV row counts:
+
+| metric | value |
+| --- | ---: |
+| file lines including header | 24,525 |
+| CSV data rows | 24,524 |
+| `nodegroup_create` rows | 23,083 |
+| `spawn_summary` rows | 1,441 |
+
+LargeShelf spawn summary:
+
+| metric | value |
+| --- | ---: |
+| LargeShelfFactory spawns | 1,441 |
+| total `spawn_summary` duration | 549.705s |
+| mean `spawn_summary` duration | 0.381s |
+| mean node groups created per spawn | 17.019 |
+| min / max node groups created per spawn | 14 / 74 |
+
+The per-spawn node group count includes the per-object top-level
+`geometry_nodes` tree. The child node group average is about `16.019` calls per
+spawn.
+
+Prefix totals from `nodegroup_create` rows:
+
+| prefix | calls | total duration | mean duration |
+| --- | ---: | ---: | ---: |
+| `nodegroup_division_board` | 5,629 | 278.151s | 0.049s |
+| `nodegroup_screw_head` | 5,629 | 125.246s | 0.022s |
+| `nodegroup_side_board` | 3,170 | 43.601s | 0.014s |
+| `nodegroup_tagged_cube` | 5,629 | 37.736s | 0.007s |
+| `nodegroup_bottom_board` | 1,585 | 25.735s | 0.016s |
+| `nodegroup_back_board` | 1,441 | 23.490s | 0.016s |
+
+There are only six shelf child prefixes in this CSV, so the top-20 prefix
+tables contain these six rows.
+
+The first-round child reuse candidates requested for this investigation
+accounted for:
+
+```text
+nodegroup_screw_head + nodegroup_side_board +
+nodegroup_bottom_board + nodegroup_back_board = 218.072s
+```
+
+That is about `6.1%` of the `3600s` bounded run. The inclusive prefix duration
+sum is `533.958s`, but it double-counts nested work because
+`nodegroup_division_board` includes the nested `nodegroup_tagged_cube` and
+`nodegroup_screw_head` calls.
+
+Judgment: shelf child node group creation is a real secondary bottleneck in
+this timeout sample and is worth a small opt-in reuse experiment. It is not a
+replacement for `batch_remove`: `batch_remove` remains the main deletion-cost
+switch, while reuse would target repeated creation cost.
+
 ## Source Path
 
 `LargeShelfFactory` is defined in:
@@ -147,6 +228,13 @@ target. It embeds per-shelf sampled arrays, scalar value defaults, and material
 objects into the graph. Reusing it would require a larger parameterization
 rewrite and would be more likely to change behavior.
 
+`nodegroup_division_board` and `nodegroup_tagged_cube` should also stay out of
+the first reuse experiment. `nodegroup_division_board` is the largest measured
+prefix, but its duration is inclusive of nested tagged-cube and screw-head
+creation, and it participates in `tag_support=True` geometry. `tagged_cube`
+stores the support-surface tag attribute. Reusing either one first would mix
+performance work with tag/material lifecycle risk.
+
 Broad delayed cleanup is also not the next path. The interval cleanup smoke
 already showed large burst removals. `batch_remove` addresses deletion cost
 when enabled, but it does not reduce duplicate node group creation cost.
@@ -188,21 +276,20 @@ python scripts/analyze_shelf_nodegroups.py \
 
 ## Recommended Next Opt-In Experiment
 
-The next optimization should be a small opt-in reuse experiment, not a solver
-change:
+The timing sample crossed the threshold for a small opt-in reuse experiment,
+not a solver change:
 
-1. Collect a short shelf-nodegroup timing sample with
-   `INFINIGEN_PROFILE_SHELF_NODEGROUPS=1`.
-2. Keep `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1` as the separate opt-in
+1. Keep `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1` as the separate opt-in
    deletion-cost switch; do not change its behavior.
-3. Add a new opt-in shelf child node group reuse flag only after the timing
-   confirms creation cost, for example `INFINIGEN_REUSE_SHELF_NODEGROUPS=1`.
-4. Start with `nodegroup_screw_head`, `nodegroup_side_board`,
+2. Add a new opt-in shelf child node group reuse flag, for example
+   `INFINIGEN_REUSE_SHELF_NODEGROUPS=1`.
+3. Start with `nodegroup_screw_head`, `nodegroup_side_board`,
    `nodegroup_bottom_board`, and `nodegroup_back_board`.
-5. Treat `nodegroup_tagged_cube` and `nodegroup_division_board` as second
+4. Treat `nodegroup_tagged_cube` and `nodegroup_division_board` as second
    phase reuse candidates because of tag-support behavior.
-6. Do not reuse the top-level `geometry_nodes` tree in the first experiment.
-7. Validate with the normal single-scene indoor coarse target and the current
+5. Do not reuse the top-level `geometry_nodes` tree in the first experiment.
+6. Validate with the normal single-scene indoor coarse target and the current
    acceptance criteria: realistic rendering, no obvious complexity loss, no
    obvious bugs, Isaac Sim usable, no door panels, and door openings retained.
    Default Isaac tests should keep `populate_doors.door_chance=0`.
+7. Do not run concurrent benchmarks for this phase.

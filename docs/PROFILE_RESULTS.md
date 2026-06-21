@@ -1,5 +1,153 @@
 # Profile Results
 
+## LargeShelf Node Group Timing Sample - 2026-06-21
+
+Profile type: bounded 10-room indoor coarse timing sample for
+`LargeShelfFactory` shelf node group creation. No optimization was added, no
+`LargeShelf` node group logic was changed, no solver behavior was changed, no
+proposal / accept / reject logic was changed, no `batch_remove` behavior was
+changed, no concurrent benchmark was run, and no C++ path was connected.
+
+The valid sample used the current host checkout at:
+
+```text
+9f183b83346acb90c66c9a39aa48c7090ce01287
+```
+
+The `/opt/infinigen` container checkout was stale during this round, so its
+attempt is not timing evidence. The valid host run timed out at `3600s`, so
+this is not a complete coarse profile.
+
+Command characteristics:
+
+```text
+seed 0
+task coarse
+fast_solve.gin
+compose_indoors.terrain_enabled=False
+home_room_constraints.has_fewer_rooms=False
+restrict_solving.solve_max_rooms=10
+populate_doors.door_chance=0
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
+INFINIGEN_PROFILE_SHELF_NODEGROUPS=1
+```
+
+CSV:
+
+```text
+outputs/profile_shelf_nodegroups_seed0/coarse/infinigen_shelf_nodegroup_timing.csv
+```
+
+CSV row counts:
+
+| metric | value |
+| --- | ---: |
+| file lines including header | 24,525 |
+| data rows | 24,524 |
+| `nodegroup_create` rows | 23,083 |
+| `spawn_summary` rows | 1,441 |
+
+LargeShelf spawn summary:
+
+| metric | value |
+| --- | ---: |
+| LargeShelfFactory spawns | 1,441 |
+| total `spawn_summary` duration | 549.705s |
+| mean `spawn_summary` duration | 0.381s |
+| total node groups created | 24,524 |
+| mean node groups created per spawn | 17.019 |
+| min / max node groups created per spawn | 14 / 74 |
+
+The per-spawn node group count includes one top-level `geometry_nodes` tree
+per shelf. Child node group creation rows alone averaged about `16.019` calls
+per spawn.
+
+Node group prefix total duration top 20:
+
+| prefix | calls | total duration | mean duration |
+| --- | ---: | ---: | ---: |
+| `nodegroup_division_board` | 5,629 | 278.151s | 0.049s |
+| `nodegroup_screw_head` | 5,629 | 125.246s | 0.022s |
+| `nodegroup_side_board` | 3,170 | 43.601s | 0.014s |
+| `nodegroup_tagged_cube` | 5,629 | 37.736s | 0.007s |
+| `nodegroup_bottom_board` | 1,585 | 25.735s | 0.016s |
+| `nodegroup_back_board` | 1,441 | 23.490s | 0.016s |
+
+Node group prefix count top 20:
+
+| prefix | calls | total duration | mean duration |
+| --- | ---: | ---: | ---: |
+| `nodegroup_tagged_cube` | 5,629 | 37.736s | 0.007s |
+| `nodegroup_screw_head` | 5,629 | 125.246s | 0.022s |
+| `nodegroup_division_board` | 5,629 | 278.151s | 0.049s |
+| `nodegroup_side_board` | 3,170 | 43.601s | 0.014s |
+| `nodegroup_bottom_board` | 1,585 | 25.735s | 0.016s |
+| `nodegroup_back_board` | 1,441 | 23.490s | 0.016s |
+
+There were only six shelf child prefixes in this CSV, so the top-20 prefix
+tables contain six rows.
+
+Slowest `LargeShelfFactory` spawns:
+
+| spawn_id | duration | created node groups |
+| --- | ---: | ---: |
+| 152 | 1.122s | 74 |
+| 133 | 1.070s | 65 |
+| 132 | 1.051s | 65 |
+| 145 | 1.002s | 65 |
+| 153 | 0.985s | 65 |
+| 130 | 0.982s | 65 |
+| 128 | 0.971s | 65 |
+| 159 | 0.936s | 47 |
+| 144 | 0.885s | 56 |
+| 117 | 0.830s | 56 |
+
+Target prefix totals:
+
+| prefix | calls | total duration | mean duration |
+| --- | ---: | ---: | ---: |
+| `nodegroup_screw_head` | 5,629 | 125.246s | 0.022s |
+| `nodegroup_side_board` | 3,170 | 43.601s | 0.014s |
+| `nodegroup_bottom_board` | 1,585 | 25.735s | 0.016s |
+| `nodegroup_back_board` | 1,441 | 23.490s | 0.016s |
+| `nodegroup_tagged_cube` | 5,629 | 37.736s | 0.007s |
+| `nodegroup_division_board` | 5,629 | 278.151s | 0.049s |
+
+The first-round reuse candidates requested for this investigation
+(`nodegroup_screw_head`, `nodegroup_side_board`,
+`nodegroup_bottom_board`, and `nodegroup_back_board`) accounted for
+`218.072s`, about `6.1%` of the `3600s` timeout window. The inclusive prefix
+duration sum was `533.958s`, but that double-counts nested work because
+`nodegroup_division_board` includes nested `nodegroup_tagged_cube` and
+`nodegroup_screw_head` creation.
+
+Repeated-template signal:
+
+| prefix | calls per spawn | signal |
+| --- | ---: | --- |
+| `nodegroup_division_board` | 3.906 | repeated, but not first reuse target |
+| `nodegroup_screw_head` | 3.906 | repeated, first reuse candidate |
+| `nodegroup_side_board` | 2.200 | repeated, first reuse candidate |
+| `nodegroup_tagged_cube` | 3.906 | repeated, tag-risk second phase |
+| `nodegroup_bottom_board` | 1.100 | repeated, first reuse candidate |
+| `nodegroup_back_board` | 1.000 | once per spawn, still repeated across spawns |
+
+Judgment: shelf child node group creation is a real next bottleneck for a
+small opt-in experiment. The next reuse experiment should be separate from
+`INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1` and should start only with
+`nodegroup_screw_head`, `nodegroup_side_board`, `nodegroup_bottom_board`, and
+`nodegroup_back_board`. Do not initially reuse top-level `geometry_nodes`,
+`nodegroup_division_board`, or `nodegroup_tagged_cube` because of per-shelf
+material arrays and tag-support risk.
+
+`batch_remove` remains the current main acceleration switch because it attacks
+deletion cost. This timing sample shows a separate creation-cost path that
+`batch_remove` does not solve. Do not continue bbox C++ work from the current
+evidence, do not run concurrent benchmarks, and do not change door logic.
+Default Isaac static-environment tests should keep
+`populate_doors.door_chance=0` so door panels are not generated while door
+openings remain.
+
 ## LargeShelf Node Group Investigation - 2026-06-21
 
 Profile type: source-path investigation and opt-in instrumentation setup for

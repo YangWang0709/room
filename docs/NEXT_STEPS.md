@@ -1,9 +1,47 @@
 # Next Steps
 
-## Latest LargeShelf Node Group Investigation
+## Latest LargeShelf Node Group Timing Sample
 
-`LargeShelfFactory` is now the next single-scene speed investigation target.
-The repeated high-frequency shelf node group prefixes are created in
+A bounded `LargeShelfFactory` shelf node group timing sample was collected on
+2026-06-21 with `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1`,
+`INFINIGEN_PROFILE_SHELF_NODEGROUPS=1`, seed `0`, `fast_solve.gin`,
+`restrict_solving.solve_max_rooms=10`, and
+`populate_doors.door_chance=0`.
+
+The valid run timed out at `3600s`, so it is not a complete coarse profile.
+It still wrote:
+
+```text
+outputs/profile_shelf_nodegroups_seed0/coarse/infinigen_shelf_nodegroup_timing.csv
+```
+
+The CSV has `24,524` data rows, including `23,083` child
+`nodegroup_create` rows and `1,441` `spawn_summary` rows. Mean created node
+groups per `LargeShelfFactory` spawn was `17.019`, including one top-level
+`geometry_nodes` tree per shelf.
+
+Prefix duration totals:
+
+| prefix | calls | total duration |
+| --- | ---: | ---: |
+| `nodegroup_division_board` | 5,629 | 278.151s |
+| `nodegroup_screw_head` | 5,629 | 125.246s |
+| `nodegroup_side_board` | 3,170 | 43.601s |
+| `nodegroup_tagged_cube` | 5,629 | 37.736s |
+| `nodegroup_bottom_board` | 1,585 | 25.735s |
+| `nodegroup_back_board` | 1,441 | 23.490s |
+
+The first-round reuse candidates
+(`nodegroup_screw_head`, `nodegroup_side_board`,
+`nodegroup_bottom_board`, and `nodegroup_back_board`) accounted for
+`218.072s`, about `6.1%` of the `3600s` timeout window. This is enough to
+justify a small opt-in reuse experiment. The inclusive prefix total
+(`533.958s`) double-counts nested work because `nodegroup_division_board`
+includes nested `nodegroup_tagged_cube` and `nodegroup_screw_head` creation.
+
+`LargeShelfFactory` remains the next single-scene speed investigation target,
+but only for opt-in shelf child node group reuse. The repeated high-frequency
+shelf node group prefixes are created in
 `infinigen/assets/objects/shelves/large_shelf.py` and
 `infinigen/assets/objects/shelves/utils.py`.
 
@@ -35,24 +73,22 @@ python scripts/analyze_shelf_nodegroups.py \
 
 Recommended next order:
 
-1. Collect a short `LargeShelfFactory` shelf-nodegroup timing sample with
-   `INFINIGEN_PROFILE_SHELF_NODEGROUPS=1`.
-2. Keep `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1` as a separate opt-in
+1. Keep `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1` as a separate opt-in
    deletion-cost switch; do not change its behavior.
-3. If creation cost is significant, add a separate opt-in reuse experiment for
-   pure shelf child groups, starting with `nodegroup_screw_head`,
+2. Add a separate opt-in reuse experiment for pure shelf child groups,
+   starting with `nodegroup_screw_head`,
    `nodegroup_side_board`, `nodegroup_bottom_board`, and
    `nodegroup_back_board`.
-4. Treat `nodegroup_tagged_cube` and `nodegroup_division_board` as more
+3. Treat `nodegroup_tagged_cube` and `nodegroup_division_board` as more
    sensitive second-phase candidates because they participate in tag-support
    behavior.
-5. Do not reuse the top-level `geometry_nodes` tree in the first experiment;
+4. Do not reuse the top-level `geometry_nodes` tree in the first experiment;
    it embeds per-shelf sampled arrays and material objects.
-6. Do not continue bbox C++ optimization from current evidence:
+5. Do not continue bbox C++ optimization from current evidence:
    `union_all_bbox` was only about `0.023%` of the measured bbox path.
-7. Do not run concurrent benchmarks or tune multi-process throughput in this
+6. Do not run concurrent benchmarks or tune multi-process throughput in this
    phase.
-8. Do not change door logic. Default Isaac validation should keep
+7. Do not change door logic. Default Isaac validation should keep
    `populate_doors.door_chance=0` so door panels are not generated and door
    openings remain.
 

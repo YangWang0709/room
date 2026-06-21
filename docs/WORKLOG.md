@@ -1,5 +1,124 @@
 # Worklog
 
+## 2026-06-21 - LargeShelf node group timing sample
+
+### Round Goal
+
+Run a shelf node group timing sample and analyze whether `LargeShelfFactory`
+child node group reuse is worth a future opt-in experiment. Do not add an
+optimization, do not change `LargeShelf` node group logic, do not do node
+group reuse, do not change solver behavior, do not change proposal / accept /
+reject logic, do not change `batch_remove`, do not run concurrent benchmarks,
+and do not commit generated outputs.
+
+### Run
+
+The requested `/opt/infinigen` container checkout was stale during this round,
+so its attempt is not used as timing evidence. The valid run used the current
+host checkout at:
+
+```text
+9f183b83346acb90c66c9a39aa48c7090ce01287
+```
+
+Command characteristics:
+
+```text
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
+INFINIGEN_PROFILE_SHELF_NODEGROUPS=1
+seed 0
+task coarse
+fast_solve.gin
+compose_indoors.terrain_enabled=False
+home_room_constraints.has_fewer_rooms=False
+restrict_solving.solve_max_rooms=10
+populate_doors.door_chance=0
+output_folder outputs/profile_shelf_nodegroups_seed0/coarse
+```
+
+The valid run timed out at `3600s`, so this is a bounded sample rather than a
+complete coarse profile.
+
+### CSV
+
+```text
+outputs/profile_shelf_nodegroups_seed0/coarse/infinigen_shelf_nodegroup_timing.csv
+```
+
+| metric | value |
+| --- | ---: |
+| file lines including header | 24,525 |
+| data rows | 24,524 |
+| `nodegroup_create` rows | 23,083 |
+| `spawn_summary` rows | 1,441 |
+| LargeShelfFactory spawns | 1,441 |
+| mean node groups created per spawn | 17.019 |
+| total `spawn_summary` duration | 549.705s |
+
+Prefix total duration:
+
+| prefix | calls | total duration | mean duration |
+| --- | ---: | ---: | ---: |
+| `nodegroup_division_board` | 5,629 | 278.151s | 0.049s |
+| `nodegroup_screw_head` | 5,629 | 125.246s | 0.022s |
+| `nodegroup_side_board` | 3,170 | 43.601s | 0.014s |
+| `nodegroup_tagged_cube` | 5,629 | 37.736s | 0.007s |
+| `nodegroup_bottom_board` | 1,585 | 25.735s | 0.016s |
+| `nodegroup_back_board` | 1,441 | 23.490s | 0.016s |
+
+Slowest `LargeShelfFactory` spawns:
+
+| spawn_id | duration | created node groups |
+| --- | ---: | ---: |
+| 152 | 1.122s | 74 |
+| 133 | 1.070s | 65 |
+| 132 | 1.051s | 65 |
+| 145 | 1.002s | 65 |
+| 153 | 0.985s | 65 |
+| 130 | 0.982s | 65 |
+| 128 | 0.971s | 65 |
+| 159 | 0.936s | 47 |
+| 144 | 0.885s | 56 |
+| 117 | 0.830s | 56 |
+
+### Judgment
+
+The first-round child reuse candidates
+(`nodegroup_screw_head`, `nodegroup_side_board`,
+`nodegroup_bottom_board`, and `nodegroup_back_board`) accounted for
+`218.072s`, about `6.1%` of the `3600s` timeout window. This is above the
+threshold for a small opt-in reuse experiment.
+
+There is clear repeated-template signal. `nodegroup_division_board`,
+`nodegroup_screw_head`, and `nodegroup_tagged_cube` each appeared `5,629`
+times; `nodegroup_side_board` appeared `3,170` times;
+`nodegroup_bottom_board` appeared `1,585` times; and
+`nodegroup_back_board` appeared once per spawn.
+
+Do not start with top-level `geometry_nodes`, `nodegroup_division_board`, or
+`nodegroup_tagged_cube`. The top-level graph embeds per-shelf sampled arrays
+and materials, while the division/tagged path participates in tag-support
+behavior. The first opt-in reuse experiment should start only with
+`nodegroup_screw_head`, `nodegroup_side_board`, `nodegroup_bottom_board`, and
+`nodegroup_back_board`.
+
+`batch_remove` remains the current main acceleration switch because it reduces
+deletion cost. The shelf node group timing sample shows a separate repeated
+creation cost that `batch_remove` does not solve. Do not continue bbox C++ work
+from the current evidence, do not run concurrent benchmarks, and do not change
+door logic. Default Isaac static-environment tests should keep
+`populate_doors.door_chance=0` so door panels are not generated while door
+openings remain.
+
+### Changes
+
+Documentation only:
+
+- `docs/LARGESHELF_NODEGROUP_INVESTIGATION.md`
+- `docs/PROFILE_RESULTS.md`
+- `docs/NEXT_STEPS.md`
+- `docs/WORKLOG.md`
+
 ## 2026-06-21 - LargeShelf node group generation investigation
 
 ### Round Goal
