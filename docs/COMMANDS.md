@@ -346,6 +346,122 @@ generation first. Prefer precise reuse, caching, or reducing repeated node
 group creation over broad deferred cleanup. Any optimization must remain
 opt-in until same seed/gin/task A/B passes.
 
+## Run LargeShelf Node Group Timing
+
+Enable `LargeShelfFactory` shelf node group creation timing:
+
+```bash
+INFINIGEN_PROFILE_SHELF_NODEGROUPS=1 python -m infinigen_examples.generate_indoors \
+  --seed 0 \
+  --task coarse \
+  --output_folder outputs/profile_shelf_nodegroups_seed0/coarse \
+  -g fast_solve.gin \
+  -p compose_indoors.terrain_enabled=False \
+     home_room_constraints.has_fewer_rooms=False \
+     restrict_solving.solve_max_rooms=10 \
+     populate_doors.door_chance=0
+```
+
+The timing CSV is written under the solver output folder when available:
+
+```text
+<output_folder>/infinigen_shelf_nodegroup_timing.csv
+```
+
+Analyze it with:
+
+```bash
+python scripts/analyze_shelf_nodegroups.py \
+  outputs/profile_shelf_nodegroups_seed0/coarse/infinigen_shelf_nodegroup_timing.csv
+```
+
+The analyzer reports prefix call counts, total and mean duration, per-spawn
+node group counts, repeated-template signals, and, when present, reuse cache
+hits and misses.
+
+## Run LargeShelf Child Reuse Short A/B
+
+The first `LargeShelfFactory` child node group reuse experiment is opt-in.
+Default behavior is unchanged unless this variable is set:
+
+```bash
+INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+```
+
+The first reuse set is limited to:
+
+```text
+nodegroup_screw_head
+nodegroup_side_board
+nodegroup_bottom_board
+nodegroup_back_board
+```
+
+Do not use this switch to imply that top-level `geometry_nodes`,
+`nodegroup_division_board`, or `nodegroup_tagged_cube` are reused. Those stay
+uncached because of per-object material/array defaults and tag attribute risk.
+
+Baseline short timing sample:
+
+```bash
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1 \
+INFINIGEN_PROFILE_SHELF_NODEGROUPS=1 \
+timeout 900s python -m infinigen_examples.generate_indoors \
+  --seed 0 \
+  --task coarse \
+  --output_folder outputs/profile_shelf_reuse_ab/baseline/coarse \
+  -g fast_solve.gin \
+  -p compose_indoors.terrain_enabled=False \
+     home_room_constraints.has_fewer_rooms=False \
+     restrict_solving.solve_max_rooms=10 \
+     populate_doors.door_chance=0
+```
+
+Candidate short timing sample:
+
+```bash
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1 \
+INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1 \
+INFINIGEN_PROFILE_SHELF_NODEGROUPS=1 \
+timeout 900s python -m infinigen_examples.generate_indoors \
+  --seed 0 \
+  --task coarse \
+  --output_folder outputs/profile_shelf_reuse_ab/candidate/coarse \
+  -g fast_solve.gin \
+  -p compose_indoors.terrain_enabled=False \
+     home_room_constraints.has_fewer_rooms=False \
+     restrict_solving.solve_max_rooms=10 \
+     populate_doors.door_chance=0
+```
+
+Analyze both CSVs:
+
+```bash
+python scripts/analyze_shelf_nodegroups.py \
+  outputs/profile_shelf_reuse_ab/baseline/coarse/infinigen_shelf_nodegroup_timing.csv
+
+python scripts/analyze_shelf_nodegroups.py \
+  outputs/profile_shelf_reuse_ab/candidate/coarse/infinigen_shelf_nodegroup_timing.csv
+```
+
+The 2026-06-21 short A/B timed out on both sides at 900s, as intended for a
+bounded sample. Both CSVs had 5,918 data rows and 163 `LargeShelfFactory`
+spawns. Candidate cache hit rate was 96.744%, actual node groups created
+dropped from 5,918 to 3,363, and target-prefix duration dropped from 21.417s
+to 0.538s. Treat this as timing evidence only, not as a quality gate.
+
+Next quality validation should keep:
+
+```text
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
+INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+restrict_solving.solve_max_rooms=10
+populate_doors.door_chance=0
+```
+
+Do not run concurrent generation for this validation. Do not commit generated
+outputs, CSVs, `.blend`, `.usd`, `.usdc`, `.zip`, or `.prof` files.
+
 ## Run Node Group Batch Remove Equivalence A/B
 
 The node group batch remove path is an opt-in single-scene experiment. Default

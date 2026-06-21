@@ -1,5 +1,67 @@
 # Next Steps
 
+## Latest LargeShelf Child Reuse Short Sample
+
+A first-round opt-in `LargeShelfFactory` child node group reuse experiment was
+implemented behind:
+
+```bash
+INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+```
+
+Default behavior is unchanged when the variable is unset. The first reuse set
+is limited to `nodegroup_screw_head`, `nodegroup_side_board`,
+`nodegroup_bottom_board`, and `nodegroup_back_board`.
+
+Do not reuse these in the next step:
+
+| prefix | reason |
+| --- | --- |
+| top-level `geometry_nodes` | per-shelf arrays, scalar defaults, and material objects |
+| `nodegroup_division_board` | tag-support path and inclusive nested timing |
+| `nodegroup_tagged_cube` | `MaskTag` / `TAG_support_surface` attribute risk |
+
+The bounded 900s short A/B used seed `0`, `fast_solve.gin`,
+`restrict_solving.solve_max_rooms=10`,
+`populate_doors.door_chance=0`,
+`INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1`, and
+`INFINIGEN_PROFILE_SHELF_NODEGROUPS=1`. Both sides timed out as intended at
+900s, so this is not a complete coarse profile and not a quality gate.
+
+Results from the matched 163-spawn sample:
+
+| metric | baseline | candidate |
+| --- | ---: | ---: |
+| CSV data rows | 5,918 | 5,918 |
+| `LargeShelfFactory` spawns | 163 | 163 |
+| actual node groups created | 5,918 | 3,363 |
+| mean actual node groups per spawn | 36.307 | 20.632 |
+| `spawn_summary` total duration | 60.096s | 36.718s |
+| cache hit rate | 0.000% | 96.744% |
+
+Target prefix duration dropped from `21.417s` to `0.538s`. No traceback, OOM,
+or segfault was observed.
+
+Recommended next order:
+
+1. Run a full 10-room Isaac static quality validation with both opt-in speed
+   switches enabled:
+   `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1` and
+   `INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1`.
+2. Keep the static Isaac quality configuration at
+   `restrict_solving.solve_max_rooms=10` and
+   `populate_doors.door_chance=0` so door panels are not generated while door
+   openings remain.
+3. Treat the 900s result as timing evidence only; do not accept the reuse path
+   until the full quality validation has no obvious scene bug and Isaac Sim can
+   use the exported static environment.
+4. Do not expand reuse to `nodegroup_division_board`, `nodegroup_tagged_cube`,
+   or top-level `geometry_nodes` before the child-only path passes.
+5. Keep `batch_remove` as the main deletion-cost switch. The reuse experiment
+   addresses repeated creation cost that `batch_remove` does not solve.
+6. Do not continue bbox C++ work or concurrent optimization from the current
+   evidence.
+
 ## Latest LargeShelf Node Group Timing Sample
 
 A bounded `LargeShelfFactory` shelf node group timing sample was collected on

@@ -4,11 +4,114 @@ Date: 2026-06-21
 
 ## Scope
 
-This round investigated the `LargeShelfFactory` shelf node group generation
-path only. No optimization was added, no solver behavior was changed, no
-random number flow was changed, no proposal / accept / reject logic was
-changed, no `batch_remove` behavior was changed, no C++ path was connected,
-and no concurrent benchmark was run.
+This document tracks the `LargeShelfFactory` shelf node group generation path
+and the first opt-in child node group reuse experiment. The reuse experiment
+does not change solver behavior, random number flow, proposal / accept /
+reject logic, `batch_remove` behavior, C++ code, concurrent execution, or door
+logic. Default behavior remains unchanged unless
+`INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1` is set.
+
+## Opt-In Child Reuse Experiment - 2026-06-21
+
+First-round reuse was added only for the child node groups that are pure
+parameterized geometry templates:
+
+| cached prefix | cache key |
+| --- | --- |
+| `nodegroup_screw_head` | function name |
+| `nodegroup_side_board` | function name |
+| `nodegroup_bottom_board` | function name |
+| `nodegroup_back_board` | function name |
+
+The cache is module-level and enabled only with:
+
+```bash
+INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+```
+
+The cache checks that the cached Blender node group datablock is still live
+before returning it. If Blender has removed the datablock, the entry is
+discarded and the node group is recreated normally. Exceptions from node group
+creation are not swallowed.
+
+The first experiment deliberately does not reuse:
+
+| prefix | reason |
+| --- | --- |
+| top-level `geometry_nodes` | embeds per-object arrays, scalar defaults, and material objects |
+| `nodegroup_division_board` | participates in the tagged support path and has inclusive nested timing |
+| `nodegroup_tagged_cube` | writes the `TAG_support_surface` attribute through `tagging.tag_nodegroup` |
+
+When `INFINIGEN_PROFILE_SHELF_NODEGROUPS=1` is enabled, the CSV now also
+records `reuse_enabled`, `cache_hit`, `cache_key`, `cache_size`, and
+`returned_nodegroup_name`. The analyzer reports cache hits, misses, hit rate,
+estimated saved create calls, and per-prefix reused summaries.
+
+### Short A/B Timing Sample
+
+A bounded 900s timing sample was run for baseline and candidate with:
+
+```text
+seed 0
+task coarse
+fast_solve.gin
+compose_indoors.terrain_enabled=False
+home_room_constraints.has_fewer_rooms=False
+restrict_solving.solve_max_rooms=10
+populate_doors.door_chance=0
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
+INFINIGEN_PROFILE_SHELF_NODEGROUPS=1
+```
+
+The candidate additionally set:
+
+```bash
+INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+```
+
+Both runs exited with `timeout` code `124` at 900s. This is a short timing
+sample only, not a complete coarse profile and not a quality gate. No
+traceback, OOM, or segfault was observed in either run.
+
+CSV paths:
+
+```text
+outputs/profile_shelf_reuse_ab/baseline/coarse/infinigen_shelf_nodegroup_timing.csv
+outputs/profile_shelf_reuse_ab/candidate/coarse/infinigen_shelf_nodegroup_timing.csv
+```
+
+Summary:
+
+| metric | baseline | candidate |
+| --- | ---: | ---: |
+| CSV data rows | 5,918 | 5,918 |
+| `LargeShelfFactory` spawns | 163 | 163 |
+| actual node groups created | 5,918 | 3,363 |
+| mean actual node groups per spawn | 36.307 | 20.632 |
+| `spawn_summary` total duration | 60.096s | 36.718s |
+| `spawn_summary` mean duration | 0.369s | 0.225s |
+| cache hit count | 0 | 2,555 |
+| cache miss count | 0 | 86 |
+| cache hit rate | 0.000% | 96.744% |
+
+Target prefix timing:
+
+| prefix | baseline duration | candidate duration | baseline calls | candidate calls |
+| --- | ---: | ---: | ---: | ---: |
+| `nodegroup_screw_head` | 14.993s | 0.095s | 1,557 | 1,557 |
+| `nodegroup_side_board` | 3.400s | 0.144s | 614 | 614 |
+| `nodegroup_bottom_board` | 2.001s | 0.153s | 307 | 307 |
+| `nodegroup_back_board` | 1.023s | 0.146s | 163 | 163 |
+
+The target-prefix duration total dropped from `21.417s` to `0.538s` in the
+matched 163-spawn sample. Actual created node groups dropped by `2,555`, which
+matches the candidate cache hit count.
+
+Judgment: the opt-in child reuse experiment has a clear timing signal and is
+worth a full 10-room Isaac static quality validation before considering any
+broader reuse. Do not expand reuse to `nodegroup_division_board`,
+`nodegroup_tagged_cube`, or top-level `geometry_nodes` until this first child
+reuse path passes quality validation.
 
 ## Timing Sample - 2026-06-21
 
@@ -205,21 +308,22 @@ baseline A/A diagnostics already show strict JSON and saved-blend instability.
 
 ## Looks Reusable
 
-These child groups look like good opt-in reuse candidates after timing confirms
-their creation cost:
+These child groups looked like good first opt-in reuse candidates after timing
+confirmed their creation cost, and they are the only groups enabled by
+`INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1` today:
 
 - `nodegroup_screw_head`: pure parameterized geometry; no material, tag, or
   random dependency was found.
 - `nodegroup_side_board`: pure parameterized board geometry.
 - `nodegroup_bottom_board`: pure parameterized board geometry.
 - `nodegroup_back_board`: pure parameterized board geometry.
-- `nodegroup_tagged_cube`: likely reusable as a tagged geometry template if
-  the stored attribute behavior remains identical.
 
-`nodegroup_division_board` also looks reusable as a template, but it should be
-keyed by `tag_support` because the graph differs when `tag_support=True`.
-The currently passed `material` argument appears unused, so it should not be a
-cache key unless a later source change starts using it.
+`nodegroup_tagged_cube` and `nodegroup_division_board` may still be theoretical
+future candidates, but they are deliberately deferred. `nodegroup_tagged_cube`
+stores a tag attribute, and `nodegroup_division_board` participates in the
+tag-support path and has inclusive nested timing. If either is revisited later,
+it needs separate opt-in gating, cache keys for any graph-shaping arguments
+such as `tag_support`, and a tag/material quality check.
 
 ## Not Suitable For First Reuse
 

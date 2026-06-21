@@ -32,10 +32,19 @@ from infinigen.core.placement.factory import AssetFactory
 logger = logging.getLogger(__name__)
 
 SHELF_NODEGROUP_TIMING_ENV_VAR = "INFINIGEN_PROFILE_SHELF_NODEGROUPS"
+LARGESHELF_CHILD_NODEGROUP_REUSE_ENV_VAR = (
+    "INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS"
+)
 SHELF_NODEGROUP_TIMING_CSV_NAME = "infinigen_shelf_nodegroup_timing.csv"
 DEFAULT_SHELF_NODEGROUP_TIMING_CSV = (
     Path("/tmp") / SHELF_NODEGROUP_TIMING_CSV_NAME
 )
+LARGESHELF_CHILD_NODEGROUP_REUSE_PREFIXES = {
+    "nodegroup_screw_head",
+    "nodegroup_side_board",
+    "nodegroup_bottom_board",
+    "nodegroup_back_board",
+}
 
 SHELF_NODEGROUP_TIMING_FIELDNAMES = [
     "event",
@@ -57,12 +66,18 @@ SHELF_NODEGROUP_TIMING_FIELDNAMES = [
     "division_level_count",
     "side_board_count",
     "tag_support",
+    "reuse_enabled",
+    "cache_hit",
+    "cache_key",
+    "cache_size",
+    "returned_nodegroup_name",
     "success",
     "error_type",
 ]
 
 _SHELF_NODEGROUP_TIMING_WRITE_FAILED = False
 _SHELF_NODEGROUP_SPAWN_COUNTER = 0
+_LARGESHELF_CHILD_NODEGROUP_CACHE = {}
 
 
 def _env_truthy(name: str) -> bool:
@@ -71,6 +86,10 @@ def _env_truthy(name: str) -> bool:
 
 def _profile_shelf_nodegroups_enabled() -> bool:
     return _env_truthy(SHELF_NODEGROUP_TIMING_ENV_VAR)
+
+
+def _reuse_largeshelf_child_nodegroups_enabled() -> bool:
+    return _env_truthy(LARGESHELF_CHILD_NODEGROUP_REUSE_ENV_VAR)
 
 
 def _shelf_nodegroup_timing_csv_path() -> Path:
@@ -130,6 +149,60 @@ def _json_list(values) -> str:
     return json.dumps(list(values))
 
 
+def _format_shelf_nodegroup_cache_key(cache_key) -> str:
+    if cache_key is None:
+        return ""
+    return json.dumps(list(cache_key))
+
+
+def _live_cached_largeshelf_child_nodegroup(cache_key):
+    cached_nodegroup = _LARGESHELF_CHILD_NODEGROUP_CACHE.get(cache_key)
+    if cached_nodegroup is None:
+        return None
+
+    try:
+        cached_name = cached_nodegroup.name
+        cached_pointer = cached_nodegroup.as_pointer()
+    except ReferenceError:
+        _LARGESHELF_CHILD_NODEGROUP_CACHE.pop(cache_key, None)
+        return None
+
+    live_nodegroup = bpy.data.node_groups.get(cached_name)
+    if live_nodegroup is None:
+        _LARGESHELF_CHILD_NODEGROUP_CACHE.pop(cache_key, None)
+        return None
+
+    try:
+        live_pointer = live_nodegroup.as_pointer()
+    except ReferenceError:
+        _LARGESHELF_CHILD_NODEGROUP_CACHE.pop(cache_key, None)
+        return None
+    if live_pointer != cached_pointer:
+        _LARGESHELF_CHILD_NODEGROUP_CACHE.pop(cache_key, None)
+        return None
+    if live_nodegroup is not cached_nodegroup:
+        _LARGESHELF_CHILD_NODEGROUP_CACHE[cache_key] = live_nodegroup
+    return live_nodegroup
+
+
+def _create_or_reuse_largeshelf_child_nodegroup(prefix: str, creator, cache_key=None):
+    reuse_enabled = (
+        _reuse_largeshelf_child_nodegroups_enabled()
+        and cache_key is not None
+        and prefix in LARGESHELF_CHILD_NODEGROUP_REUSE_PREFIXES
+    )
+    if not reuse_enabled:
+        return creator(), False
+
+    cached_nodegroup = _live_cached_largeshelf_child_nodegroup(cache_key)
+    if cached_nodegroup is not None:
+        return cached_nodegroup, True
+
+    nodegroup = creator()
+    _LARGESHELF_CHILD_NODEGROUP_CACHE[cache_key] = nodegroup
+    return nodegroup, False
+
+
 def _begin_shelf_nodegroup_spawn(factory, create_asset_index: int) -> dict | None:
     global _SHELF_NODEGROUP_SPAWN_COUNTER
 
@@ -153,6 +226,7 @@ def _begin_shelf_nodegroup_spawn(factory, create_asset_index: int) -> dict | Non
         "division_level_count": "",
         "side_board_count": "",
         "tag_support": "",
+        "reuse_enabled": _reuse_largeshelf_child_nodegroups_enabled(),
     }
 
 
@@ -167,9 +241,14 @@ def _update_shelf_nodegroup_spawn_context(context: dict | None, params: dict):
     context["tag_support"] = params.get("tag_support", "")
 
 
-def _profile_shelf_nodegroup(context: dict | None, prefix: str, creator):
+def _profile_shelf_nodegroup(
+    context: dict | None, prefix: str, creator, cache_key=None
+):
     if context is None:
-        return creator()
+        node_group, _cache_hit = _create_or_reuse_largeshelf_child_nodegroup(
+            prefix, creator, cache_key=cache_key
+        )
+        return node_group
 
     context["call_index"] += 1
     call_index = context["call_index"]
@@ -177,8 +256,12 @@ def _profile_shelf_nodegroup(context: dict | None, prefix: str, creator):
     start_time = time.perf_counter()
     node_group = None
     error_type = ""
+    cache_hit = False
+    cache_key_text = _format_shelf_nodegroup_cache_key(cache_key)
     try:
-        node_group = creator()
+        node_group, cache_hit = _create_or_reuse_largeshelf_child_nodegroup(
+            prefix, creator, cache_key=cache_key
+        )
         return node_group
     except Exception as exc:
         error_type = exc.__class__.__name__
@@ -211,6 +294,11 @@ def _profile_shelf_nodegroup(context: dict | None, prefix: str, creator):
                 "division_level_count": context["division_level_count"],
                 "side_board_count": context["side_board_count"],
                 "tag_support": context["tag_support"],
+                "reuse_enabled": context["reuse_enabled"],
+                "cache_hit": cache_hit,
+                "cache_key": cache_key_text,
+                "cache_size": len(_LARGESHELF_CHILD_NODEGROUP_CACHE),
+                "returned_nodegroup_name": getattr(node_group, "name", ""),
                 "success": not error_type,
                 "error_type": error_type,
             }
@@ -249,6 +337,8 @@ def _finish_shelf_nodegroup_spawn(
             "division_level_count": context["division_level_count"],
             "side_board_count": context["side_board_count"],
             "tag_support": context["tag_support"],
+            "reuse_enabled": context["reuse_enabled"],
+            "cache_size": len(_LARGESHELF_CHILD_NODEGROUP_CACHE),
             "success": success,
             "error_type": error_type,
         }
@@ -523,7 +613,10 @@ def nodegroup_division_board(
         )
 
     screw_head_nodegroup = _profile_shelf_nodegroup(
-        shelf_nodegroup_profile, "nodegroup_screw_head", nodegroup_screw_head
+        shelf_nodegroup_profile,
+        "nodegroup_screw_head",
+        nodegroup_screw_head,
+        cache_key=("nodegroup_screw_head",),
     )
     screw_head = nw.new_node(
         screw_head_nodegroup.name,
@@ -799,7 +892,10 @@ def geometry_nodes(nw: NodeWrangler, **kwargs):
         side_board_x_translation.outputs[0].default_value = x
 
         side_board_nodegroup = _profile_shelf_nodegroup(
-            shelf_nodegroup_profile, "nodegroup_side_board", nodegroup_side_board
+            shelf_nodegroup_profile,
+            "nodegroup_side_board",
+            nodegroup_side_board,
+            cache_key=("nodegroup_side_board",),
         )
         side_board = nw.new_node(
             side_board_nodegroup.name,
@@ -822,7 +918,10 @@ def geometry_nodes(nw: NodeWrangler, **kwargs):
         Nodes.Math, input_kwargs={0: shelf_width, 1: kwargs["side_board_thickness"] * 2}
     )
     back_board_nodegroup = _profile_shelf_nodegroup(
-        shelf_nodegroup_profile, "nodegroup_back_board", nodegroup_back_board
+        shelf_nodegroup_profile,
+        "nodegroup_back_board",
+        nodegroup_back_board,
+        cache_key=("nodegroup_back_board",),
     )
     back_board = nw.new_node(
         back_board_nodegroup.name,
@@ -853,7 +952,10 @@ def geometry_nodes(nw: NodeWrangler, **kwargs):
         shelf_cell_width.outputs[0].default_value = kwargs["shelf_cell_width"][i]
 
         bottom_board_nodegroup = _profile_shelf_nodegroup(
-            shelf_nodegroup_profile, "nodegroup_bottom_board", nodegroup_bottom_board
+            shelf_nodegroup_profile,
+            "nodegroup_bottom_board",
+            nodegroup_bottom_board,
+            cache_key=("nodegroup_bottom_board",),
         )
         bottomboard = nw.new_node(
             bottom_board_nodegroup.name,

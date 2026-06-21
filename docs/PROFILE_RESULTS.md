@@ -1,5 +1,114 @@
 # Profile Results
 
+## LargeShelf Child Node Group Reuse Short Sample - 2026-06-21
+
+Profile type: bounded 900s timing A/B for the first opt-in
+`LargeShelfFactory` child node group reuse experiment. This was not a complete
+coarse profile and not a quality gate. No solver behavior, random number flow,
+proposal / accept / reject logic, `batch_remove` behavior, C++ code,
+concurrent execution, or door logic was changed.
+
+The candidate was enabled only with:
+
+```bash
+INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+```
+
+The first reuse set was limited to:
+
+```text
+nodegroup_screw_head
+nodegroup_side_board
+nodegroup_bottom_board
+nodegroup_back_board
+```
+
+The candidate deliberately did not reuse top-level `geometry_nodes`,
+`nodegroup_division_board`, or `nodegroup_tagged_cube`.
+
+Both baseline and candidate used:
+
+```text
+seed 0
+task coarse
+fast_solve.gin
+compose_indoors.terrain_enabled=False
+home_room_constraints.has_fewer_rooms=False
+restrict_solving.solve_max_rooms=10
+populate_doors.door_chance=0
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
+INFINIGEN_PROFILE_SHELF_NODEGROUPS=1
+```
+
+Both runs exited with `timeout` code `124` at 900s. No traceback, OOM, or
+segfault was observed.
+
+CSVs:
+
+```text
+outputs/profile_shelf_reuse_ab/baseline/coarse/infinigen_shelf_nodegroup_timing.csv
+outputs/profile_shelf_reuse_ab/candidate/coarse/infinigen_shelf_nodegroup_timing.csv
+```
+
+Summary:
+
+| metric | baseline | candidate |
+| --- | ---: | ---: |
+| file lines including header | 5,919 | 5,919 |
+| CSV data rows | 5,918 | 5,918 |
+| `nodegroup_create` rows | 5,755 | 5,755 |
+| `spawn_summary` rows | 163 | 163 |
+| actual node groups created | 5,918 | 3,363 |
+| mean actual node groups per spawn | 36.307 | 20.632 |
+| `spawn_summary` total duration | 60.096s | 36.718s |
+| `spawn_summary` mean duration | 0.369s | 0.225s |
+
+Candidate reuse cache:
+
+| metric | value |
+| --- | ---: |
+| cache-keyed call rows | 2,641 |
+| cache-enabled call rows | 2,641 |
+| cache hits | 2,555 |
+| cache misses | 86 |
+| cache hit rate | 96.744% |
+| estimated saved create calls | 2,555 |
+
+Prefix total duration comparison:
+
+| prefix | baseline calls | baseline duration | candidate calls | candidate duration |
+| --- | ---: | ---: | ---: | ---: |
+| `nodegroup_division_board` | 1,557 | 32.913s | 1,557 | 16.826s |
+| `nodegroup_screw_head` | 1,557 | 14.993s | 1,557 | 0.095s |
+| `nodegroup_tagged_cube` | 1,557 | 4.465s | 1,557 | 4.216s |
+| `nodegroup_side_board` | 614 | 3.400s | 614 | 0.144s |
+| `nodegroup_bottom_board` | 307 | 2.001s | 307 | 0.153s |
+| `nodegroup_back_board` | 163 | 1.023s | 163 | 0.146s |
+
+The four cached target prefixes dropped from `21.417s` to `0.538s` in the
+matched short sample. The inclusive `nodegroup_division_board` duration also
+dropped because its nested `nodegroup_screw_head` creation now hits the cache;
+`division_board` itself is not cached.
+
+Judgment: candidate node group creation count and target-prefix duration both
+drop clearly, with no crash signal in the short sample. This is worth entering
+a full 10-room Isaac static quality validation before any broader reuse work.
+The next validation should keep the Isaac static quality configuration:
+
+```text
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
+INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+restrict_solving.solve_max_rooms=10
+populate_doors.door_chance=0
+```
+
+Do not expand reuse to `nodegroup_division_board`, `nodegroup_tagged_cube`, or
+top-level `geometry_nodes` unless the first child-only path passes quality
+validation and new timing justifies the extra tag/material risk. `batch_remove`
+remains the current main acceleration switch because it addresses deletion
+cost; this reuse path addresses repeated creation cost. Do not continue bbox
+C++ work or concurrent optimization from this evidence.
+
 ## LargeShelf Node Group Timing Sample - 2026-06-21
 
 Profile type: bounded 10-room indoor coarse timing sample for

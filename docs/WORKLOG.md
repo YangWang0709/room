@@ -1,5 +1,128 @@
 # Worklog
 
+## 2026-06-21 - Opt-in LargeShelf child node group reuse
+
+### Round Goal
+
+Implement the first opt-in `LargeShelfFactory` child node group reuse
+experiment without changing default behavior, solver behavior, random number
+flow, proposal / accept / reject logic, `batch_remove` behavior, door logic,
+concurrent execution, or C++ code. Run only a bounded short timing sample and
+decide whether the opt-in path is worth full quality validation.
+
+### Changes
+
+Added:
+
+```bash
+INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+```
+
+When unset, default behavior is unchanged. When set, `large_shelf.py` uses a
+module-level cache for these child node groups only:
+
+- `nodegroup_screw_head`
+- `nodegroup_side_board`
+- `nodegroup_bottom_board`
+- `nodegroup_back_board`
+
+The cache key is the function name for these fixed-structure node groups. The
+cache validates that the cached Blender node group datablock is still live
+before returning it. If the datablock was removed, the entry is discarded and
+the node group is recreated.
+
+The first experiment intentionally does not reuse:
+
+- top-level `geometry_nodes`, because it embeds per-object arrays, scalar
+  defaults, and material objects.
+- `nodegroup_division_board`, because it participates in the tag-support path
+  and its timing is inclusive of nested child work.
+- `nodegroup_tagged_cube`, because it writes the `TAG_support_surface`
+  attribute and is tied to MaskTag/tag lifecycle risk.
+
+Extended `INFINIGEN_PROFILE_SHELF_NODEGROUPS=1` CSV output with
+`reuse_enabled`, `cache_hit`, `cache_key`, `cache_size`, and
+`returned_nodegroup_name`. Updated `scripts/analyze_shelf_nodegroups.py` to
+report cache hits, misses, hit rate, estimated saved create calls, and reused
+prefix summaries.
+
+### Short Timing Sample
+
+Both runs used:
+
+```text
+seed 0
+task coarse
+fast_solve.gin
+compose_indoors.terrain_enabled=False
+home_room_constraints.has_fewer_rooms=False
+restrict_solving.solve_max_rooms=10
+populate_doors.door_chance=0
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
+INFINIGEN_PROFILE_SHELF_NODEGROUPS=1
+timeout 900s
+```
+
+Candidate additionally used:
+
+```bash
+INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+```
+
+Both runs exited with timeout code `124` at 900s. This is a short timing sample
+only, not a complete profile and not a quality gate. No traceback, OOM, or
+segfault was observed.
+
+CSVs:
+
+```text
+outputs/profile_shelf_reuse_ab/baseline/coarse/infinigen_shelf_nodegroup_timing.csv
+outputs/profile_shelf_reuse_ab/candidate/coarse/infinigen_shelf_nodegroup_timing.csv
+```
+
+| metric | baseline | candidate |
+| --- | ---: | ---: |
+| CSV data rows | 5,918 | 5,918 |
+| `LargeShelfFactory` spawns | 163 | 163 |
+| actual node groups created | 5,918 | 3,363 |
+| mean actual node groups per spawn | 36.307 | 20.632 |
+| `spawn_summary` total duration | 60.096s | 36.718s |
+| cache hits | 0 | 2,555 |
+| cache misses | 0 | 86 |
+| cache hit rate | 0.000% | 96.744% |
+
+Target prefix total duration:
+
+| prefix | baseline | candidate |
+| --- | ---: | ---: |
+| `nodegroup_screw_head` | 14.993s | 0.095s |
+| `nodegroup_side_board` | 3.400s | 0.144s |
+| `nodegroup_bottom_board` | 2.001s | 0.153s |
+| `nodegroup_back_board` | 1.023s | 0.146s |
+
+The four target prefixes dropped from `21.417s` to `0.538s`, and actual node
+group creation dropped by `2,555`, matching the cache hit count.
+
+### Judgment
+
+The short sample shows a clear creation-cost reduction and no crash signal, so
+the opt-in child reuse path is worth a full 10-room Isaac static quality
+validation. Do not expand reuse before that validation passes.
+
+The next validation should keep the Isaac static environment defaults:
+
+```text
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
+INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+restrict_solving.solve_max_rooms=10
+populate_doors.door_chance=0
+```
+
+`batch_remove` remains the current main acceleration switch because it reduces
+deletion cost. LargeShelf child reuse addresses repeated creation cost that
+`batch_remove` does not solve. Do not continue bbox C++ work, do not run
+concurrent benchmarks, and do not change door logic.
+
 ## 2026-06-21 - LargeShelf node group timing sample
 
 ### Round Goal
