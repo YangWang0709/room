@@ -1,5 +1,64 @@
 # Profile Results
 
+## LargeShelf Node Group Investigation - 2026-06-21
+
+Profile type: source-path investigation and opt-in instrumentation setup for
+`LargeShelfFactory` shelf node group creation. No optimization was added, no
+solver behavior was changed, no random number flow was changed, no proposal /
+accept / reject logic was changed, no `batch_remove` behavior was changed, no
+concurrent benchmark was run, and no C++ path was connected.
+
+Source path:
+
+```text
+infinigen/assets/objects/shelves/large_shelf.py
+```
+
+High-frequency prefixes map to the shelf generation path:
+
+| prefix | source | creation trigger |
+| --- | --- | --- |
+| `nodegroup_tagged_cube` | `shelves/utils.py` | nested in each tagged division board |
+| `nodegroup_division_board` | `large_shelf.py` | one per cell-width / shelf-level combination |
+| `nodegroup_screw_head` | `large_shelf.py` | nested in each division board |
+| `nodegroup_side_board` | `large_shelf.py` | one per side-board x translation |
+| `nodegroup_bottom_board` | `large_shelf.py` | one per shelf cell width |
+| `nodegroup_back_board` | `large_shelf.py` | one per shelf spawn |
+
+All of these child groups currently use `singleton=False`, so every call
+creates a new Blender node group datablock. The inspected child group creation
+functions do not call random APIs directly; per-object variation is supplied
+through sampled parameters and exposed inputs.
+
+New opt-in instrumentation:
+
+```bash
+INFINIGEN_PROFILE_SHELF_NODEGROUPS=1
+```
+
+When enabled, the run writes:
+
+```text
+infinigen_shelf_nodegroup_timing.csv
+```
+
+under the solver output folder when available, otherwise `/tmp`. Analyze it
+with:
+
+```bash
+python scripts/analyze_shelf_nodegroups.py \
+  outputs/<run>/coarse/infinigen_shelf_nodegroup_timing.csv
+```
+
+Judgment: `batch_remove` addresses node group deletion cost when explicitly
+enabled, but it does not address repeated node group creation cost. The next
+speed candidate should be a separate opt-in `LargeShelfFactory` child node
+group reuse experiment after collecting this timing. Do not continue bbox C++
+optimization from current evidence because `union_all_bbox` accounted for only
+about `0.023%` of the measured bbox path. Do not run concurrent benchmarks in
+this phase. Do not change door logic; default Isaac validation should keep
+`populate_doors.door_chance=0`.
+
 ## Full Baseline Determinism Check - 2026-06-20
 
 Profile type: full same-seed baseline A/A determinism diagnostic for the

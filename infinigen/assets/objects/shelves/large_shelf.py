@@ -3,6 +3,15 @@
 
 # Authors: Beining Han
 
+import csv
+import json
+import logging
+import os
+import sys
+import time
+from collections import Counter
+from pathlib import Path
+
 import bpy
 import numpy as np
 from numpy.random import normal, randint, uniform
@@ -19,6 +28,231 @@ from infinigen.core import surface, tagging
 from infinigen.core.nodes import node_utils
 from infinigen.core.nodes.node_wrangler import Nodes, NodeWrangler
 from infinigen.core.placement.factory import AssetFactory
+
+logger = logging.getLogger(__name__)
+
+SHELF_NODEGROUP_TIMING_ENV_VAR = "INFINIGEN_PROFILE_SHELF_NODEGROUPS"
+SHELF_NODEGROUP_TIMING_CSV_NAME = "infinigen_shelf_nodegroup_timing.csv"
+DEFAULT_SHELF_NODEGROUP_TIMING_CSV = (
+    Path("/tmp") / SHELF_NODEGROUP_TIMING_CSV_NAME
+)
+
+SHELF_NODEGROUP_TIMING_FIELDNAMES = [
+    "event",
+    "spawn_id",
+    "factory_class",
+    "factory_seed",
+    "create_asset_index",
+    "call_index",
+    "prefix",
+    "node_group_name",
+    "duration",
+    "node_groups_before",
+    "node_groups_after",
+    "created_count",
+    "created_names",
+    "created_prefix_counts",
+    "call_prefix_counts",
+    "shelf_cell_count",
+    "division_level_count",
+    "side_board_count",
+    "tag_support",
+    "success",
+    "error_type",
+]
+
+_SHELF_NODEGROUP_TIMING_WRITE_FAILED = False
+_SHELF_NODEGROUP_SPAWN_COUNTER = 0
+
+
+def _env_truthy(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _profile_shelf_nodegroups_enabled() -> bool:
+    return _env_truthy(SHELF_NODEGROUP_TIMING_ENV_VAR)
+
+
+def _shelf_nodegroup_timing_csv_path() -> Path:
+    solver_timing = sys.modules.get("infinigen.core.constraints.example_solver.timing")
+    if solver_timing is not None:
+        current_output_folder = getattr(solver_timing, "current_output_folder", None)
+        if current_output_folder is not None:
+            output_folder = current_output_folder()
+            if output_folder is not None:
+                return Path(output_folder) / SHELF_NODEGROUP_TIMING_CSV_NAME
+    return DEFAULT_SHELF_NODEGROUP_TIMING_CSV
+
+
+def _write_shelf_nodegroup_timing_row(row: dict):
+    global _SHELF_NODEGROUP_TIMING_WRITE_FAILED
+
+    if _SHELF_NODEGROUP_TIMING_WRITE_FAILED:
+        return
+
+    path = _shelf_nodegroup_timing_csv_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_header = not path.exists() or path.stat().st_size == 0
+        with path.open("a", newline="") as handle:
+            writer = csv.DictWriter(
+                handle, fieldnames=SHELF_NODEGROUP_TIMING_FIELDNAMES
+            )
+            if write_header:
+                writer.writeheader()
+            writer.writerow(
+                {
+                    field: row.get(field, "")
+                    for field in SHELF_NODEGROUP_TIMING_FIELDNAMES
+                }
+            )
+    except OSError:
+        _SHELF_NODEGROUP_TIMING_WRITE_FAILED = True
+        logger.exception("Failed to write shelf node group timing CSV at %s", path)
+
+
+def _nodegroup_name_set() -> set[str]:
+    return {str(name) for name in bpy.data.node_groups.keys()}
+
+
+def _nodegroup_prefix(name: str) -> str:
+    if "." not in name:
+        return name
+    base, suffix = name.rsplit(".", 1)
+    return base if suffix.isdigit() else name
+
+
+def _json_counter(counter: Counter) -> str:
+    return json.dumps(dict(sorted(counter.items())), sort_keys=True)
+
+
+def _json_list(values) -> str:
+    return json.dumps(list(values))
+
+
+def _begin_shelf_nodegroup_spawn(factory, create_asset_index: int) -> dict | None:
+    global _SHELF_NODEGROUP_SPAWN_COUNTER
+
+    if not _profile_shelf_nodegroups_enabled():
+        return None
+
+    _SHELF_NODEGROUP_SPAWN_COUNTER += 1
+    before_names = _nodegroup_name_set()
+    return {
+        "spawn_id": _SHELF_NODEGROUP_SPAWN_COUNTER,
+        "factory_class": factory.__class__.__name__,
+        "factory_seed": getattr(factory, "factory_seed", ""),
+        "create_asset_index": create_asset_index,
+        "start_time": time.perf_counter(),
+        "node_group_names_before": before_names,
+        "node_groups_before": len(before_names),
+        "nodegroup_rows": [],
+        "call_prefix_counts": Counter(),
+        "call_index": 0,
+        "shelf_cell_count": "",
+        "division_level_count": "",
+        "side_board_count": "",
+        "tag_support": "",
+    }
+
+
+def _update_shelf_nodegroup_spawn_context(context: dict | None, params: dict):
+    if context is None:
+        return
+    context["shelf_cell_count"] = len(params.get("shelf_cell_width", []))
+    context["division_level_count"] = len(
+        params.get("division_board_z_translation", [])
+    )
+    context["side_board_count"] = len(params.get("side_board_x_translation", []))
+    context["tag_support"] = params.get("tag_support", "")
+
+
+def _profile_shelf_nodegroup(context: dict | None, prefix: str, creator):
+    if context is None:
+        return creator()
+
+    context["call_index"] += 1
+    call_index = context["call_index"]
+    before_names = _nodegroup_name_set()
+    start_time = time.perf_counter()
+    node_group = None
+    error_type = ""
+    try:
+        node_group = creator()
+        return node_group
+    except Exception as exc:
+        error_type = exc.__class__.__name__
+        raise
+    finally:
+        duration = time.perf_counter() - start_time
+        after_names = _nodegroup_name_set()
+        created_names = sorted(after_names - before_names)
+        created_prefix_counts = Counter(
+            _nodegroup_prefix(name) for name in created_names
+        )
+        context["call_prefix_counts"][prefix] += 1
+        context["nodegroup_rows"].append(
+            {
+                "event": "nodegroup_create",
+                "spawn_id": context["spawn_id"],
+                "factory_class": context["factory_class"],
+                "factory_seed": context["factory_seed"],
+                "create_asset_index": context["create_asset_index"],
+                "call_index": call_index,
+                "prefix": prefix,
+                "node_group_name": getattr(node_group, "name", ""),
+                "duration": duration,
+                "node_groups_before": len(before_names),
+                "node_groups_after": len(after_names),
+                "created_count": len(created_names),
+                "created_names": _json_list(created_names),
+                "created_prefix_counts": _json_counter(created_prefix_counts),
+                "shelf_cell_count": context["shelf_cell_count"],
+                "division_level_count": context["division_level_count"],
+                "side_board_count": context["side_board_count"],
+                "tag_support": context["tag_support"],
+                "success": not error_type,
+                "error_type": error_type,
+            }
+        )
+
+
+def _finish_shelf_nodegroup_spawn(
+    context: dict | None, success: bool, error_type: str = ""
+):
+    if context is None:
+        return
+
+    after_names = _nodegroup_name_set()
+    created_names = sorted(after_names - context["node_group_names_before"])
+    created_prefix_counts = Counter(_nodegroup_prefix(name) for name in created_names)
+    duration = time.perf_counter() - context["start_time"]
+
+    for row in context["nodegroup_rows"]:
+        _write_shelf_nodegroup_timing_row(row)
+
+    _write_shelf_nodegroup_timing_row(
+        {
+            "event": "spawn_summary",
+            "spawn_id": context["spawn_id"],
+            "factory_class": context["factory_class"],
+            "factory_seed": context["factory_seed"],
+            "create_asset_index": context["create_asset_index"],
+            "duration": duration,
+            "node_groups_before": context["node_groups_before"],
+            "node_groups_after": len(after_names),
+            "created_count": len(created_names),
+            "created_names": _json_list(created_names),
+            "created_prefix_counts": _json_counter(created_prefix_counts),
+            "call_prefix_counts": _json_counter(context["call_prefix_counts"]),
+            "shelf_cell_count": context["shelf_cell_count"],
+            "division_level_count": context["division_level_count"],
+            "side_board_count": context["side_board_count"],
+            "tag_support": context["tag_support"],
+            "success": success,
+            "error_type": error_type,
+        }
+    )
 
 
 @node_utils.to_nodegroup(
@@ -241,7 +475,9 @@ def nodegroup_attachment(nw: NodeWrangler):
 @node_utils.to_nodegroup(
     "nodegroup_division_board", singleton=False, type="GeometryNodeTree"
 )
-def nodegroup_division_board(nw: NodeWrangler, material, tag_support=False):
+def nodegroup_division_board(
+    nw: NodeWrangler, material, tag_support=False, shelf_nodegroup_profile=None
+):
     # Code generated using version 2.6.4 of the node_transpiler
 
     group_input = nw.new_node(
@@ -269,8 +505,11 @@ def nodegroup_division_board(nw: NodeWrangler, material, tag_support=False):
     )
 
     if tag_support:
+        tagged_cube_nodegroup = _profile_shelf_nodegroup(
+            shelf_nodegroup_profile, "nodegroup_tagged_cube", nodegroup_tagged_cube
+        )
         cube = nw.new_node(
-            nodegroup_tagged_cube().name, input_kwargs={"Size": combine_xyz}
+            tagged_cube_nodegroup.name, input_kwargs={"Size": combine_xyz}
         )
     else:
         cube = nw.new_node(
@@ -283,8 +522,11 @@ def nodegroup_division_board(nw: NodeWrangler, material, tag_support=False):
             },
         )
 
+    screw_head_nodegroup = _profile_shelf_nodegroup(
+        shelf_nodegroup_profile, "nodegroup_screw_head", nodegroup_screw_head
+    )
     screw_head = nw.new_node(
-        nodegroup_screw_head().name,
+        screw_head_nodegroup.name,
         input_kwargs={
             "Depth": group_input.outputs["screw_depth"],
             "Radius": group_input.outputs["screw_radius"],
@@ -533,6 +775,7 @@ def nodegroup_side_board(nw: NodeWrangler):
 
 def geometry_nodes(nw: NodeWrangler, **kwargs):
     # Code generated using version 2.6.4 of the node_transpiler
+    shelf_nodegroup_profile = kwargs.get("shelf_nodegroup_profile")
 
     side_board_thickness = nw.new_node(Nodes.Value, label="side_board_thickness")
     side_board_thickness.outputs[0].default_value = kwargs["side_board_thickness"]
@@ -555,8 +798,11 @@ def geometry_nodes(nw: NodeWrangler, **kwargs):
         )
         side_board_x_translation.outputs[0].default_value = x
 
+        side_board_nodegroup = _profile_shelf_nodegroup(
+            shelf_nodegroup_profile, "nodegroup_side_board", nodegroup_side_board
+        )
         side_board = nw.new_node(
-            nodegroup_side_board().name,
+            side_board_nodegroup.name,
             input_kwargs={
                 "board_thickness": side_board_thickness,
                 "depth": add,
@@ -575,8 +821,11 @@ def geometry_nodes(nw: NodeWrangler, **kwargs):
     add_side = nw.new_node(
         Nodes.Math, input_kwargs={0: shelf_width, 1: kwargs["side_board_thickness"] * 2}
     )
+    back_board_nodegroup = _profile_shelf_nodegroup(
+        shelf_nodegroup_profile, "nodegroup_back_board", nodegroup_back_board
+    )
     back_board = nw.new_node(
-        nodegroup_back_board().name,
+        back_board_nodegroup.name,
         input_kwargs={
             "width": add_side,
             "thickness": backboard_thickness,
@@ -603,8 +852,11 @@ def geometry_nodes(nw: NodeWrangler, **kwargs):
         shelf_cell_width = nw.new_node(Nodes.Value, label="shelf_cell_width")
         shelf_cell_width.outputs[0].default_value = kwargs["shelf_cell_width"][i]
 
+        bottom_board_nodegroup = _profile_shelf_nodegroup(
+            shelf_nodegroup_profile, "nodegroup_bottom_board", nodegroup_bottom_board
+        )
         bottomboard = nw.new_node(
-            nodegroup_bottom_board().name,
+            bottom_board_nodegroup.name,
             input_kwargs={
                 "thickness": side_board_thickness,
                 "depth": shelf_depth,
@@ -673,11 +925,17 @@ def geometry_nodes(nw: NodeWrangler, **kwargs):
             screw_depth_gap = nw.new_node(Nodes.Value, label="screw_depth_gap")
             screw_depth_gap.outputs[0].default_value = kwargs["screw_depth_gap"]
 
-            division_board = nw.new_node(
-                nodegroup_division_board(
+            division_board_nodegroup = _profile_shelf_nodegroup(
+                shelf_nodegroup_profile,
+                "nodegroup_division_board",
+                lambda: nodegroup_division_board(
                     material=kwargs["board_material"],
                     tag_support=kwargs.get("tag_support", False),
-                ).name,
+                    shelf_nodegroup_profile=shelf_nodegroup_profile,
+                ),
+            )
+            division_board = nw.new_node(
+                division_board_nodegroup.name,
                 input_kwargs={
                     "thickness": division_board_thickness,
                     "width": shelf_cell_width,
@@ -905,10 +1163,27 @@ class LargeShelfBaseFactory(AssetFactory):
         )
         obj = bpy.context.active_object
 
-        obj_params = self.get_asset_params(i)
-        surface.add_geomod(
-            obj, geometry_nodes, attributes=[], apply=True, input_kwargs=obj_params
-        )
+        shelf_nodegroup_profile = _begin_shelf_nodegroup_spawn(self, i)
+        profile_success = False
+        profile_error_type = ""
+        try:
+            obj_params = self.get_asset_params(i)
+            _update_shelf_nodegroup_spawn_context(shelf_nodegroup_profile, obj_params)
+            geomod_kwargs = obj_params
+            if shelf_nodegroup_profile is not None:
+                geomod_kwargs = obj_params.copy()
+                geomod_kwargs["shelf_nodegroup_profile"] = shelf_nodegroup_profile
+            surface.add_geomod(
+                obj, geometry_nodes, attributes=[], apply=True, input_kwargs=geomod_kwargs
+            )
+            profile_success = True
+        except Exception as exc:
+            profile_error_type = exc.__class__.__name__
+            raise
+        finally:
+            _finish_shelf_nodegroup_spawn(
+                shelf_nodegroup_profile, profile_success, profile_error_type
+            )
 
         if params.get("ret_params", False):
             return obj, obj_params

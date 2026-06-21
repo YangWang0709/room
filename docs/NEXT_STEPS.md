@@ -1,5 +1,61 @@
 # Next Steps
 
+## Latest LargeShelf Node Group Investigation
+
+`LargeShelfFactory` is now the next single-scene speed investigation target.
+The repeated high-frequency shelf node group prefixes are created in
+`infinigen/assets/objects/shelves/large_shelf.py` and
+`infinigen/assets/objects/shelves/utils.py`.
+
+The active path is:
+
+```text
+LargeShelfBaseFactory.create_asset()
+  surface.add_geomod(obj, geometry_nodes, apply=True, input_kwargs=obj_params)
+    geometry_nodes(...)
+      nodegroup_side_board()
+      nodegroup_back_board()
+      nodegroup_bottom_board()
+      nodegroup_division_board(..., tag_support=True)
+        nodegroup_tagged_cube()
+        nodegroup_screw_head()
+```
+
+All of these child groups currently use `singleton=False`, so each call creates
+a fresh Blender node group datablock. `batch_remove` remains useful as an
+opt-in deletion-cost switch, but it does not reduce repeated creation cost.
+
+Use the new instrumentation only when needed:
+
+```bash
+INFINIGEN_PROFILE_SHELF_NODEGROUPS=1 python -m infinigen_examples.generate_indoors ...
+python scripts/analyze_shelf_nodegroups.py \
+  outputs/<run>/coarse/infinigen_shelf_nodegroup_timing.csv
+```
+
+Recommended next order:
+
+1. Collect a short `LargeShelfFactory` shelf-nodegroup timing sample with
+   `INFINIGEN_PROFILE_SHELF_NODEGROUPS=1`.
+2. Keep `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1` as a separate opt-in
+   deletion-cost switch; do not change its behavior.
+3. If creation cost is significant, add a separate opt-in reuse experiment for
+   pure shelf child groups, starting with `nodegroup_screw_head`,
+   `nodegroup_side_board`, `nodegroup_bottom_board`, and
+   `nodegroup_back_board`.
+4. Treat `nodegroup_tagged_cube` and `nodegroup_division_board` as more
+   sensitive second-phase candidates because they participate in tag-support
+   behavior.
+5. Do not reuse the top-level `geometry_nodes` tree in the first experiment;
+   it embeds per-shelf sampled arrays and material objects.
+6. Do not continue bbox C++ optimization from current evidence:
+   `union_all_bbox` was only about `0.023%` of the measured bbox path.
+7. Do not run concurrent benchmarks or tune multi-process throughput in this
+   phase.
+8. Do not change door logic. Default Isaac validation should keep
+   `populate_doors.door_chance=0` so door panels are not generated and door
+   openings remain.
+
 ## Latest Full Baseline Determinism Check
 
 A full 10-room baseline repeat was completed to test whether the existing full

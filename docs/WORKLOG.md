@@ -1,5 +1,82 @@
 # Worklog
 
+## 2026-06-21 - LargeShelf node group generation investigation
+
+### Round Goal
+
+Investigate `LargeShelfFactory` repeated shelf node group generation without
+adding a reuse optimization, changing solver behavior, changing random number
+flow, changing proposal / accept / reject logic, changing `batch_remove`
+behavior, running concurrent benchmarks, or connecting C++.
+
+### Findings
+
+`LargeShelfFactory` is defined in
+`infinigen/assets/objects/shelves/large_shelf.py`.
+
+The active creation chain is:
+
+```text
+LargeShelfBaseFactory.create_asset()
+  get_asset_params()
+  surface.add_geomod(obj, geometry_nodes, apply=True, input_kwargs=obj_params)
+    geometry_nodes(...)
+      nodegroup_side_board()
+      nodegroup_back_board()
+      nodegroup_bottom_board()
+      nodegroup_division_board(..., tag_support=True)
+        nodegroup_tagged_cube()
+        nodegroup_screw_head()
+```
+
+All high-frequency shelf child node groups are currently decorated with
+`singleton=False`, so each call creates a new `bpy.data.node_groups` datablock.
+The repeated prefixes from the GC attribution sample map directly to
+`large_shelf.py` and `shelves/utils.py`:
+`nodegroup_tagged_cube`, `nodegroup_division_board`,
+`nodegroup_screw_head`, `nodegroup_side_board`,
+`nodegroup_bottom_board`, and `nodegroup_back_board`.
+
+The child node group functions inspected here do not call random APIs directly.
+Per-object variation is supplied through sampled parameters and exposed node
+group inputs. `nodegroup_division_board(material, tag_support=False)` accepts a
+`material` argument, but the inspected body does not use it; materials are set
+in the parent `geometry_nodes` tree with `Nodes.SetMaterial`.
+
+### Changes
+
+Added `docs/LARGESHELF_NODEGROUP_INVESTIGATION.md`.
+
+Added opt-in timing instrumentation behind:
+
+```bash
+INFINIGEN_PROFILE_SHELF_NODEGROUPS=1
+```
+
+When enabled, `large_shelf.py` writes
+`infinigen_shelf_nodegroup_timing.csv` under the solver output folder when
+available, otherwise `/tmp`. It records profiled child node group creation
+calls, inclusive durations, per-spawn actual node group counts, and prefix
+counts. Default behavior remains off.
+
+Added `scripts/analyze_shelf_nodegroups.py` to summarize prefix creation
+counts, total and average duration, per-spawn node group counts, and obvious
+repeated template signals.
+
+### Judgment
+
+`batch_remove` remains the strongest opt-in deletion-cost switch, but it does
+not address duplicate node group creation cost. The next speed investigation
+should focus on `LargeShelfFactory` shelf child node group reuse or reduced
+duplicate creation, behind a separate opt-in flag and after timing confirms
+the creation cost.
+
+Do not continue optimizing bbox C++ from current evidence:
+`union_all_bbox` was only about `0.023%` of the measured bbox path. Do not run
+concurrent benchmarks for this phase. Do not change door logic; default Isaac
+tests should keep `populate_doors.door_chance=0` so no door panels are
+generated while door openings remain.
+
 ## 2026-06-20 - Full baseline determinism check
 
 ### Round Goal
