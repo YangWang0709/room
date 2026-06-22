@@ -39,6 +39,60 @@ The three active opt-in speed points are:
 All remain disabled by default in the original Infinigen path and must be
 enabled by script or environment variables.
 
+## Wheat Template Geometry Reuse A/B - 2026-06-22
+
+Profile type: targeted Wheat-only `LargePlantContainerFactory` microbenchmark.
+The candidate enables only:
+
+```bash
+INFINIGEN_REUSE_PLANT_TEMPLATE_GEOMETRY=1
+```
+
+The stable Isaac static script does not enable this switch.
+
+Implementation scope: cache and reuse `WheatMonocotFactory.create_raw()` mesh
+templates only. Wheat ears, ear bend, final `decorate_monocot()`, cluster
+placement, and pot/dirt/container work are still generated per instance. No
+Grasses, Veratrum, Agave, Maize, or other Plant factory path is changed.
+
+| metric | baseline | candidate |
+| --- | ---: | ---: |
+| rows | 30 | 30 |
+| failures | 0 | 0 |
+| measured total | `229.654s` | `144.198s` |
+| benchmark wall time | `236.935s` | `149.062s` |
+| avg duration | `7.655s` | `4.807s` |
+| max duration | `14.606s` | `7.445s` |
+| `plant_spawn_duration` | `203.202s` | `117.766s` |
+| `leaf_generation_duration` | `58.830s` | `18.603s` |
+| `stem_generation_duration` | `46.990s` | `16.119s` |
+| `branch_generation_duration` | `66.677s` | `62.409s` |
+| created meshes | 1,910 | 1,418 |
+| created objects | 1,790 | 1,210 |
+
+Candidate cache stats:
+
+```text
+cache_hits: 58
+cache_misses: 30
+cache_hit_rate: 65.909%
+fallback_count: 0
+reuse_scope: wheat_create_raw_mesh
+```
+
+Visual check file:
+
+```text
+outputs/bench_wheat_template_reuse_ab/visual_check_wheat/wheat_template_reuse_check.blend
+```
+
+Interpretation: Wheat raw-mesh reuse reduced total measured duration by about
+`37.2%` and `plant_spawn_duration` by about `42.0%` in the targeted benchmark.
+Leaf and stem generation fell sharply; branch/ear cost remained because it is
+still generated per instance. This is promising enough for manual visual
+review, but it should not enter full 10-room validation until the small blend
+looks acceptable.
+
 ## Concrete Monocot Geometry Reuse Feasibility - 2026-06-22
 
 Profile type: targeted `LargePlantContainerFactory` microbenchmark with

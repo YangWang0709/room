@@ -52,6 +52,14 @@ PLANT_ASSETS_TIMING_FIELDNAMES = [
     "pot_factory_class",
     "geometry_template_candidate_key",
     "geometry_reuse_risk_level",
+    "plant_template_reuse_enabled",
+    "plant_template_reuse_used",
+    "plant_template_cache_hit",
+    "plant_template_cache_miss",
+    "plant_template_cache_key",
+    "plant_template_cache_size",
+    "plant_template_reuse_scope",
+    "plant_template_fallback_count",
     "create_asset_total_duration",
     "container_spawn_duration",
     "geometry_duration",
@@ -182,6 +190,30 @@ def _geometry_reuse_risk_level(factory):
     return "high"
 
 
+def _reset_plant_template_reuse_stats(plant_factory):
+    concrete_factory = getattr(plant_factory, "factory", None)
+    reset = getattr(concrete_factory, "reset_plant_template_reuse_stats", None)
+    if callable(reset):
+        reset()
+
+
+def _record_plant_template_reuse_stats(row: dict, plant_factory):
+    concrete_factory = getattr(plant_factory, "factory", None)
+    if concrete_factory is None:
+        return
+    for field in (
+        "plant_template_reuse_enabled",
+        "plant_template_reuse_used",
+        "plant_template_cache_hit",
+        "plant_template_cache_miss",
+        "plant_template_cache_key",
+        "plant_template_cache_size",
+        "plant_template_reuse_scope",
+        "plant_template_fallback_count",
+    ):
+        row[field] = getattr(concrete_factory, field, row.get(field, ""))
+
+
 def _empty_plant_assets_timing_row(factory, i, params, before_sets):
     row = {
         "factory_class": factory.__class__.__name__,
@@ -193,6 +225,14 @@ def _empty_plant_assets_timing_row(factory, i, params, before_sets):
         "pot_factory_class": factory.base_factory.__class__.__name__,
         "geometry_template_candidate_key": _geometry_template_candidate_key(factory),
         "geometry_reuse_risk_level": _geometry_reuse_risk_level(factory),
+        "plant_template_reuse_enabled": False,
+        "plant_template_reuse_used": False,
+        "plant_template_cache_hit": 0,
+        "plant_template_cache_miss": 0,
+        "plant_template_cache_key": "",
+        "plant_template_cache_size": 0,
+        "plant_template_reuse_scope": "",
+        "plant_template_fallback_count": 0,
         "create_asset_total_duration": 0.0,
         "container_spawn_duration": 0.0,
         "geometry_duration": 0.0,
@@ -500,6 +540,7 @@ class PlantContainerFactory(AssetFactory):
                 _record_plant_duration(row, "dirt_geometry_duration", step_start_time)
 
             step_start_time = time.perf_counter()
+            _reset_plant_template_reuse_stats(self.plant_factory)
             wrapped_stage_methods = _install_plant_stage_timing(
                 row, self.plant_factory
             )
@@ -510,6 +551,7 @@ class PlantContainerFactory(AssetFactory):
                 origin2lowest(plant, approximate=True)
             finally:
                 _restore_plant_stage_timing(wrapped_stage_methods)
+                _record_plant_template_reuse_stats(row, self.plant_factory)
                 _record_plant_duration(row, "plant_spawn_duration", step_start_time)
 
             step_start_time = time.perf_counter()

@@ -27,7 +27,13 @@ GEOMETRY_COUNT_FIELDS = [
     "stem_mesh_count",
     "branch_mesh_count",
 ]
-COUNT_FIELDS = CREATED_DATABLOCK_FIELDS + GEOMETRY_COUNT_FIELDS
+TEMPLATE_COUNT_FIELDS = [
+    "plant_template_cache_hit",
+    "plant_template_cache_miss",
+    "plant_template_cache_size",
+    "plant_template_fallback_count",
+]
+COUNT_FIELDS = CREATED_DATABLOCK_FIELDS + GEOMETRY_COUNT_FIELDS + TEMPLATE_COUNT_FIELDS
 STAGE_FIELDS = [
     "container_spawn_duration",
     "geometry_duration",
@@ -62,6 +68,10 @@ def as_int(row: dict, field: str) -> int:
     if value in ("", None):
         return 0
     return int(float(value))
+
+
+def as_bool(row: dict, field: str) -> bool:
+    return str(row.get(field, "")).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def fmt_seconds(value: float) -> str:
@@ -212,6 +222,116 @@ def print_geometry_candidate_keys(rows: list[dict], limit: int = 50) -> None:
         )
     print(f"repeated_key_count: {repeated}")
     print(f"unique_key_count: {len(counter)}")
+    print()
+
+
+def _duration_row_for_rows(rows: list[dict]) -> dict[str, float]:
+    return {
+        "count": len(rows),
+        "total_duration": sum(as_float(row, DURATION_FIELD) for row in rows),
+        "plant_spawn_duration": sum(
+            as_float(row, "plant_spawn_duration") for row in rows
+        ),
+        "leaf_generation_duration": sum(
+            as_float(row, "leaf_generation_duration") for row in rows
+        ),
+        "stem_generation_duration": sum(
+            as_float(row, "stem_generation_duration") for row in rows
+        ),
+        "branch_generation_duration": sum(
+            as_float(row, "branch_generation_duration") for row in rows
+        ),
+        "created_mesh_count": sum(as_int(row, "created_mesh_count") for row in rows),
+        "created_node_group_count": sum(
+            as_int(row, "created_node_group_count") for row in rows
+        ),
+        "leaf_mesh_count": sum(as_int(row, "leaf_mesh_count") for row in rows),
+        "stem_mesh_count": sum(as_int(row, "stem_mesh_count") for row in rows),
+        "branch_mesh_count": sum(as_int(row, "branch_mesh_count") for row in rows),
+        "plant_template_cache_hit": sum(
+            as_int(row, "plant_template_cache_hit") for row in rows
+        ),
+        "plant_template_cache_miss": sum(
+            as_int(row, "plant_template_cache_miss") for row in rows
+        ),
+        "plant_template_fallback_count": sum(
+            as_int(row, "plant_template_fallback_count") for row in rows
+        ),
+    }
+
+
+def print_wheat_template_reuse_summary(rows: list[dict]) -> None:
+    print("Wheat template reuse summary")
+    print("-" * 38)
+    wheat_rows = [
+        row
+        for row in rows
+        if row.get("concrete_plant_factory_class") == "WheatMonocotFactory"
+    ]
+    if not wheat_rows:
+        print("No WheatMonocotFactory rows were found.")
+        print()
+        return
+
+    enabled_rows = [row for row in wheat_rows if as_bool(row, "plant_template_reuse_enabled")]
+    used_rows = [row for row in wheat_rows if as_bool(row, "plant_template_reuse_used")]
+    hits = sum(as_int(row, "plant_template_cache_hit") for row in wheat_rows)
+    misses = sum(as_int(row, "plant_template_cache_miss") for row in wheat_rows)
+    fallbacks = sum(as_int(row, "plant_template_fallback_count") for row in wheat_rows)
+    attempts = hits + misses
+    hit_rate = hits / attempts if attempts else 0.0
+    scopes = Counter(
+        row.get("plant_template_reuse_scope", "") or "(none)" for row in wheat_rows
+    )
+    keys = Counter(
+        row.get("plant_template_cache_key", "") or "(none)" for row in wheat_rows
+    )
+
+    print(f"wheat_rows: {len(wheat_rows)}")
+    print(f"enabled_rows: {len(enabled_rows)}")
+    print(f"used_rows: {len(used_rows)}")
+    print(f"cache_hits: {hits}")
+    print(f"cache_misses: {misses}")
+    print(f"cache_hit_rate: {hit_rate:.3%}")
+    print(f"fallback_count: {fallbacks}")
+    print(f"reuse_scopes: {dict(scopes)}")
+    print(f"unique_cache_keys: {len(keys) - (1 if '(none)' in keys else 0)}")
+    print()
+
+    print("Wheat original vs reuse duration")
+    print("-" * 38)
+    print(
+        "mode,count,total,avg,plant_spawn,leaf,stem,branch,"
+        "created_meshes,created_node_groups,leaf_meshes,stem_meshes,"
+        "branch_meshes,cache_hits,cache_misses,fallbacks"
+    )
+    mode_rows = {
+        "reuse_enabled": enabled_rows,
+        "original": [row for row in wheat_rows if not as_bool(row, "plant_template_reuse_enabled")],
+    }
+    for mode, subset in mode_rows.items():
+        stats = _duration_row_for_rows(subset)
+        count = stats["count"]
+        if count == 0:
+            continue
+        print(
+            f"{mode},"
+            f"{count},"
+            f"{stats['total_duration']:.6f},"
+            f"{stats['total_duration'] / count if count else 0.0:.6f},"
+            f"{stats['plant_spawn_duration']:.6f},"
+            f"{stats['leaf_generation_duration']:.6f},"
+            f"{stats['stem_generation_duration']:.6f},"
+            f"{stats['branch_generation_duration']:.6f},"
+            f"{int(stats['created_mesh_count'])},"
+            f"{int(stats['created_node_group_count'])},"
+            f"{int(stats['leaf_mesh_count'])},"
+            f"{int(stats['stem_mesh_count'])},"
+            f"{int(stats['branch_mesh_count'])},"
+            f"{int(stats['plant_template_cache_hit'])},"
+            f"{int(stats['plant_template_cache_miss'])},"
+            f"{int(stats['plant_template_fallback_count'])}"
+        )
     print()
 
 
@@ -469,6 +589,7 @@ def main() -> None:
     print_duration_top(by_concrete_plant, "concrete_plant_factory_class duration top")
     print_concrete_geometry_breakdown(by_concrete_plant)
     print_geometry_candidate_keys(successful)
+    print_wheat_template_reuse_summary(successful)
     print_plant_spawn_top(successful, limit=20)
     print_stage_summary(successful)
     print_creation_totals(successful)

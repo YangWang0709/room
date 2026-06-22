@@ -2,9 +2,16 @@
 
 ## Scope
 
-This is an investigation plan for a future, opt-in Plant geometry reuse
-experiment. No reuse is implemented yet. The stable Isaac Sim static script
-`scripts/run_isaac_static_optimized_10room.sh` remains unchanged.
+This tracks the opt-in Plant geometry reuse experiment. The first implemented
+version only affects `WheatMonocotFactory` when explicitly enabled with:
+
+```bash
+INFINIGEN_REUSE_PLANT_TEMPLATE_GEOMETRY=1
+```
+
+The stable Isaac Sim static script
+`scripts/run_isaac_static_optimized_10room.sh` remains unchanged, so the
+current recommended full 10-room path does not enable this Plant experiment.
 
 Guardrails:
 
@@ -16,12 +23,9 @@ Guardrails:
 - Do not reuse materials as the first Plant optimization path.
 - Any future switch must remain default-off and pass Blender/Isaac visual
   quality checks.
-
-Likely future switch name:
-
-```bash
-INFINIGEN_REUSE_PLANT_TEMPLATE_GEOMETRY=1
-```
+- Do not treat this as a bitwise-equivalent optimization. The Wheat v1 cache
+  skips raw leaf/stem random generation on cache hits, so it changes internal
+  Wheat random consumption by design.
 
 ## Source Paths
 
@@ -107,6 +111,36 @@ and full template reuse could make plants look copied or biologically wrong.
 
 ## Possible Reuse Units
 
+Implemented v1 reuse unit:
+
+- `WheatMonocotFactory.create_raw()` mesh data after leaf/stem geometry and
+  the applied `make_geo_flower()` geometry-node step. Cache misses run the
+  original raw path and store a mesh datablock. Cache hits create a new object
+  from a copied cached mesh datablock.
+
+Still generated per instance:
+
+- Wheat ear geometry from `WheatEarMonocotFactory.create_asset()`.
+- The random bend applied to the ear.
+- Final `decorate_monocot()` twist / bend / scale / yaw and material
+  assignment.
+- The surrounding `MonocotFactory` grass cluster placement and final
+  `join_objects()` behavior.
+
+Not reused:
+
+- Complete Wheat plant objects.
+- Complete `LargePlantContainerFactory` pot + dirt + plant assemblies.
+- `GrassesMonocotFactory`, `VeratrumMonocotFactory`, `AgaveMonocotFactory`,
+  `MaizeMonocotFactory`, or any non-Wheat Plant factory.
+
+The v1 cache key includes the concrete factory class, reuse scope,
+`factory_seed`, coarse flag, `face_size`, `apply`, and structural Wheat growth
+parameters such as count, stem offset, normalized angle, leaf range, scale
+curve, perturbation, and radius. It is a template-bucket key, not a claim that
+every skipped raw mesh would have been identical under the original random
+flow.
+
 Lower-risk candidates for a future experiment:
 
 - A narrow `GrassesMonocotFactory` or `WheatMonocotFactory` leaf/stem helper
@@ -167,12 +201,69 @@ needs a stricter template key or a deliberate template bucket design.
 
 ## Recommendation
 
-First implementation candidate, if the project moves from investigation to
-reuse, is a very narrow opt-in `WheatMonocotFactory` geometry-template
-experiment. `GrassesMonocotFactory` is the second candidate. Both must preserve
-per-instance transforms, scale, yaw/orientation, material assignment, and
-enough silhouette variation to avoid a copied look.
+The first implementation candidate has now been tried as a narrow opt-in
+`WheatMonocotFactory` raw-mesh template experiment. `GrassesMonocotFactory`
+remains the second candidate, but should not be enabled until Wheat passes
+manual Blender/Isaac visual review.
 
 Do not start with `VeratrumMonocotFactory` or `AgaveMonocotFactory`. They are
 worth further profiling, but their geometry is higher risk for visual quality
 and random-shape diversity.
+
+## Wheat V1 A/B Result
+
+Command pair:
+
+```bash
+INFINIGEN_PROFILE_PLANT_ASSETS=1 \
+python scripts/bench_plant_assets_factory.py \
+  --samples 30 \
+  --seed 0 \
+  --concrete-plant-filter WheatMonocotFactory \
+  --output_folder outputs/bench_wheat_template_reuse_ab/baseline
+
+INFINIGEN_PROFILE_PLANT_ASSETS=1 \
+INFINIGEN_REUSE_PLANT_TEMPLATE_GEOMETRY=1 \
+python scripts/bench_plant_assets_factory.py \
+  --samples 30 \
+  --seed 0 \
+  --concrete-plant-filter WheatMonocotFactory \
+  --output_folder outputs/bench_wheat_template_reuse_ab/candidate_reuse
+```
+
+| metric | baseline | candidate |
+| --- | ---: | ---: |
+| rows | 30 | 30 |
+| failures | 0 | 0 |
+| measured total | `229.654s` | `144.198s` |
+| benchmark wall time | `236.935s` | `149.062s` |
+| avg duration | `7.655s` | `4.807s` |
+| max duration | `14.606s` | `7.445s` |
+| `plant_spawn_duration` | `203.202s` | `117.766s` |
+| `leaf_generation_duration` | `58.830s` | `18.603s` |
+| `stem_generation_duration` | `46.990s` | `16.119s` |
+| `branch_generation_duration` | `66.677s` | `62.409s` |
+| created meshes | 1,910 | 1,418 |
+| created objects | 1,790 | 1,210 |
+
+Candidate cache stats:
+
+```text
+cache_hits: 58
+cache_misses: 30
+cache_hit_rate: 65.909%
+fallback_count: 0
+reuse_scope: wheat_create_raw_mesh
+unique_cache_keys: 30
+```
+
+Visual check blend:
+
+```text
+outputs/bench_wheat_template_reuse_ab/visual_check_wheat/wheat_template_reuse_check.blend
+```
+
+Manual review should check whether Wheat looks obviously copied, whether
+leaves/stems/ears look normal, and whether there are flying, scaling, or severe
+intersection issues. Do not move this into full 10-room quality validation
+until the small visual check looks acceptable.

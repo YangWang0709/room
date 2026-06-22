@@ -4,6 +4,8 @@
 # Authors: Lingjie Mei
 
 
+import os
+
 import bpy
 import numpy as np
 from numpy.random import uniform
@@ -29,6 +31,37 @@ from infinigen.core.util import blender as butil
 from infinigen.core.util.color import hsv2rgba
 from infinigen.core.util.math import FixedSeed
 from infinigen.core.util.random import log_uniform
+
+PLANT_TEMPLATE_GEOMETRY_REUSE_ENV_VAR = "INFINIGEN_REUSE_PLANT_TEMPLATE_GEOMETRY"
+WHEAT_TEMPLATE_REUSE_SCOPE = "wheat_create_raw_mesh"
+_WHEAT_RAW_MESH_TEMPLATE_CACHE = {}
+
+
+def _env_truthy(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _round_key_float(value) -> str:
+    return f"{float(value):.9g}"
+
+
+def _round_key_tuple(values) -> str:
+    return ",".join(_round_key_float(value) for value in values)
+
+
+def _normalized_growth_angle(angle: float) -> float:
+    if angle == 0:
+        return angle
+    frequency = 2 * np.pi / angle
+    if 0.01 < frequency - int(frequency) < 0.05:
+        frequency += 0.05
+    elif -0.05 < frequency - int(frequency) < -0.01:
+        frequency -= 0.05
+    return 2 * np.pi / frequency
+
+
+def _wheat_template_reuse_enabled() -> bool:
+    return _env_truthy(PLANT_TEMPLATE_GEOMETRY_REUSE_ENV_VAR)
 
 
 class GrassesMonocotFactory(MonocotGrowthFactory):
@@ -112,13 +145,100 @@ class WheatMonocotFactory(GrassesMonocotFactory):
             self.ear_factory = WheatEarMonocotFactory(factory_seed, coarse)
             self.scale_curve = [(0, 1.0), (1, 0.6)]
             self.leaf_range = 0.1, 0.7
+        self.reset_plant_template_reuse_stats()
 
     @staticmethod
     def build_base_hue():
         return uniform(0.08, 0.12)
 
+    def reset_plant_template_reuse_stats(self):
+        self.plant_template_reuse_enabled = _wheat_template_reuse_enabled()
+        self.plant_template_reuse_used = False
+        self.plant_template_cache_hit = 0
+        self.plant_template_cache_miss = 0
+        self.plant_template_cache_key = ""
+        self.plant_template_cache_size = len(_WHEAT_RAW_MESH_TEMPLATE_CACHE)
+        self.plant_template_reuse_scope = (
+            WHEAT_TEMPLATE_REUSE_SCOPE
+            if self.plant_template_reuse_enabled
+            else ""
+        )
+        self.plant_template_fallback_count = 0
+
+    def _wheat_raw_template_cache_key(self, face_size, apply):
+        return "|".join(
+            [
+                "WheatMonocotFactory",
+                f"scope={WHEAT_TEMPLATE_REUSE_SCOPE}",
+                f"factory_seed={self.factory_seed}",
+                f"coarse={self.coarse}",
+                f"face_size={_round_key_float(face_size)}",
+                f"apply={bool(apply)}",
+                f"count={self.count}",
+                f"stem_offset={_round_key_float(self.stem_offset)}",
+                f"angle={_round_key_float(_normalized_growth_angle(self.angle))}",
+                f"min_y_angle={_round_key_float(self.min_y_angle)}",
+                f"max_y_angle={_round_key_float(self.max_y_angle)}",
+                f"leaf_prob={_round_key_float(self.leaf_prob)}",
+                f"leaf_range={_round_key_tuple(self.leaf_range)}",
+                "scale_curve="
+                + ";".join(
+                    f"{_round_key_float(x)}:{_round_key_float(y)}"
+                    for x, y in self.scale_curve
+                ),
+                f"perturb={_round_key_float(self.perturb)}",
+                f"radius={_round_key_float(self.radius)}",
+            ]
+        )
+
+    @staticmethod
+    def _cached_mesh_is_live(mesh) -> bool:
+        try:
+            return bpy.data.meshes.get(mesh.name) is mesh
+        except ReferenceError:
+            return False
+
+    def _clone_wheat_raw_template(self, mesh):
+        obj = bpy.data.objects.new("wheat_raw_template_reuse", mesh.copy())
+        bpy.context.collection.objects.link(obj)
+        tag_object(obj, "flower")
+        return obj
+
+    def _store_wheat_raw_template(self, key, obj):
+        cached_mesh = obj.data.copy()
+        cached_mesh.name = (
+            f"wheat_raw_template_(no gc)_{len(_WHEAT_RAW_MESH_TEMPLATE_CACHE)}"
+        )
+        cached_mesh.use_fake_user = True
+        _WHEAT_RAW_MESH_TEMPLATE_CACHE[key] = cached_mesh
+        self.plant_template_cache_size = len(_WHEAT_RAW_MESH_TEMPLATE_CACHE)
+
+    def create_raw(self, face_size=0.01, apply=True, **params):
+        self.plant_template_reuse_enabled = _wheat_template_reuse_enabled()
+        if not self.plant_template_reuse_enabled:
+            return super().create_raw(face_size=face_size, apply=apply, **params)
+
+        if not apply:
+            self.plant_template_reuse_scope = "wheat_create_raw_mesh_apply_false"
+            return super().create_raw(face_size=face_size, apply=apply, **params)
+
+        self.plant_template_reuse_scope = WHEAT_TEMPLATE_REUSE_SCOPE
+        self.plant_template_reuse_used = True
+        key = self._wheat_raw_template_cache_key(face_size, apply)
+        self.plant_template_cache_key = key
+        cached_mesh = _WHEAT_RAW_MESH_TEMPLATE_CACHE.get(key)
+        if cached_mesh is not None and self._cached_mesh_is_live(cached_mesh):
+            self.plant_template_cache_hit += 1
+            self.plant_template_cache_size = len(_WHEAT_RAW_MESH_TEMPLATE_CACHE)
+            return self._clone_wheat_raw_template(cached_mesh)
+
+        self.plant_template_cache_miss += 1
+        obj = super().create_raw(face_size=face_size, apply=apply, **params)
+        self._store_wheat_raw_template(key, obj)
+        return obj
+
     def create_asset(self, **params):
-        obj = super().create_raw(**params)
+        obj = self.create_raw(**params)
         ear = self.ear_factory.create_asset(**params)
         butil.modify_mesh(
             ear,

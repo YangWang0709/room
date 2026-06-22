@@ -66,19 +66,36 @@ average `4.291s`, max `13.230s`. `plant_spawn_duration` was `170.618s`
 (`79.5%`). The measured concrete monocot leaf / stem / branch substages were
 the dominant internal cost, while material generation was only `0.991s`.
 
-Recommended next Plant experiment, if continuing this line:
+Current Plant experiment:
 
 ```bash
 INFINIGEN_REUSE_PLANT_TEMPLATE_GEOMETRY=1
 ```
 
-Keep it default-off, narrow, and quality-gated. Start with one concrete
-monocot family. Current timing and risk judgment point to
-`WheatMonocotFactory` first and `GrassesMonocotFactory` second. Do not start
-with `VeratrumMonocotFactory` or `AgaveMonocotFactory` because their branch
-systems and leaf deformation carry higher visual-randomness risk. Do not
-reduce plant count, leaf count, stem count, or general plant complexity as the
-first path. Do not use concurrency or C++.
+Keep it default-off, narrow, and quality-gated. The implemented v1 affects
+only `WheatMonocotFactory` raw mesh templates. It does not affect
+`GrassesMonocotFactory`, `VeratrumMonocotFactory`, `AgaveMonocotFactory`,
+`MaizeMonocotFactory`, or other Plant factories. Do not reduce plant count,
+leaf count, stem count, or general plant complexity. Do not use concurrency or
+C++.
+
+Wheat-only A/B result: `30/30` baseline and candidate samples succeeded.
+Measured total duration improved `229.654s -> 144.198s`; cache hit rate was
+`65.909%`; fallback count was `0`.
+
+Next gate:
+
+```text
+outputs/bench_wheat_template_reuse_ab/visual_check_wheat/wheat_template_reuse_check.blend
+```
+
+Manually inspect for copied Wheat appearance, abnormal leaves/stems/ears,
+flying objects, scaling errors, and severe intersections. If Wheat looks OK,
+consider a full 10-room quality validation with the Plant switch. Only after
+that should `GrassesMonocotFactory` be considered as the second reuse
+candidate. Do not start with `VeratrumMonocotFactory` or
+`AgaveMonocotFactory` because their branch systems and leaf deformation carry
+higher visual-randomness risk.
 
 ## Current Populate Multi-Track Status
 

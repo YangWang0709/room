@@ -1,5 +1,133 @@
 # Worklog
 
+## 2026-06-22 - Opt-in Wheat plant geometry reuse experiment
+
+### Round Goal
+
+Implement the first narrow Plant geometry reuse experiment without changing
+default behavior. This round only affects `WheatMonocotFactory` when:
+
+```bash
+INFINIGEN_REUSE_PLANT_TEMPLATE_GEOMETRY=1
+```
+
+The stable `scripts/run_isaac_static_optimized_10room.sh` defaults were not
+changed. Solver behavior, proposal / accept / reject logic, plant count, plant
+complexity, batch-remove behavior, LargeShelf reuse, NatureShelf fast pose,
+concurrency, and C++ paths were not changed.
+
+### Implementation
+
+Added a Wheat-only raw mesh template cache in:
+
+```text
+infinigen/assets/objects/monocot/grasses.py
+```
+
+The cache stores mesh data from `WheatMonocotFactory.create_raw()` after
+leaf/stem geometry and the applied `make_geo_flower()` step. Cache hits create
+a new object from a copied cached mesh. The cache datablocks are kept out of
+the scene and named with `(no gc)` so they survive local garbage collection.
+
+Still per instance:
+
+```text
+WheatEarMonocotFactory.create_asset()
+ear bend
+decorate_monocot()
+cluster placement
+pot/dirt/container work
+```
+
+Not reused:
+
+```text
+complete Wheat plant object
+complete pot+plant+dirt assembly
+Grasses / Veratrum / Agave / Maize / other Plant factories
+```
+
+Because cache hits skip original raw leaf/stem generation, this opt-in
+experiment changes Wheat internal random consumption and is not a
+bitwise-equivalence path.
+
+### Timing
+
+Extended `INFINIGEN_PROFILE_PLANT_ASSETS=1` CSV rows with:
+
+```text
+plant_template_reuse_enabled
+plant_template_reuse_used
+plant_template_cache_hit
+plant_template_cache_miss
+plant_template_cache_key
+plant_template_cache_size
+plant_template_reuse_scope
+plant_template_fallback_count
+```
+
+`scripts/analyze_plant_assets_timing.py` now reports Wheat cache hit/miss
+counts, hit rate, fallback count, and original/reuse duration rows.
+
+### Benchmark
+
+Baseline:
+
+```bash
+INFINIGEN_PROFILE_PLANT_ASSETS=1 \
+python scripts/bench_plant_assets_factory.py \
+  --samples 30 \
+  --seed 0 \
+  --concrete-plant-filter WheatMonocotFactory \
+  --output_folder outputs/bench_wheat_template_reuse_ab/baseline
+```
+
+Candidate:
+
+```bash
+INFINIGEN_PROFILE_PLANT_ASSETS=1 \
+INFINIGEN_REUSE_PLANT_TEMPLATE_GEOMETRY=1 \
+python scripts/bench_plant_assets_factory.py \
+  --samples 30 \
+  --seed 0 \
+  --concrete-plant-filter WheatMonocotFactory \
+  --output_folder outputs/bench_wheat_template_reuse_ab/candidate_reuse
+```
+
+Result:
+
+| metric | baseline | candidate |
+| --- | ---: | ---: |
+| rows | 30 | 30 |
+| failures | 0 | 0 |
+| measured total | `229.654s` | `144.198s` |
+| benchmark wall time | `236.935s` | `149.062s` |
+| average | `7.655s` | `4.807s` |
+| max | `14.606s` | `7.445s` |
+| `plant_spawn_duration` | `203.202s` | `117.766s` |
+| `leaf_generation_duration` | `58.830s` | `18.603s` |
+| `stem_generation_duration` | `46.990s` | `16.119s` |
+| `branch_generation_duration` | `66.677s` | `62.409s` |
+| created meshes | 1,910 | 1,418 |
+| created objects | 1,790 | 1,210 |
+
+Candidate cache stats: `58` hits, `30` misses, `65.909%` hit rate, and `0`
+fallbacks.
+
+### Visual Gate
+
+Generated:
+
+```text
+outputs/bench_wheat_template_reuse_ab/visual_check_wheat/wheat_template_reuse_check.blend
+```
+
+Manual inspection should check for copied Wheat appearance, broken leaves,
+stems or ears, flying objects, scale errors, severe intersections, and obvious
+complexity loss. If it passes, the next step is a full 10-room quality
+validation with the Plant switch. `GrassesMonocotFactory` remains the second
+candidate, but should wait for Wheat visual acceptance.
+
 ## 2026-06-22 - Concrete Plant geometry reuse candidate investigation
 
 ### Round Goal

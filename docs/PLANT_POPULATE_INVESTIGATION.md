@@ -2,12 +2,18 @@
 
 ## Scope
 
-This is a P2 populate-clutter investigation line for
-`LargePlantContainerFactory` and related plant container assets. It adds
-optional timing and a targeted benchmark only. It does not optimize plant
-generation, does not simplify leaves or stems, does not reduce clutter, does
-not change solver behavior, does not change random flow, and does not add
-concurrency. The stable Isaac Sim static script
+This is a P2 populate-clutter line for `LargePlantContainerFactory` and
+related plant container assets. It includes optional timing, targeted
+benchmarks, and one default-off Wheat-only template reuse experiment behind:
+
+```bash
+INFINIGEN_REUSE_PLANT_TEMPLATE_GEOMETRY=1
+```
+
+The experiment does not simplify leaves or stems, does not reduce clutter,
+does not change solver behavior, and does not add concurrency or C++. It does
+change internal Wheat random consumption on cache hits because the original raw
+leaf/stem geometry generation is skipped. The stable Isaac Sim static script
 `scripts/run_isaac_static_optimized_10room.sh` is unchanged.
 
 ## Source Path
@@ -154,9 +160,11 @@ geometry duration, material duration, pot create / finalize duration, dirt
 geometry / material duration, plant spawn / finalize / placement duration,
 leaf / stem / branch generation duration when safely observable, leaf / stem /
 branch call counts, leaf / stem / branch mesh churn, geometry template
-candidate key, heuristic geometry reuse risk level, modifier apply duration,
-join duration, before/after datablock counts, created datablock counts,
-material and node-group prefix summaries, success, and error type.
+candidate key, heuristic geometry reuse risk level, Plant template reuse
+enabled/used flags, cache hit/miss counts, cache key, cache size, reuse scope,
+fallback count, modifier apply duration, join duration, before/after datablock
+counts, created datablock counts, material and node-group prefix summaries,
+success, and error type.
 
 Some low-level work cannot be safely separated yet. In particular,
 `nodegroup_generation_duration` remains `0` in the current timing because
@@ -383,6 +391,73 @@ these keys are intentionally coarse concrete-family groupings. They are useful
 for deciding where to inspect next; they are not proof that per-instance mesh
 geometry can be cached without losing random variation.
 
+### Wheat Template Reuse A/B Result
+
+The first opt-in Plant geometry experiment only affects
+`WheatMonocotFactory`. It reuses the raw Wheat mesh from
+`WheatMonocotFactory.create_raw()` and still generates Wheat ears and final
+`decorate_monocot()` per instance. It does not affect Grasses, Veratrum,
+Agave, Maize, or any non-Wheat Plant factory.
+
+Baseline:
+
+```bash
+INFINIGEN_PROFILE_PLANT_ASSETS=1 \
+python scripts/bench_plant_assets_factory.py \
+  --samples 30 \
+  --seed 0 \
+  --concrete-plant-filter WheatMonocotFactory \
+  --output_folder outputs/bench_wheat_template_reuse_ab/baseline
+```
+
+Candidate:
+
+```bash
+INFINIGEN_PROFILE_PLANT_ASSETS=1 \
+INFINIGEN_REUSE_PLANT_TEMPLATE_GEOMETRY=1 \
+python scripts/bench_plant_assets_factory.py \
+  --samples 30 \
+  --seed 0 \
+  --concrete-plant-filter WheatMonocotFactory \
+  --output_folder outputs/bench_wheat_template_reuse_ab/candidate_reuse
+```
+
+| metric | baseline | candidate |
+| --- | ---: | ---: |
+| rows | 30 | 30 |
+| failures | 0 | 0 |
+| total measured duration | `229.654s` | `144.198s` |
+| benchmark wall time | `236.935s` | `149.062s` |
+| avg duration | `7.655s` | `4.807s` |
+| max duration | `14.606s` | `7.445s` |
+| `plant_spawn_duration` | `203.202s` | `117.766s` |
+| `leaf_generation_duration` | `58.830s` | `18.603s` |
+| `stem_generation_duration` | `46.990s` | `16.119s` |
+| `branch_generation_duration` | `66.677s` | `62.409s` |
+| created meshes | 1,910 | 1,418 |
+| created objects | 1,790 | 1,210 |
+
+Candidate cache stats:
+
+```text
+cache_hits: 58
+cache_misses: 30
+cache_hit_rate: 65.909%
+fallback_count: 0
+reuse_scope: wheat_create_raw_mesh
+```
+
+Visual check blend:
+
+```text
+outputs/bench_wheat_template_reuse_ab/visual_check_wheat/wheat_template_reuse_check.blend
+```
+
+The benchmark shows a useful Wheat-only speedup, but it is not enough by
+itself for full-scene acceptance. Manual Blender/Isaac review must confirm
+there is no obvious copied Wheat look, broken ears, flying objects, scale
+errors, or severe intersections before any full 10-room quality validation.
+
 ## Reuse Suitability
 
 Potential later opt-in candidates:
@@ -412,20 +487,19 @@ High-risk or unsuitable first changes:
 
 ## Next Opt-In Direction
 
-The first speed lever worth considering is a very narrow,
+The first speed lever now available for review is a very narrow,
 default-off geometry/template experiment:
 
 ```bash
 INFINIGEN_REUSE_PLANT_TEMPLATE_GEOMETRY=1
 ```
 
-It should start with one concrete monocot family and one template type, then
-run targeted A/B and Isaac/Blender visual checks. The current best first
-candidate is `WheatMonocotFactory`, with `GrassesMonocotFactory` second.
-Do not start with `VeratrumMonocotFactory` or `AgaveMonocotFactory` because
-their branch systems and leaf deformation are higher visual-risk sources of
-variation. It must not reduce plant count or broad visual complexity. A
-lower-risk but likely smaller follow-up is:
+The implemented v1 starts with `WheatMonocotFactory` raw-mesh reuse only.
+`GrassesMonocotFactory` remains the second candidate, but should wait until
+Wheat passes visual review. Do not start with `VeratrumMonocotFactory` or
+`AgaveMonocotFactory` because their branch systems and leaf deformation are
+higher visual-risk sources of variation. It must not reduce plant count or
+broad visual complexity. A lower-risk but likely smaller follow-up is:
 
 ```bash
 INFINIGEN_REUSE_PLANT_NODEGROUPS=1

@@ -120,6 +120,54 @@ The latest deep `LargePlantContainerFactory` run showed
 geometry costs far above material generation. Future Plant optimizations must
 be opt-in, default-off, and quality-gated.
 
+## Run Wheat Template Reuse A/B
+
+This is a targeted microbenchmark for the opt-in Wheat-only Plant geometry
+reuse experiment. It does not run a full indoor scene and does not change the
+standard Isaac static script.
+
+Baseline:
+
+```bash
+INFINIGEN_PROFILE_PLANT_ASSETS=1 \
+python scripts/bench_plant_assets_factory.py \
+  --samples 30 \
+  --seed 0 \
+  --concrete-plant-filter WheatMonocotFactory \
+  --output_folder outputs/bench_wheat_template_reuse_ab/baseline
+```
+
+Candidate:
+
+```bash
+INFINIGEN_PROFILE_PLANT_ASSETS=1 \
+INFINIGEN_REUSE_PLANT_TEMPLATE_GEOMETRY=1 \
+python scripts/bench_plant_assets_factory.py \
+  --samples 30 \
+  --seed 0 \
+  --concrete-plant-filter WheatMonocotFactory \
+  --output_folder outputs/bench_wheat_template_reuse_ab/candidate_reuse
+```
+
+Analyze:
+
+```bash
+python scripts/analyze_plant_assets_timing.py \
+  outputs/bench_wheat_template_reuse_ab/baseline/infinigen_plant_assets_timing.csv
+
+python scripts/analyze_plant_assets_timing.py \
+  outputs/bench_wheat_template_reuse_ab/candidate_reuse/infinigen_plant_assets_timing.csv
+```
+
+Visual check blend:
+
+```text
+outputs/bench_wheat_template_reuse_ab/visual_check_wheat/wheat_template_reuse_check.blend
+```
+
+Manual inspection must pass before considering a full 10-room quality
+validation or expanding the experiment to `GrassesMonocotFactory`.
+
 ## Enter Container
 
 ```bash
