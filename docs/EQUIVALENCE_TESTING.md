@@ -15,6 +15,40 @@ The comparison baseline is the original behavior at a known commit. The
 candidate is the optimized commit. The A/B output comparison is a guardrail for
 future Python and C++ work.
 
+## Isaac Static Quality-Preserving Target
+
+The current recommended Isaac Sim static environment configuration is not a
+bitwise-identical target. It is an opt-in quality-preserving static scene
+target for full 10-room indoor generation:
+
+```text
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
+INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
+compose_indoors.terrain_enabled=False
+home_room_constraints.has_fewer_rooms=False
+restrict_solving.solve_max_rooms=10
+populate_doors.door_chance=0
+```
+
+This configuration has been manually inspected in Isaac Sim after USD/USDC
+export and looked good, with no obvious quality issue. The acceptance gate for
+this path is practical static scene quality: realistic rendering, sufficient
+environment complexity, no obvious flying objects, no obvious severe
+intersections, no obvious black materials, door openings retained without
+door panels, and USD/USDC import working in Isaac Sim.
+
+The three opt-in speed points are:
+
+- batch node-group deletion with `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1`
+- `LargeShelfFactory` child node-group reuse with
+  `INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1`
+- shell-like `NatureShelfTrinketsFactory` fast stable pose with
+  `INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1`
+
+These switches still do not change the original default behavior when unset.
+Use `scripts/run_isaac_static_optimized_10room.sh` for this Isaac static path.
+
 ## Behavior-Preserving Optimization
 
 A behavior-preserving optimization keeps the solver's observable behavior

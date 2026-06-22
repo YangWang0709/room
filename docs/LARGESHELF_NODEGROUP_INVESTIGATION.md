@@ -2,6 +2,25 @@
 
 Date: 2026-06-21
 
+## Isaac Static Quality Status
+
+`INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1` is now part of the current
+recommended Isaac Sim static 10-room configuration:
+
+```text
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
+INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
+restrict_solving.solve_max_rooms=10
+populate_doors.door_chance=0
+```
+
+This combined opt-in configuration has been manually inspected in Isaac Sim
+after USD/USDC export. Visual quality was good, with no obvious quality issue.
+The LargeShelf child node-group reuse remains opt-in and default-off. Do not
+expand reuse to top-level shelf node groups, tagged support node groups, or
+other factories without a separate investigation and quality gate.
+
 ## Scope
 
 This document tracks the `LargeShelfFactory` shelf node group generation path

@@ -1,5 +1,88 @@
 # Commands
 
+## Run Optimized Isaac Static 10-Room
+
+Use this as the standard full 10-room static indoor command after the latest
+Isaac Sim manual visual check:
+
+```bash
+bash scripts/run_isaac_static_optimized_10room.sh
+```
+
+The default output is:
+
+```text
+outputs/isaac_static_optimized_seed0_10room/coarse
+```
+
+Run a different seed:
+
+```bash
+SEED=4 bash scripts/run_isaac_static_optimized_10room.sh
+```
+
+Use a specific Python interpreter:
+
+```bash
+PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python \
+SEED=4 \
+bash scripts/run_isaac_static_optimized_10room.sh
+```
+
+Regenerate a seed from a clean coarse output folder:
+
+```bash
+CLEAN=1 SEED=4 bash scripts/run_isaac_static_optimized_10room.sh
+```
+
+Generate and export USDC for Isaac Sim:
+
+```bash
+EXPORT_USD=1 SEED=4 bash scripts/run_isaac_static_optimized_10room.sh
+```
+
+Override export resolution:
+
+```bash
+EXPORT_USD=1 EXPORT_RESOLUTION=256 SEED=4 \
+bash scripts/run_isaac_static_optimized_10room.sh
+```
+
+Dry-run command expansion without generating or exporting:
+
+```bash
+DRY_RUN=1 EXPORT_USD=1 SEED=4 \
+bash scripts/run_isaac_static_optimized_10room.sh
+```
+
+The script enables these opt-in switches by default:
+
+```text
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
+INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
+```
+
+and uses:
+
+```text
+compose_indoors.terrain_enabled=False
+home_room_constraints.has_fewer_rooms=False
+restrict_solving.solve_max_rooms=10
+populate_doors.door_chance=0
+```
+
+When `EXPORT_USD=1`, the default export folder is:
+
+```text
+outputs/usd_compare/isaac_static_optimized_seed${SEED}_10room
+```
+
+Open the host path in Isaac Sim, not a container-only path. Keep the full
+export directory together; do not move only a single `.usdc` file. If the
+scene appears black, add a Dome Light or Point Light, and check material /
+texture resolve warnings in Isaac Sim.
+
 ## Enter Container
 
 ```bash
@@ -424,6 +507,8 @@ The current recommended full-scene speed configuration remains:
 ```text
 INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
 INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
+restrict_solving.solve_max_rooms=10
 populate_doors.door_chance=0
 ```
 

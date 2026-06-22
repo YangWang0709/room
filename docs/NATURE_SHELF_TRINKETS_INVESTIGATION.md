@@ -1,5 +1,24 @@
 # NatureShelfTrinketsFactory Investigation
 
+## Isaac Static Quality Status
+
+The expanded shell-like fast stable-pose path is now part of the current
+recommended Isaac Sim static 10-room configuration:
+
+```text
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
+INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
+restrict_solving.solve_max_rooms=10
+populate_doors.door_chance=0
+```
+
+This configuration has been manually inspected in Isaac Sim after USD/USDC
+export. Visual quality was good, with no obvious issue. The fast stable-pose
+path remains opt-in and does not change Infinigen's default behavior. Its
+accepted scope is shell-like trinkets; Coral remains excluded because its
+shape and `obj2trimesh` cost make it a separate risk.
+
 ## Scope
 
 This document records a behavior-preserving investigation of
@@ -12,6 +31,7 @@ The current accepted Isaac static inspection configuration remains:
 ```text
 INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
 INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
 restrict_solving.solve_max_rooms=10
 populate_doors.door_chance=0
 ```

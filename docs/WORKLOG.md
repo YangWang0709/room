@@ -1,5 +1,45 @@
 # Worklog
 
+## 2026-06-22 - Standard optimized Isaac static 10-room command
+
+Added `scripts/run_isaac_static_optimized_10room.sh` as the standard command
+for the current manually checked Isaac Sim static indoor configuration. This
+round did not add any optimization and did not change solver behavior,
+`batch_remove`, `LargeShelfFactory` reuse, `NatureShelfTrinketsFactory` fast
+pose behavior, door logic, or gin defaults.
+
+The current recommended Isaac Sim static environment configuration is:
+
+```text
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
+INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
+compose_indoors.terrain_enabled=False
+home_room_constraints.has_fewer_rooms=False
+restrict_solving.solve_max_rooms=10
+populate_doors.door_chance=0
+```
+
+The generated and exported USD/USDC scene from this configuration has now been
+manually inspected in Isaac Sim. Visual quality was good, with no obvious
+quality issue. The target for this configuration is Isaac static scene
+quality-preserving behavior, not bitwise-identical output. The practical gate
+is realistic rendering, enough environment complexity, no obvious flying
+objects, no obvious severe intersections, no obvious black materials, door
+openings retained without door panels, and USD/USDC import working in Isaac
+Sim.
+
+The three opt-in acceleration points remain default-off in Infinigen itself:
+
+```text
+batch_remove node group deletion
+LargeShelf child node group reuse
+NatureShelf shell-like fast stable pose
+```
+
+Use the script to run different seeds, clean a seed output, or export USDC
+without hand-copying the long command.
+
 ## 2026-06-22 - Populate multi-track profiling and expanded shell fast pose
 
 ### Round Goal
@@ -614,7 +654,7 @@ without adding an optimization, reducing small object count, changing
 generation logic, changing solver behavior, changing random number flow,
 running concurrent generation, or connecting C++.
 
-The current Isaac-inspected configuration remains:
+The then-current Isaac-inspected configuration was:
 
 ```text
 INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1

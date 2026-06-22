@@ -1,5 +1,44 @@
 # Profile Results
 
+## Isaac Static Optimized 10-Room Quality Check - 2026-06-22
+
+The following opt-in configuration has passed manual Isaac Sim visual
+inspection after USD/USDC export:
+
+```text
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
+INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
+compose_indoors.terrain_enabled=False
+home_room_constraints.has_fewer_rooms=False
+restrict_solving.solve_max_rooms=10
+populate_doors.door_chance=0
+```
+
+Observed quality judgment: visual effect was good in Isaac Sim, with no
+obvious quality issue. This is not a bitwise-identical equivalence claim.
+It is an Isaac static scene quality-preserving result: realistic rendering,
+sufficient environment complexity, no obvious flying objects, no obvious
+severe intersections, no obvious black materials, no generated door panels,
+door openings retained, and USD/USDC import into Isaac Sim working.
+
+The current standard command is:
+
+```bash
+bash scripts/run_isaac_static_optimized_10room.sh
+```
+
+The three active opt-in speed points are:
+
+- `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1`: batch node-group deletion.
+- `INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1`: repeated LargeShelf child
+  node-group template reuse.
+- `INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1`: fast bbox bottom-align stable
+  pose for shell-like NatureShelf trinkets.
+
+All remain disabled by default in the original Infinigen path and must be
+enabled by script or environment variables.
+
 ## Populate Multi-Track Profiling - 2026-06-22
 
 Profile type: four independent populate-stage lines. P0 is an opt-in speed
@@ -497,7 +536,7 @@ no solver behavior was changed, no random number flow was changed, no
 concurrent execution was introduced, no C++ path was connected, and no clutter
 or scene-complexity reduction was made.
 
-The current Isaac-inspected configuration remains:
+The then-current Isaac-inspected configuration was:
 
 ```text
 INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1

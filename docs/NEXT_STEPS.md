@@ -1,5 +1,48 @@
 # Next Steps
 
+## Current Isaac Static Recommendation
+
+The latest recommended full 10-room Isaac Sim static indoor configuration is:
+
+```text
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
+INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
+compose_indoors.terrain_enabled=False
+home_room_constraints.has_fewer_rooms=False
+restrict_solving.solve_max_rooms=10
+populate_doors.door_chance=0
+```
+
+This configuration has been manually inspected in Isaac Sim after USD/USDC
+export. The visual result was good, with no obvious quality problem. Treat this
+as an Isaac static scene quality-preserving target, not a bitwise-identical
+target.
+
+Standard command:
+
+```bash
+bash scripts/run_isaac_static_optimized_10room.sh
+```
+
+Useful variants:
+
+```bash
+SEED=4 bash scripts/run_isaac_static_optimized_10room.sh
+EXPORT_USD=1 SEED=4 bash scripts/run_isaac_static_optimized_10room.sh
+DRY_RUN=1 EXPORT_USD=1 SEED=4 bash scripts/run_isaac_static_optimized_10room.sh
+```
+
+For Isaac Sim, open the host export directory and keep the full export folder
+together. Do not move only one `.usdc` file. If the scene appears black, add a
+Dome Light or Point Light and inspect material or texture resolve warnings.
+
+Next optimization work should stay single-scene and quality-first. Good next
+targets are `LargePlantContainerFactory` / plant spawn cost and integrated
+datablock growth attribution for material, texture, and node-group growth.
+Do not start concurrency optimization yet, and do not reduce room count or
+clutter complexity unless a later quality gate explicitly allows it.
+
 ## Current Populate Multi-Track Status
 
 The current accepted main speed configuration remains:
@@ -7,6 +50,7 @@ The current accepted main speed configuration remains:
 ```text
 INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
 INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
 restrict_solving.solve_max_rooms=10
 populate_doors.door_chance=0
 ```
@@ -116,6 +160,7 @@ The current Isaac-inspected speed configuration is:
 ```text
 INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
 INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
 restrict_solving.solve_max_rooms=10
 populate_doors.door_chance=0
 ```
