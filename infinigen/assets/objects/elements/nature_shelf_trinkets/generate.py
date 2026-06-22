@@ -26,6 +26,9 @@ from infinigen.core.util.math import FixedSeed
 logger = logging.getLogger(__name__)
 
 NATURE_SHELF_TRINKETS_TIMING_ENV_VAR = "INFINIGEN_PROFILE_NATURE_SHELF_TRINKETS"
+NATURE_SHELF_TRINKETS_TIMING_CSV_ENV_VAR = (
+    "INFINIGEN_NATURE_SHELF_TRINKETS_TIMING_CSV"
+)
 NATURE_SHELF_TRINKETS_TIMING_CSV_NAME = (
     "infinigen_nature_shelf_trinkets_timing.csv"
 )
@@ -89,6 +92,10 @@ def _profile_nature_shelf_trinkets_enabled() -> bool:
 
 
 def _nature_shelf_trinkets_timing_csv_path() -> Path:
+    explicit_path = os.environ.get(NATURE_SHELF_TRINKETS_TIMING_CSV_ENV_VAR)
+    if explicit_path:
+        return Path(explicit_path)
+
     solver_timing = sys.modules.get("infinigen.core.constraints.example_solver.timing")
     if solver_timing is not None:
         current_output_folder = getattr(solver_timing, "current_output_folder", None)

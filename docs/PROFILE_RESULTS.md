@@ -1,5 +1,92 @@
 # Profile Results
 
+## NatureShelfTrinkets Targeted Microbenchmark - 2026-06-22
+
+Profile type: isolated `NatureShelfTrinketsFactory.create_asset()` benchmark.
+This was not a full indoor scene walltime profile and not a quality gate. It
+does not reuse assets, does not change generation logic, does not reduce
+clutter, does not alter solver behavior or random flow, and does not introduce
+concurrency or C++.
+
+The previous 1800s full 10-room attempt timed out inside `[solve_large]` and
+did not reach final `populate_assets`, so no full-scene
+NatureShelfTrinkets CSV was available. The targeted benchmark was added to
+measure the wrapper directly without spending a complete 10-room generation
+window.
+
+Command:
+
+```bash
+INFINIGEN_PROFILE_NATURE_SHELF_TRINKETS=1 \
+python scripts/bench_nature_shelf_trinkets_factory.py \
+  --samples 30 \
+  --seed 0 \
+  --output_folder outputs/bench_nature_shelf_trinkets
+```
+
+CSV:
+
+```text
+outputs/bench_nature_shelf_trinkets/infinigen_nature_shelf_trinkets_timing.csv
+```
+
+Result summary:
+
+| metric | value |
+| --- | ---: |
+| CSV data rows | 30 |
+| successful samples | 30 |
+| failed samples | 0 |
+| total measured `create_asset` duration | `47.566s` |
+| average duration | `1.586s` |
+| max duration | `5.477s` |
+
+Base factory duration top:
+
+| base factory | count | total | avg | max |
+| --- | ---: | ---: | ---: | ---: |
+| `CoralFactory` | 3 | `13.743s` | `4.581s` | `5.477s` |
+| `ClamFactory` | 3 | `7.924s` | `2.641s` | `4.305s` |
+| `MusselFactory` | 3 | `6.518s` | `2.173s` | `2.926s` |
+| `HerbivoreFactory` | 4 | `6.080s` | `1.520s` | `1.575s` |
+| `ConchFactory` | 5 | `4.142s` | `0.828s` | `0.907s` |
+| `CarnivoreFactory` | 5 | `3.909s` | `0.782s` | `0.880s` |
+| `PineconeFactory` | 1 | `1.908s` | `1.908s` | `1.908s` |
+| `AugerFactory` | 2 | `1.583s` | `0.792s` | `0.875s` |
+| `VoluteFactory` | 2 | `1.167s` | `0.583s` | `0.659s` |
+| `MolluskFactory` | 1 | `0.573s` | `0.573s` | `0.573s` |
+
+Substage totals:
+
+| substage | total | share |
+| --- | ---: | ---: |
+| `stable_pose_duration` | `32.143s` | `67.6%` |
+| `base_factory_spawn_duration` | `15.275s` | `32.1%` |
+| `join_children_duration` | `0.062s` | `0.1%` |
+| other wrapper stages | about `0.086s` | about `0.2%` |
+
+Created datablocks:
+
+| kind | total | avg | max |
+| --- | ---: | ---: | ---: |
+| materials | 46 | 1.533 | 5 |
+| textures | 0 | 0.000 | 0 |
+| node groups | 68 | 2.267 | 32 |
+| meshes | 242 | 8.067 | 36 |
+| objects | 75 | 2.500 | 11 |
+
+Created materials and node groups were concentrated in creature paths:
+`CarnivoreFactory` created `25` materials and `48` node groups;
+`HerbivoreFactory` created `19` materials and `20` node groups. The slowest
+individual samples were stable-pose dominated `CoralFactory`,
+`ClamFactory`, and `MusselFactory` rows.
+
+Judgment: in this targeted sample, stable pose is the primary measured cost;
+`base_factory.spawn_asset` is secondary. The next best investigation is
+`CoralFactory` stable-pose input geometry, followed by clam / mussel stable
+pose behavior. Material / node-group template reuse remains plausible for
+creature paths, but this sample does not make it the first priority.
+
 ## NatureShelfTrinkets Populate Investigation - 2026-06-22
 
 Profile type: source investigation plus optional per-instance timing

@@ -25,26 +25,51 @@ python scripts/analyze_nature_shelf_trinkets.py \
   outputs/<run>/coarse/infinigen_nature_shelf_trinkets_timing.csv
 ```
 
+For isolated internal cost attribution, use the targeted benchmark instead of
+rerunning a full 10-room scene:
+
+```bash
+INFINIGEN_PROFILE_NATURE_SHELF_TRINKETS=1 \
+python scripts/bench_nature_shelf_trinkets_factory.py \
+  --samples 30 \
+  --seed 0 \
+  --output_folder outputs/bench_nature_shelf_trinkets
+python scripts/analyze_nature_shelf_trinkets.py \
+  outputs/bench_nature_shelf_trinkets/infinigen_nature_shelf_trinkets_timing.csv
+```
+
+The first 30-sample targeted run completed with `30` successful samples and
+`0` failures. It is only a microbenchmark for
+`NatureShelfTrinketsFactory.create_asset()` internals, not a complete-scene
+walltime result. In that sample, `stable_pose_duration` accounted for
+`32.143s` / `67.6%` of measured `create_asset` time, while
+`base_factory_spawn_duration` accounted for `15.275s` / `32.1%`.
+`CoralFactory`, `ClamFactory`, and `MusselFactory` were the most relevant
+stable-pose-heavy paths. Creature factories created most materials and node
+groups, but were not the duration leaders in this sample.
+
 Recommended next order:
 
-1. The bounded 1800s NatureShelfTrinkets sample timed out inside
-   `[solve_large]`, did not reach final `populate_assets`, and wrote no Nature
-   timing CSV. Do not treat this as a failed instrumentation signal.
-2. For the next timing evidence, either run from an already completed coarse
-   state if a safe final-populate-only path is available, or explicitly approve
-   a longer bounded run such as 3600s. Do not default to a full 10-room run.
-3. Use `scripts/analyze_nature_shelf_trinkets.py` to identify whether runtime
-   is dominated by wrapped base-factory spawn, stable-pose computation,
-   material / texture creation, node-group creation, or many child objects.
-4. If the CSV shows repeated material, texture, or node-group names with high
+1. Do not rerun a full 10-room scene just to collect NatureShelfTrinkets
+   internals. The bounded 1800s sample timed out inside `[solve_large]`, did
+   not reach final `populate_assets`, and wrote no Nature timing CSV.
+2. Use the targeted benchmark for more samples or specific seeds when the goal
+   is internal cost attribution. Keep interpreting it as a microbenchmark, not
+   complete-scene walltime.
+3. First inspect stable-pose-heavy paths, starting with `CoralFactory`, then
+   `ClamFactory` / `MusselFactory`. Look at mesh density and the geometry fed
+   into `trimesh.poses.compute_stable_poses()`.
+4. If a later larger sample shows `base_factory.spawn_asset` dominating,
+   inspect the concrete wrapped base factory before broad wrapper changes.
+5. If a later CSV shows repeated material, texture, or node-group names with high
    creation counts, design a separate opt-in reuse experiment for the narrowest
    repeated template only.
-5. Keep `BookStackFactory` and `LargePlantContainerFactory` as second-priority
+6. Keep `BookStackFactory` and `LargePlantContainerFactory` as second-priority
    populate targets after the NatureShelfTrinkets evidence is clearer.
-6. Do not run concurrent benchmarks in this phase.
-7. Do not reduce clutter count or scene complexity unless a later quality gate
+7. Do not run concurrent benchmarks in this phase.
+8. Do not reduce clutter count or scene complexity unless a later quality gate
    explicitly allows it.
-8. Do not change solver behavior, proposal order, accept/reject behavior, or
+9. Do not change solver behavior, proposal order, accept/reject behavior, or
    random number flow.
 
 ## Latest LargeShelf Child Reuse Short Sample

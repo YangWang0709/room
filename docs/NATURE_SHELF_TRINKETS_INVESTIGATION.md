@@ -208,6 +208,12 @@ Fallback path when the solver output folder cannot be discovered:
 /tmp/infinigen_nature_shelf_trinkets_timing.csv
 ```
 
+Targeted benchmark runs can override the CSV path explicitly with:
+
+```bash
+INFINIGEN_NATURE_SHELF_TRINKETS_TIMING_CSV=/path/to/infinigen_nature_shelf_trinkets_timing.csv
+```
+
 The timing records the wrapper class, wrapped base factory class, placeholder
 name, total duration, substage durations, before/after counts for Blender
 materials, textures, node groups, meshes, and objects, created datablock counts,
@@ -220,6 +226,78 @@ Analyze with:
 python scripts/analyze_nature_shelf_trinkets.py \
   outputs/<run>/coarse/infinigen_nature_shelf_trinkets_timing.csv
 ```
+
+## Targeted Microbenchmark
+
+The full 10-room bounded sample timed out after 1800s inside `[solve_large]`
+and did not reach final `populate_assets`, so it could not collect
+NatureShelfTrinkets timing rows. To avoid spending full-scene generation time
+just to measure this wrapper, this round added:
+
+```text
+scripts/bench_nature_shelf_trinkets_factory.py
+```
+
+The script creates isolated placeholders, instantiates
+`NatureShelfTrinketsFactory(factory_seed)`, calls
+`create_asset(inst_seed, placeholder=placeholder)`, records the same timing
+CSV, and deletes generated objects after each sample. It does not reuse assets,
+does not optimize generation, and does not depend on a complete indoor scene.
+It is only a microbenchmark for internal cost attribution, not a replacement
+for complete-scene walltime or quality validation.
+
+Run used:
+
+```bash
+INFINIGEN_PROFILE_NATURE_SHELF_TRINKETS=1 \
+python scripts/bench_nature_shelf_trinkets_factory.py \
+  --samples 30 \
+  --seed 0 \
+  --output_folder outputs/bench_nature_shelf_trinkets
+```
+
+CSV:
+
+```text
+outputs/bench_nature_shelf_trinkets/infinigen_nature_shelf_trinkets_timing.csv
+```
+
+Result: `30` successful samples, `0` failures, total measured
+`create_asset` time `47.566s`, average `1.586s`, max `5.477s`.
+
+Top base factories by total duration:
+
+| base factory | count | total | avg | max |
+| --- | ---: | ---: | ---: | ---: |
+| `CoralFactory` | 3 | `13.743s` | `4.581s` | `5.477s` |
+| `ClamFactory` | 3 | `7.924s` | `2.641s` | `4.305s` |
+| `MusselFactory` | 3 | `6.518s` | `2.173s` | `2.926s` |
+| `HerbivoreFactory` | 4 | `6.080s` | `1.520s` | `1.575s` |
+| `ConchFactory` | 5 | `4.142s` | `0.828s` | `0.907s` |
+| `CarnivoreFactory` | 5 | `3.909s` | `0.782s` | `0.880s` |
+
+Measured substage split:
+
+| substage | total | share |
+| --- | ---: | ---: |
+| `stable_pose_duration` | `32.143s` | `67.6%` |
+| `base_factory_spawn_duration` | `15.275s` | `32.1%` |
+| other wrapper stages | about `0.148s` | about `0.3%` |
+
+Created datablocks in the 30-sample microbenchmark:
+
+| kind | total | avg | max |
+| --- | ---: | ---: | ---: |
+| materials | 46 | 1.533 | 5 |
+| textures | 0 | 0.000 | 0 |
+| node groups | 68 | 2.267 | 32 |
+| meshes | 242 | 8.067 | 36 |
+| objects | 75 | 2.500 | 11 |
+
+Interpretation: for this sample, stable-pose computation is the dominant
+measured cost, especially for coral, clam, mussel, and conch-like assets.
+Creature paths create most materials and node groups, but their total duration
+is lower than the stable-pose-heavy shell/coral paths in this isolated sample.
 
 ## Current Judgment
 
@@ -234,3 +312,11 @@ plausible next investigation, but not as an accepted optimization yet. The new
 CSV should be used first to identify which wrapped base factories create the
 largest repeated datablock patterns and whether runtime is dominated by
 datablock creation, mesh realization, or stable-pose computation.
+
+Next investigation should start with the stable-pose-heavy base factories
+(`CoralFactory`, then `ClamFactory` / `MusselFactory`) before broad material
+or node-group reuse. If a later larger sample shows
+`base_factory.spawn_asset` dominating instead, inspect the concrete wrapped
+base factory first. If material / texture / node-group creation dominates,
+consider only a narrow opt-in material or template reuse experiment with a
+separate visual-quality gate.

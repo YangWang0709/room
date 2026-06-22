@@ -1,5 +1,133 @@
 # Worklog
 
+## 2026-06-22 - NatureShelfTrinkets targeted microbenchmark
+
+### Round Goal
+
+Add a targeted `NatureShelfTrinketsFactory` microbenchmark to measure
+`create_asset()` and wrapped base-factory cost without running another full
+10-room indoor generation. No optimization was added, no small objects were
+removed, no generation logic or solver behavior was changed, no random number
+flow was changed, no concurrency was introduced, and no C++ path was connected.
+
+### Changes
+
+Added:
+
+```text
+scripts/bench_nature_shelf_trinkets_factory.py
+```
+
+The benchmark defaults to `30` samples, seed `0`, and:
+
+```text
+outputs/bench_nature_shelf_trinkets
+```
+
+Each sample creates a `NatureShelfTrinketsFactory(factory_seed)`, creates a
+placeholder, calls `create_asset(inst_seed, placeholder=placeholder)`, records
+the existing NatureShelfTrinkets timing row, and deletes generated objects
+before continuing. This is an internal microbenchmark only; it does not
+represent complete-scene walltime or Isaac quality.
+
+Added a safe CSV override for targeted runs:
+
+```bash
+INFINIGEN_NATURE_SHELF_TRINKETS_TIMING_CSV=/path/to/infinigen_nature_shelf_trinkets_timing.csv
+```
+
+Default timing behavior is unchanged when the variable is unset.
+
+Updated:
+
+```text
+scripts/analyze_nature_shelf_trinkets.py
+```
+
+The analyzer now summarizes by `base_factory_class`, including total / average
+/ max duration, `base_factory_spawn_duration`, `stable_pose_duration`,
+`apply_modifiers_duration`, created materials, textures, node groups, meshes,
+and objects. It also reports slowest base factories, slowest samples,
+datablock creation top lists, and whether `stable_pose` or
+`base_factory.spawn_asset` is the primary measured cost.
+
+### Benchmark Result
+
+The full 10-room bounded sample from the previous round timed out after 1800s
+inside `[solve_large]` and never reached `populate_assets`, so it could not
+produce NatureShelfTrinkets timing rows. The targeted benchmark avoided that
+full-scene cost.
+
+Run:
+
+```bash
+INFINIGEN_PROFILE_NATURE_SHELF_TRINKETS=1 \
+python scripts/bench_nature_shelf_trinkets_factory.py \
+  --samples 30 \
+  --seed 0 \
+  --output_folder outputs/bench_nature_shelf_trinkets
+```
+
+CSV:
+
+```text
+outputs/bench_nature_shelf_trinkets/infinigen_nature_shelf_trinkets_timing.csv
+```
+
+Result:
+
+| metric | value |
+| --- | ---: |
+| CSV data rows | 30 |
+| successful samples | 30 |
+| failed samples | 0 |
+| total measured `create_asset` duration | `47.566s` |
+| average duration | `1.586s` |
+| max duration | `5.477s` |
+
+Base factory duration leaders:
+
+| base factory | count | total | avg | max |
+| --- | ---: | ---: | ---: | ---: |
+| `CoralFactory` | 3 | `13.743s` | `4.581s` | `5.477s` |
+| `ClamFactory` | 3 | `7.924s` | `2.641s` | `4.305s` |
+| `MusselFactory` | 3 | `6.518s` | `2.173s` | `2.926s` |
+| `HerbivoreFactory` | 4 | `6.080s` | `1.520s` | `1.575s` |
+| `ConchFactory` | 5 | `4.142s` | `0.828s` | `0.907s` |
+| `CarnivoreFactory` | 5 | `3.909s` | `0.782s` | `0.880s` |
+
+Substage split:
+
+| substage | total | share |
+| --- | ---: | ---: |
+| `stable_pose_duration` | `32.143s` | `67.6%` |
+| `base_factory_spawn_duration` | `15.275s` | `32.1%` |
+| `apply_modifiers_duration` | `0.003s` | about `0.0%` |
+
+Created datablocks:
+
+| kind | total | avg | max |
+| --- | ---: | ---: | ---: |
+| materials | 46 | 1.533 | 5 |
+| textures | 0 | 0.000 | 0 |
+| node groups | 68 | 2.267 | 32 |
+| meshes | 242 | 8.067 | 36 |
+| objects | 75 | 2.500 | 11 |
+
+### Judgment
+
+In this 30-sample targeted benchmark, `stable_pose_duration` is the primary
+measured cost and `base_factory.spawn_asset` is secondary. The strongest next
+lead is stable-pose input geometry for `CoralFactory`, followed by
+`ClamFactory` and `MusselFactory`. Creature paths are still the main
+material/node-group creation signal, so opt-in material or template reuse may
+be worth a later separate experiment, but it is not the first duration target
+from this sample.
+
+Keep `BookStackFactory` and `LargePlantContainerFactory` as second-priority
+populate targets. Do not add concurrency, reduce scene complexity, change the
+solver, or change random flow in the next investigation.
+
 ## 2026-06-22 - NatureShelfTrinkets populate investigation
 
 ### Round Goal

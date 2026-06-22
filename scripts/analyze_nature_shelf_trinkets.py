@@ -36,6 +36,13 @@ NAME_FIELDS = [
     ("node_group", "created_node_group_names"),
 ]
 
+BASE_FACTORY_STAGE_FIELDS = [
+    DURATION_FIELD,
+    "base_factory_spawn_duration",
+    "stable_pose_duration",
+    "apply_modifiers_duration",
+]
+
 
 def as_float(row: dict, field: str) -> float:
     value = row.get(field, "")
@@ -65,13 +72,164 @@ def fmt_seconds(seconds: float) -> str:
     return f"{seconds:9.3f}s"
 
 
+def ratio(numerator: float, denominator: float) -> float:
+    if denominator <= 0:
+        return 0.0
+    return numerator / denominator
+
+
 def read_rows(path: Path) -> list[dict]:
     with path.open(newline="") as handle:
         return list(csv.DictReader(handle))
 
 
+def empty_base_stats() -> dict:
+    stats = {
+        "count": 0,
+    }
+    for field in BASE_FACTORY_STAGE_FIELDS:
+        stats[f"{field}_total"] = 0.0
+        stats[f"{field}_max"] = 0.0
+    for field in COUNT_FIELDS:
+        stats[field] = 0
+    return stats
+
+
+def build_base_factory_stats(rows: list[dict]) -> dict[str, dict]:
+    by_base = defaultdict(empty_base_stats)
+    for row in rows:
+        base_factory = row.get("base_factory_class") or "(unknown)"
+        stats = by_base[base_factory]
+        stats["count"] += 1
+        for field in BASE_FACTORY_STAGE_FIELDS:
+            value = as_float(row, field)
+            stats[f"{field}_total"] += value
+            stats[f"{field}_max"] = max(stats[f"{field}_max"], value)
+        for field in COUNT_FIELDS:
+            stats[field] += as_int(row, field)
+    return by_base
+
+
+def average(stats: dict, total_field: str) -> float:
+    if stats["count"] == 0:
+        return 0.0
+    return stats[total_field] / stats["count"]
+
+
+def print_base_factory_top(by_base: dict[str, dict], limit: int = 20) -> None:
+    print("Slowest base_factory_class top 20")
+    print("-" * 38)
+    print(
+        "base_factory_class,count,total,avg,max,"
+        "spawn_total,spawn_avg,spawn_max,"
+        "stable_total,stable_avg,stable_max,"
+        "modifiers_total,modifiers_avg,modifiers_max,"
+        "materials,textures,node_groups,meshes,objects"
+    )
+    for base_factory, stats in sorted(
+        by_base.items(),
+        key=lambda item: item[1][f"{DURATION_FIELD}_total"],
+        reverse=True,
+    )[:limit]:
+        print(
+            f"{base_factory},"
+            f"{stats['count']},"
+            f"{stats[f'{DURATION_FIELD}_total']:.6f},"
+            f"{average(stats, f'{DURATION_FIELD}_total'):.6f},"
+            f"{stats[f'{DURATION_FIELD}_max']:.6f},"
+            f"{stats['base_factory_spawn_duration_total']:.6f},"
+            f"{average(stats, 'base_factory_spawn_duration_total'):.6f},"
+            f"{stats['base_factory_spawn_duration_max']:.6f},"
+            f"{stats['stable_pose_duration_total']:.6f},"
+            f"{average(stats, 'stable_pose_duration_total'):.6f},"
+            f"{stats['stable_pose_duration_max']:.6f},"
+            f"{stats['apply_modifiers_duration_total']:.6f},"
+            f"{average(stats, 'apply_modifiers_duration_total'):.6f},"
+            f"{stats['apply_modifiers_duration_max']:.6f},"
+            f"{stats['created_material_count']},"
+            f"{stats['created_texture_count']},"
+            f"{stats['created_node_group_count']},"
+            f"{stats['created_mesh_count']},"
+            f"{stats['created_object_count']}"
+        )
+    print()
+
+
+def print_count_top(by_base: dict[str, dict], field: str, title: str) -> None:
+    print(title)
+    print("-" * 38)
+    for base_factory, stats in sorted(
+        by_base.items(), key=lambda item: item[1][field], reverse=True
+    )[:20]:
+        if stats[field] == 0:
+            continue
+        avg = stats[field] / stats["count"] if stats["count"] else 0.0
+        print(
+            f"{base_factory:28s} total={stats[field]:7d} "
+            f"count={stats['count']:5d} avg={avg:8.3f}"
+        )
+    print()
+
+
+def print_cause_summary(successful: list[dict], substage_totals: dict[str, float]):
+    total_duration = sum(as_float(row, DURATION_FIELD) for row in successful)
+    base_spawn_total = substage_totals.get("base_factory_spawn_duration", 0.0)
+    stable_pose_total = substage_totals.get("stable_pose_duration", 0.0)
+    modifiers_total = substage_totals.get("apply_modifiers_duration", 0.0)
+
+    base_spawn_ratio = ratio(base_spawn_total, total_duration)
+    stable_pose_ratio = ratio(stable_pose_total, total_duration)
+    modifiers_ratio = ratio(modifiers_total, total_duration)
+
+    print("Cause summary")
+    print("-" * 38)
+    print(
+        "base_factory.spawn_asset ratio: "
+        f"{base_spawn_ratio:.1%} "
+        f"({fmt_seconds(base_spawn_total)} / {fmt_seconds(total_duration)})"
+    )
+    print(
+        "stable_pose ratio: "
+        f"{stable_pose_ratio:.1%} "
+        f"({fmt_seconds(stable_pose_total)} / {fmt_seconds(total_duration)})"
+    )
+    print(
+        "apply_modifiers ratio: "
+        f"{modifiers_ratio:.1%} "
+        f"({fmt_seconds(modifiers_total)} / {fmt_seconds(total_duration)})"
+    )
+    print(
+        "base_factory.spawn_asset_is_primary: "
+        f"{'yes' if base_spawn_ratio >= 0.5 else 'no'}"
+    )
+    print(
+        "stable_pose_is_primary: "
+        f"{'yes' if stable_pose_ratio >= 0.5 else 'no'}"
+    )
+    print()
+
+
+def print_failed_instances(failed: list[dict]) -> None:
+    if not failed:
+        return
+
+    print("Failed instances")
+    print("-" * 38)
+    by_error = Counter(
+        (
+            row.get("base_factory_class") or "(unknown)",
+            row.get("error_type") or "(unknown)",
+        )
+        for row in failed
+    )
+    for (base_factory, error_type), count in by_error.most_common():
+        print(f"{base_factory:28s} error={error_type:20s} count={count:5d}")
+    print()
+
+
 def summarize_rows(rows: list[dict]) -> None:
     successful = [row for row in rows if str(row.get("success", "")).lower() == "true"]
+    failed = [row for row in rows if str(row.get("success", "")).lower() != "true"]
     durations = [as_float(row, DURATION_FIELD) for row in successful]
     total_duration = sum(durations)
     max_duration = max(durations, default=0.0)
@@ -86,6 +244,8 @@ def summarize_rows(rows: list[dict]) -> None:
     print(f"avg_duration:   {fmt_seconds(avg_duration)}")
     print(f"max_duration:   {fmt_seconds(max_duration)}")
     print()
+
+    print_failed_instances(failed)
 
     print("Created datablock summary")
     print("-" * 38)
@@ -111,27 +271,26 @@ def summarize_rows(rows: list[dict]) -> None:
         print(f"{field:42s} {fmt_seconds(total)}")
     print()
 
-    print("Base factory duration totals")
-    print("-" * 38)
-    by_base = defaultdict(lambda: {"count": 0, "duration": 0.0, "max": 0.0})
-    for row in successful:
-        base_factory = row.get("base_factory_class") or "(unknown)"
-        duration = as_float(row, DURATION_FIELD)
-        by_base[base_factory]["count"] += 1
-        by_base[base_factory]["duration"] += duration
-        by_base[base_factory]["max"] = max(by_base[base_factory]["max"], duration)
-    for base_factory, stats in sorted(
-        by_base.items(), key=lambda item: item[1]["duration"], reverse=True
-    )[:20]:
-        avg = stats["duration"] / stats["count"] if stats["count"] else 0.0
-        print(
-            f"{base_factory:28s} total={fmt_seconds(stats['duration'])} "
-            f"count={stats['count']:5d} avg={fmt_seconds(avg)} "
-            f"max={fmt_seconds(stats['max'])}"
-        )
-    print()
+    by_base = build_base_factory_stats(successful)
+    print_base_factory_top(by_base)
+    print_count_top(
+        by_base,
+        "created_material_count",
+        "Created materials by base_factory_class top 20",
+    )
+    print_count_top(
+        by_base,
+        "created_texture_count",
+        "Created textures by base_factory_class top 20",
+    )
+    print_count_top(
+        by_base,
+        "created_node_group_count",
+        "Created node_groups by base_factory_class top 20",
+    )
+    print_cause_summary(successful, substage_totals)
 
-    print("Slowest instances")
+    print("Slowest individual sample top 20")
     print("-" * 38)
     for row in sorted(
         successful, key=lambda item: as_float(item, DURATION_FIELD), reverse=True
@@ -187,7 +346,7 @@ def summarize_rows(rows: list[dict]) -> None:
         field: sum(as_int(row, field) for row in successful) for field in COUNT_FIELDS
     }
     dominant_substage = max(substage_totals, key=substage_totals.get)
-    top_base = max(by_base, key=lambda name: by_base[name]["duration"])
+    top_base = max(by_base, key=lambda name: by_base[name][f"{DURATION_FIELD}_total"])
 
     print(
         f"Top base factory by duration is {top_base}; first inspect its "
