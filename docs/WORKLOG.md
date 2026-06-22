@@ -1,5 +1,160 @@
 # Worklog
 
+## 2026-06-22 - NatureShelfTrinkets stable pose complexity
+
+### Round Goal
+
+Enhance `NatureShelfTrinketsFactory` timing and the targeted benchmark to
+record stable-pose input mesh complexity and cache-candidate details. No
+optimization was added, no stable pose was skipped, no stable-pose cache was
+used, no NatureShelfTrinkets generation behavior was changed, no random flow
+or solver behavior was changed, no clutter was removed, no concurrency was
+introduced, and no C++ path was connected.
+
+### Changes
+
+Extended the optional timing behind:
+
+```bash
+INFINIGEN_PROFILE_NATURE_SHELF_TRINKETS=1
+```
+
+New CSV fields include:
+
+```text
+mesh_vertex_count
+mesh_face_count
+mesh_edge_count
+bbox_min_x/y/z
+bbox_max_x/y/z
+bbox_extent_x/y/z
+obj2trimesh_duration
+stable_pose_count
+stable_pose_best_prob
+stable_pose_cache_candidate_key
+```
+
+The cache candidate key is diagnostic only. It includes the wrapped base
+factory, mesh complexity, bbox extent, and a hash of the stable-pose input
+mesh. It does not change generation, does not cache any result, and does not
+change the selected stable pose.
+
+Updated:
+
+```text
+scripts/bench_nature_shelf_trinkets_factory.py
+scripts/analyze_nature_shelf_trinkets.py
+```
+
+The benchmark now defaults to `--samples 100`, supports
+`--csv-path`, supports `--keep-blend true/false`, and supports optional
+`--base-factory-filter` through seed rejection. The filter does not override
+`NatureShelfTrinketsFactory` base-factory selection.
+
+The analyzer now reports stable-pose duration vs mesh complexity, average
+vertex / face counts by base factory, slowest stable-pose rows with bbox
+extent and pose count, and repeated `stable_pose_cache_candidate_key` signals.
+
+### Benchmark Result
+
+Run:
+
+```bash
+INFINIGEN_PROFILE_NATURE_SHELF_TRINKETS=1 \
+python scripts/bench_nature_shelf_trinkets_factory.py \
+  --samples 100 \
+  --seed 0 \
+  --output_folder outputs/bench_nature_shelf_trinkets_100
+```
+
+CSV:
+
+```text
+outputs/bench_nature_shelf_trinkets_100/infinigen_nature_shelf_trinkets_timing.csv
+```
+
+Result:
+
+| metric | value |
+| --- | ---: |
+| CSV data rows | 100 |
+| successful samples | 100 |
+| failed samples | 0 |
+| total measured `create_asset` duration | `177.305s` |
+| average duration | `1.773s` |
+| max duration | `7.040s` |
+
+Substage split:
+
+| substage | total | share |
+| --- | ---: | ---: |
+| `stable_pose_duration` | `95.971s` | `54.1%` |
+| `obj2trimesh_duration` | `26.151s` | `14.7%` |
+| stable-pose pipeline | `122.121s` | `68.9%` |
+| `base_factory_spawn_duration` | `46.610s` | `26.3%` |
+
+Base factory duration leaders:
+
+| base factory | count | total | avg | max |
+| --- | ---: | ---: | ---: | ---: |
+| `ClamFactory` | 11 | `49.970s` | `4.543s` | `7.040s` |
+| `MusselFactory` | 12 | `27.341s` | `2.278s` | `3.136s` |
+| `CoralFactory` | 5 | `25.904s` | `5.181s` | `6.514s` |
+| `HerbivoreFactory` | 11 | `18.575s` | `1.689s` | `1.967s` |
+| `CarnivoreFactory` | 14 | `14.111s` | `1.008s` | `1.287s` |
+
+Stable-pose mesh complexity:
+
+| base factory | avg vertices | avg faces | stable total | stable avg |
+| --- | ---: | ---: | ---: | ---: |
+| `ClamFactory` | 262,648 | 528,384 | `44.381s` | `4.035s` |
+| `MusselFactory` | 264,196 | 528,384 | `21.202s` | `1.767s` |
+| `CoralFactory` | 1,719,138 | 3,445,702 | `7.209s` | `1.442s` |
+| `ConchFactory` | 176,443 | 352,886 | `6.746s` | `0.519s` |
+
+Across `75` stable-pose rows, average mesh complexity was `298,988` vertices
+and `599,225` faces. Correlation between `stable_pose_duration` and vertex /
+face count was only `0.131`; correlation with `stable_pose_count` was `0.275`.
+The slowest `compute_stable_poses()` rows were `ClamFactory` samples. The
+slowest `CoralFactory` rows were often dominated by `obj2trimesh_duration` on
+multi-million-face meshes.
+
+Cache signal:
+
+| metric | value |
+| --- | ---: |
+| candidate keys | 75 |
+| unique candidate keys | 75 |
+| repeated candidate keys | 0 |
+
+Created datablocks:
+
+| kind | total |
+| --- | ---: |
+| materials | 123 |
+| textures | 0 |
+| node groups | 142 |
+| meshes | 673 |
+| objects | 214 |
+
+Material and node-group creation still mostly came from creature paths, but
+materials / textures / node groups were not the first duration bottleneck in
+this benchmark.
+
+### Judgment
+
+`NatureShelfTrinketsFactory`'s new measured internal bottleneck is the
+stable-pose pipeline, not material / texture / node-group creation. Exact
+stable-pose cache is not recommended yet because the diagnostic mesh-hash key
+did not repeat in the 100-sample run. If a speed experiment is attempted next,
+it should be a separate opt-in stable-pose simplification or mesh-complexity
+experiment, starting with `ClamFactory` and `MusselFactory`. `CoralFactory`
+should be investigated separately for `obj2trimesh` conversion cost.
+
+Do not reduce clutter count, do not add concurrency, and do not change solver
+or random flow. Any future cache or simplification must be opt-in and must pass
+a visual-quality gate.
+
 ## 2026-06-22 - NatureShelfTrinkets targeted microbenchmark
 
 ### Round Goal

@@ -5,6 +5,7 @@
 
 
 import csv
+import hashlib
 import logging
 import os
 import sys
@@ -48,10 +49,26 @@ NATURE_SHELF_TRINKETS_TIMING_FIELDNAMES = [
     "join_children_duration",
     "apply_initial_transform_duration",
     "apply_modifiers_duration",
+    "obj2trimesh_duration",
     "stable_pose_duration",
     "apply_rotation_transform_duration",
     "scale_and_position_duration",
     "apply_final_location_transform_duration",
+    "mesh_vertex_count",
+    "mesh_face_count",
+    "mesh_edge_count",
+    "bbox_min_x",
+    "bbox_min_y",
+    "bbox_min_z",
+    "bbox_max_x",
+    "bbox_max_y",
+    "bbox_max_z",
+    "bbox_extent_x",
+    "bbox_extent_y",
+    "bbox_extent_z",
+    "stable_pose_count",
+    "stable_pose_best_prob",
+    "stable_pose_cache_candidate_key",
     "material_count_before",
     "material_count_after",
     "texture_count_before",
@@ -160,6 +177,51 @@ def _object_tree_count(asset):
         return ""
 
 
+def _mesh_digest(mesh: trimesh.Trimesh) -> str:
+    digest = hashlib.blake2b(digest_size=12)
+    vertices = np.ascontiguousarray(np.asarray(mesh.vertices))
+    faces = np.ascontiguousarray(np.asarray(mesh.faces))
+    digest.update(str(vertices.dtype).encode("utf-8"))
+    digest.update(str(vertices.shape).encode("utf-8"))
+    digest.update(vertices.tobytes())
+    digest.update(str(faces.dtype).encode("utf-8"))
+    digest.update(str(faces.shape).encode("utf-8"))
+    digest.update(faces.tobytes())
+    return digest.hexdigest()
+
+
+def _record_trimesh_complexity(
+    row: dict, base_factory_class: str, mesh: trimesh.Trimesh
+):
+    vertex_count = len(mesh.vertices)
+    face_count = len(mesh.faces)
+    edge_count = len(mesh.edges_unique)
+    row["mesh_vertex_count"] = vertex_count
+    row["mesh_face_count"] = face_count
+    row["mesh_edge_count"] = edge_count
+
+    bounds = np.asarray(mesh.bounds, dtype=float)
+    if bounds.shape == (2, 3):
+        mins = bounds[0]
+        maxs = bounds[1]
+        extents = maxs - mins
+        for axis, value in zip(("x", "y", "z"), mins):
+            row[f"bbox_min_{axis}"] = float(value)
+        for axis, value in zip(("x", "y", "z"), maxs):
+            row[f"bbox_max_{axis}"] = float(value)
+        for axis, value in zip(("x", "y", "z"), extents):
+            row[f"bbox_extent_{axis}"] = float(value)
+
+    extent_key = ",".join(
+        f"{float(row.get(f'bbox_extent_{axis}', 0.0)):.6g}"
+        for axis in ("x", "y", "z")
+    )
+    row["stable_pose_cache_candidate_key"] = (
+        f"{base_factory_class}|v={vertex_count}|f={face_count}|e={edge_count}|"
+        f"extent={extent_key}|mesh={_mesh_digest(mesh)}"
+    )
+
+
 def _empty_timing_row(
     factory: "NatureShelfTrinketsFactory",
     inst_seed,
@@ -178,10 +240,26 @@ def _empty_timing_row(
         "join_children_duration": 0.0,
         "apply_initial_transform_duration": 0.0,
         "apply_modifiers_duration": 0.0,
+        "obj2trimesh_duration": 0.0,
         "stable_pose_duration": 0.0,
         "apply_rotation_transform_duration": 0.0,
         "scale_and_position_duration": 0.0,
         "apply_final_location_transform_duration": 0.0,
+        "mesh_vertex_count": "",
+        "mesh_face_count": "",
+        "mesh_edge_count": "",
+        "bbox_min_x": "",
+        "bbox_min_y": "",
+        "bbox_min_z": "",
+        "bbox_max_x": "",
+        "bbox_max_y": "",
+        "bbox_max_z": "",
+        "bbox_extent_x": "",
+        "bbox_extent_y": "",
+        "bbox_extent_z": "",
+        "stable_pose_count": "",
+        "stable_pose_best_prob": "",
+        "stable_pose_cache_candidate_key": "",
         "asset_children_before_join": "",
         "asset_tree_object_count_after_spawn": "",
         "final_asset_name": "",
@@ -338,12 +416,26 @@ class NatureShelfTrinketsFactory(AssetFactory):
             ):
                 pass
             else:
+                if isinstance(asset, trimesh.Trimesh):
+                    mesh = asset
+                else:
+                    step_start_time = time.perf_counter()
+                    try:
+                        mesh = obj.obj2trimesh(asset)
+                    finally:
+                        _record_duration(row, "obj2trimesh_duration", step_start_time)
+
+                _record_trimesh_complexity(
+                    row, self.base_factory.__class__.__name__, mesh
+                )
+
                 step_start_time = time.perf_counter()
                 try:
-                    if not isinstance(asset, trimesh.Trimesh):
-                        mesh = obj.obj2trimesh(asset)
                     stable_poses, probs = trimesh.poses.compute_stable_poses(mesh)
-                    stable_pose = stable_poses[np.argmax(probs)]
+                    row["stable_pose_count"] = len(stable_poses)
+                    best_idx = np.argmax(probs)
+                    row["stable_pose_best_prob"] = float(probs[best_idx])
+                    stable_pose = stable_poses[best_idx]
                     asset.rotation_euler = mathutils.Matrix(
                         stable_pose[:3, :3]
                     ).to_euler()

@@ -1,5 +1,127 @@
 # Profile Results
 
+## NatureShelfTrinkets Stable Pose Complexity - 2026-06-22
+
+Profile type: isolated 100-sample
+`NatureShelfTrinketsFactory.create_asset()` microbenchmark with additional
+stable-pose mesh complexity instrumentation. This was not a full indoor scene
+walltime profile and not a quality gate. No optimization was added, no
+stable-pose result was skipped or cached, no generation logic or random flow
+was changed, no clutter was reduced, no solver behavior was changed, and no
+concurrency or C++ path was introduced.
+
+The timing now records mesh vertices / faces / edges, bbox min / max / extent,
+`obj2trimesh_duration`, `stable_pose_count`,
+`stable_pose_best_prob`, and a diagnostic
+`stable_pose_cache_candidate_key`. The key is for analysis only and is not
+used for caching.
+
+Command:
+
+```bash
+INFINIGEN_PROFILE_NATURE_SHELF_TRINKETS=1 \
+python scripts/bench_nature_shelf_trinkets_factory.py \
+  --samples 100 \
+  --seed 0 \
+  --output_folder outputs/bench_nature_shelf_trinkets_100
+```
+
+CSV:
+
+```text
+outputs/bench_nature_shelf_trinkets_100/infinigen_nature_shelf_trinkets_timing.csv
+```
+
+Result summary:
+
+| metric | value |
+| --- | ---: |
+| CSV data rows | 100 |
+| successful samples | 100 |
+| failed samples | 0 |
+| total measured `create_asset` duration | `177.305s` |
+| average duration | `1.773s` |
+| max duration | `7.040s` |
+
+Base factory duration top:
+
+| base factory | count | total | avg | max |
+| --- | ---: | ---: | ---: | ---: |
+| `ClamFactory` | 11 | `49.970s` | `4.543s` | `7.040s` |
+| `MusselFactory` | 12 | `27.341s` | `2.278s` | `3.136s` |
+| `CoralFactory` | 5 | `25.904s` | `5.181s` | `6.514s` |
+| `HerbivoreFactory` | 11 | `18.575s` | `1.689s` | `1.967s` |
+| `CarnivoreFactory` | 14 | `14.111s` | `1.008s` | `1.287s` |
+| `ConchFactory` | 13 | `11.032s` | `0.849s` | `0.972s` |
+| `PineconeFactory` | 4 | `8.223s` | `2.056s` | `2.269s` |
+| `AugerFactory` | 7 | `6.648s` | `0.950s` | `1.234s` |
+| `ScallopFactory` | 3 | `6.044s` | `2.015s` | `2.440s` |
+| `MolluskFactory` | 10 | `4.835s` | `0.484s` | `0.819s` |
+
+Substage totals:
+
+| substage | total | share |
+| --- | ---: | ---: |
+| `stable_pose_duration` | `95.971s` | `54.1%` |
+| `obj2trimesh_duration` | `26.151s` | `14.7%` |
+| stable-pose pipeline | `122.121s` | `68.9%` |
+| `base_factory_spawn_duration` | `46.610s` | `26.3%` |
+| `apply_modifiers_duration` | `0.010s` | about `0.0%` |
+
+Created datablocks:
+
+| kind | total | avg | max |
+| --- | ---: | ---: | ---: |
+| materials | 123 | 1.230 | 5 |
+| textures | 0 | 0.000 | 0 |
+| node groups | 142 | 1.420 | 32 |
+| meshes | 673 | 6.730 | 36 |
+| objects | 214 | 2.140 | 11 |
+
+Material and node-group creation were still concentrated in creature paths:
+`CarnivoreFactory` created `70` materials and `82` node groups;
+`HerbivoreFactory` created `52` materials and `60` node groups. Those paths
+were not the duration leaders in this benchmark.
+
+Stable-pose mesh complexity:
+
+| base factory | avg vertices | avg faces | stable total | stable avg |
+| --- | ---: | ---: | ---: | ---: |
+| `ClamFactory` | 262,648 | 528,384 | `44.381s` | `4.035s` |
+| `MusselFactory` | 264,196 | 528,384 | `21.202s` | `1.767s` |
+| `CoralFactory` | 1,719,138 | 3,445,702 | `7.209s` | `1.442s` |
+| `ConchFactory` | 176,443 | 352,886 | `6.746s` | `0.519s` |
+
+Across `75` stable-pose rows:
+
+| metric | value |
+| --- | ---: |
+| average vertices | 298,988 |
+| average faces | 599,225 |
+| average stable-pose count | 21.8 |
+| max stable-pose count | 70 |
+| corr(duration, vertices) | 0.131 |
+| corr(duration, faces) | 0.131 |
+| corr(duration, stable-pose count) | 0.275 |
+
+Cache signal:
+
+| metric | value |
+| --- | ---: |
+| candidate keys | 75 |
+| unique candidate keys | 75 |
+| repeated candidate keys | 0 |
+
+Judgment: stable-pose pipeline is now the first measured internal bottleneck
+for this benchmark. Exact stable-pose cache is not attractive from this sample
+because the mesh-hash candidate key never repeated. If a speed change is
+attempted later, the more promising first path is a separate opt-in
+stable-pose simplification or mesh-complexity experiment, starting with
+`ClamFactory` and `MusselFactory`. `CoralFactory` should be investigated for
+`obj2trimesh` conversion cost on very large meshes. Any such change must stay
+opt-in and pass a visual-quality gate. Do not reduce clutter count or use
+concurrency as the next step.
+
 ## NatureShelfTrinkets Targeted Microbenchmark - 2026-06-22
 
 Profile type: isolated `NatureShelfTrinketsFactory.create_asset()` benchmark.

@@ -25,6 +25,7 @@ SUBSTAGE_FIELDS = [
     "join_children_duration",
     "apply_initial_transform_duration",
     "apply_modifiers_duration",
+    "obj2trimesh_duration",
     "stable_pose_duration",
     "apply_rotation_transform_duration",
     "scale_and_position_duration",
@@ -39,9 +40,22 @@ NAME_FIELDS = [
 BASE_FACTORY_STAGE_FIELDS = [
     DURATION_FIELD,
     "base_factory_spawn_duration",
+    "obj2trimesh_duration",
     "stable_pose_duration",
     "apply_modifiers_duration",
 ]
+
+MESH_FIELDS = [
+    "mesh_vertex_count",
+    "mesh_face_count",
+    "mesh_edge_count",
+]
+BBOX_EXTENT_FIELDS = [
+    "bbox_extent_x",
+    "bbox_extent_y",
+    "bbox_extent_z",
+]
+CACHE_KEY_FIELD = "stable_pose_cache_candidate_key"
 
 
 def as_float(row: dict, field: str) -> float:
@@ -72,6 +86,10 @@ def fmt_seconds(seconds: float) -> str:
     return f"{seconds:9.3f}s"
 
 
+def fmt_count(value: float) -> str:
+    return f"{value:9.1f}"
+
+
 def ratio(numerator: float, denominator: float) -> float:
     if denominator <= 0:
         return 0.0
@@ -92,6 +110,10 @@ def empty_base_stats() -> dict:
         stats[f"{field}_max"] = 0.0
     for field in COUNT_FIELDS:
         stats[field] = 0
+    for field in MESH_FIELDS:
+        stats[f"{field}_total"] = 0.0
+        stats[f"{field}_max"] = 0
+    stats["mesh_complexity_count"] = 0
     return stats
 
 
@@ -107,6 +129,12 @@ def build_base_factory_stats(rows: list[dict]) -> dict[str, dict]:
             stats[f"{field}_max"] = max(stats[f"{field}_max"], value)
         for field in COUNT_FIELDS:
             stats[field] += as_int(row, field)
+        if any(as_int(row, field) > 0 for field in MESH_FIELDS):
+            stats["mesh_complexity_count"] += 1
+            for field in MESH_FIELDS:
+                value = as_int(row, field)
+                stats[f"{field}_total"] += value
+                stats[f"{field}_max"] = max(stats[f"{field}_max"], value)
     return by_base
 
 
@@ -122,6 +150,7 @@ def print_base_factory_top(by_base: dict[str, dict], limit: int = 20) -> None:
     print(
         "base_factory_class,count,total,avg,max,"
         "spawn_total,spawn_avg,spawn_max,"
+        "obj2trimesh_total,obj2trimesh_avg,obj2trimesh_max,"
         "stable_total,stable_avg,stable_max,"
         "modifiers_total,modifiers_avg,modifiers_max,"
         "materials,textures,node_groups,meshes,objects"
@@ -140,6 +169,9 @@ def print_base_factory_top(by_base: dict[str, dict], limit: int = 20) -> None:
             f"{stats['base_factory_spawn_duration_total']:.6f},"
             f"{average(stats, 'base_factory_spawn_duration_total'):.6f},"
             f"{stats['base_factory_spawn_duration_max']:.6f},"
+            f"{stats['obj2trimesh_duration_total']:.6f},"
+            f"{average(stats, 'obj2trimesh_duration_total'):.6f},"
+            f"{stats['obj2trimesh_duration_max']:.6f},"
             f"{stats['stable_pose_duration_total']:.6f},"
             f"{average(stats, 'stable_pose_duration_total'):.6f},"
             f"{stats['stable_pose_duration_max']:.6f},"
@@ -151,6 +183,47 @@ def print_base_factory_top(by_base: dict[str, dict], limit: int = 20) -> None:
             f"{stats['created_node_group_count']},"
             f"{stats['created_mesh_count']},"
             f"{stats['created_object_count']}"
+        )
+    print()
+
+
+def mesh_average(stats: dict, field: str) -> float:
+    count = stats.get("mesh_complexity_count", 0)
+    if count == 0:
+        return 0.0
+    return stats[f"{field}_total"] / count
+
+
+def print_base_mesh_complexity(by_base: dict[str, dict], limit: int = 20) -> None:
+    print("Mesh complexity by base_factory_class top 20")
+    print("-" * 38)
+    print(
+        "base_factory_class,count,mesh_rows,avg_vertices,avg_faces,avg_edges,"
+        "max_vertices,max_faces,max_edges,stable_total,stable_avg"
+    )
+    for base_factory, stats in sorted(
+        by_base.items(),
+        key=lambda item: item[1]["stable_pose_duration_total"],
+        reverse=True,
+    )[:limit]:
+        mesh_rows = stats.get("mesh_complexity_count", 0)
+        stable_avg = (
+            stats["stable_pose_duration_total"] / stats["count"]
+            if stats["count"]
+            else 0.0
+        )
+        print(
+            f"{base_factory},"
+            f"{stats['count']},"
+            f"{mesh_rows},"
+            f"{mesh_average(stats, 'mesh_vertex_count'):.3f},"
+            f"{mesh_average(stats, 'mesh_face_count'):.3f},"
+            f"{mesh_average(stats, 'mesh_edge_count'):.3f},"
+            f"{stats['mesh_vertex_count_max']},"
+            f"{stats['mesh_face_count_max']},"
+            f"{stats['mesh_edge_count_max']},"
+            f"{stats['stable_pose_duration_total']:.6f},"
+            f"{stable_avg:.6f}"
         )
     print()
 
@@ -171,14 +244,163 @@ def print_count_top(by_base: dict[str, dict], field: str, title: str) -> None:
     print()
 
 
+def correlation(pairs: list[tuple[float, float]]) -> float:
+    if len(pairs) < 2:
+        return 0.0
+    xs = [pair[0] for pair in pairs]
+    ys = [pair[1] for pair in pairs]
+    mean_x = sum(xs) / len(xs)
+    mean_y = sum(ys) / len(ys)
+    numerator = sum((x - mean_x) * (y - mean_y) for x, y in pairs)
+    denom_x = sum((x - mean_x) ** 2 for x in xs) ** 0.5
+    denom_y = sum((y - mean_y) ** 2 for y in ys) ** 0.5
+    if denom_x == 0 or denom_y == 0:
+        return 0.0
+    return numerator / (denom_x * denom_y)
+
+
+def print_stable_pose_mesh_summary(successful: list[dict]) -> None:
+    stable_rows = [
+        row
+        for row in successful
+        if as_float(row, "stable_pose_duration") > 0
+        and as_int(row, "mesh_vertex_count") > 0
+        and as_int(row, "mesh_face_count") > 0
+    ]
+    stable_total = sum(as_float(row, "stable_pose_duration") for row in stable_rows)
+    obj2_total = sum(as_float(row, "obj2trimesh_duration") for row in stable_rows)
+    vertices = [as_int(row, "mesh_vertex_count") for row in stable_rows]
+    faces = [as_int(row, "mesh_face_count") for row in stable_rows]
+    edges = [as_int(row, "mesh_edge_count") for row in stable_rows]
+    pose_counts = [as_int(row, "stable_pose_count") for row in stable_rows]
+    stable_durations = [as_float(row, "stable_pose_duration") for row in stable_rows]
+
+    print("Stable pose duration vs mesh complexity")
+    print("-" * 38)
+    print(f"stable_pose_rows: {len(stable_rows)}")
+    print(f"stable_pose_total: {fmt_seconds(stable_total)}")
+    print(
+        f"stable_pose_avg:   "
+        f"{fmt_seconds(stable_total / len(stable_rows) if stable_rows else 0.0)}"
+    )
+    print(f"stable_pose_max:   {fmt_seconds(max(stable_durations, default=0.0))}")
+    print(f"obj2trimesh_total: {fmt_seconds(obj2_total)}")
+    print(
+        f"obj2trimesh_avg:   "
+        f"{fmt_seconds(obj2_total / len(stable_rows) if stable_rows else 0.0)}"
+    )
+    print(
+        f"avg_vertices: {fmt_count(sum(vertices) / len(vertices) if vertices else 0.0)} "
+        f"max_vertices={max(vertices, default=0):7d}"
+    )
+    print(
+        f"avg_faces:    {fmt_count(sum(faces) / len(faces) if faces else 0.0)} "
+        f"max_faces={max(faces, default=0):7d}"
+    )
+    print(
+        f"avg_edges:    {fmt_count(sum(edges) / len(edges) if edges else 0.0)} "
+        f"max_edges={max(edges, default=0):7d}"
+    )
+    print(
+        f"avg_stable_pose_count: "
+        f"{fmt_count(sum(pose_counts) / len(pose_counts) if pose_counts else 0.0)} "
+        f"max_stable_pose_count={max(pose_counts, default=0):7d}"
+    )
+    print(
+        "corr(stable_pose_duration, vertices): "
+        f"{correlation(list(zip(vertices, stable_durations))):.3f}"
+    )
+    print(
+        "corr(stable_pose_duration, faces):    "
+        f"{correlation(list(zip(faces, stable_durations))):.3f}"
+    )
+    print(
+        "corr(stable_pose_duration, pose_count): "
+        f"{correlation(list(zip(pose_counts, stable_durations))):.3f}"
+    )
+    if sum(faces) > 0:
+        print(
+            "stable_pose_seconds_per_1k_faces: "
+            f"{stable_total / (sum(faces) / 1000.0):.6f}"
+        )
+    print()
+
+
+def extent_text(row: dict) -> str:
+    values = [as_float(row, field) for field in BBOX_EXTENT_FIELDS]
+    return "x".join(f"{value:.4g}" for value in values)
+
+
+def print_slowest_stable_pose(successful: list[dict], limit: int = 20) -> None:
+    print("Slowest stable_pose top 20")
+    print("-" * 38)
+    print(
+        "stable_pose,obj2trimesh,base_factory,vertices,faces,edges,"
+        "bbox_extent,stable_pose_count,best_prob"
+    )
+    stable_rows = [
+        row for row in successful if as_float(row, "stable_pose_duration") > 0
+    ]
+    for row in sorted(
+        stable_rows,
+        key=lambda item: as_float(item, "stable_pose_duration"),
+        reverse=True,
+    )[:limit]:
+        print(
+            f"{as_float(row, 'stable_pose_duration'):.6f},"
+            f"{as_float(row, 'obj2trimesh_duration'):.6f},"
+            f"{row.get('base_factory_class', '')},"
+            f"{as_int(row, 'mesh_vertex_count')},"
+            f"{as_int(row, 'mesh_face_count')},"
+            f"{as_int(row, 'mesh_edge_count')},"
+            f"{extent_text(row)},"
+            f"{as_int(row, 'stable_pose_count')},"
+            f"{as_float(row, 'stable_pose_best_prob'):.6f}"
+        )
+    print()
+
+
+def cache_key_counts(successful: list[dict]) -> Counter:
+    return Counter(row.get(CACHE_KEY_FIELD, "") for row in successful if row.get(CACHE_KEY_FIELD, ""))
+
+
+def print_stable_pose_cache_key_summary(successful: list[dict]) -> Counter:
+    counts = cache_key_counts(successful)
+    repeated = [(key, count) for key, count in counts.items() if count > 1]
+    repeated.sort(key=lambda item: item[1], reverse=True)
+
+    print("Stable pose cache candidate key repeats")
+    print("-" * 38)
+    print(f"candidate_keys: {sum(counts.values())}")
+    print(f"unique_candidate_keys: {len(counts)}")
+    print(f"repeated_candidate_keys: {len(repeated)}")
+    if repeated:
+        for key, count in repeated[:20]:
+            print(f"count={count:5d} key={key}")
+        print(
+            "Repeated candidate keys exist; a later exact, opt-in stable-pose "
+            "cache may be worth prototyping for those keys."
+        )
+    else:
+        print(
+            "No repeated candidate keys were observed; an exact stable-pose "
+            "cache is likely to have limited benefit on this sample."
+        )
+    print()
+    return counts
+
+
 def print_cause_summary(successful: list[dict], substage_totals: dict[str, float]):
     total_duration = sum(as_float(row, DURATION_FIELD) for row in successful)
     base_spawn_total = substage_totals.get("base_factory_spawn_duration", 0.0)
+    obj2_total = substage_totals.get("obj2trimesh_duration", 0.0)
     stable_pose_total = substage_totals.get("stable_pose_duration", 0.0)
     modifiers_total = substage_totals.get("apply_modifiers_duration", 0.0)
 
     base_spawn_ratio = ratio(base_spawn_total, total_duration)
+    obj2_ratio = ratio(obj2_total, total_duration)
     stable_pose_ratio = ratio(stable_pose_total, total_duration)
+    stable_pose_pipeline_ratio = ratio(obj2_total + stable_pose_total, total_duration)
     modifiers_ratio = ratio(modifiers_total, total_duration)
 
     print("Cause summary")
@@ -189,9 +411,24 @@ def print_cause_summary(successful: list[dict], substage_totals: dict[str, float
         f"({fmt_seconds(base_spawn_total)} / {fmt_seconds(total_duration)})"
     )
     print(
+        "obj2trimesh ratio: "
+        f"{obj2_ratio:.1%} "
+        f"({fmt_seconds(obj2_total)} / {fmt_seconds(total_duration)})"
+    )
+    print(
         "stable_pose ratio: "
         f"{stable_pose_ratio:.1%} "
         f"({fmt_seconds(stable_pose_total)} / {fmt_seconds(total_duration)})"
+    )
+    print(
+        "stable_pose pipeline ratio: "
+        f"{stable_pose_pipeline_ratio:.1%} "
+        f"({fmt_seconds(obj2_total + stable_pose_total)} / "
+        f"{fmt_seconds(total_duration)})"
+    )
+    print(
+        "stable_pose_pipeline_is_primary: "
+        f"{'yes' if stable_pose_pipeline_ratio >= 0.5 else 'no'}"
     )
     print(
         "apply_modifiers ratio: "
@@ -273,6 +510,7 @@ def summarize_rows(rows: list[dict]) -> None:
 
     by_base = build_base_factory_stats(successful)
     print_base_factory_top(by_base)
+    print_base_mesh_complexity(by_base)
     print_count_top(
         by_base,
         "created_material_count",
@@ -289,6 +527,9 @@ def summarize_rows(rows: list[dict]) -> None:
         "Created node_groups by base_factory_class top 20",
     )
     print_cause_summary(successful, substage_totals)
+    print_stable_pose_mesh_summary(successful)
+    cache_counts = print_stable_pose_cache_key_summary(successful)
+    print_slowest_stable_pose(successful)
 
     print("Slowest individual sample top 20")
     print("-" * 38)
@@ -304,6 +545,8 @@ def summarize_rows(rows: list[dict]) -> None:
             f"materials={as_int(row, 'created_material_count'):4d} "
             f"textures={as_int(row, 'created_texture_count'):4d} "
             f"node_groups={as_int(row, 'created_node_group_count'):4d} "
+            f"vertices={as_int(row, 'mesh_vertex_count'):7d} "
+            f"faces={as_int(row, 'mesh_face_count'):7d} "
             f"meshes={as_int(row, 'created_mesh_count'):4d} "
             f"objects={as_int(row, 'created_object_count'):4d} "
             f"dominant={dominant_stage}"
@@ -347,6 +590,7 @@ def summarize_rows(rows: list[dict]) -> None:
     }
     dominant_substage = max(substage_totals, key=substage_totals.get)
     top_base = max(by_base, key=lambda name: by_base[name][f"{DURATION_FIELD}_total"])
+    repeated_cache_keys = sum(1 for count in cache_counts.values() if count > 1)
 
     print(
         f"Top base factory by duration is {top_base}; first inspect its "
@@ -371,6 +615,22 @@ def summarize_rows(rows: list[dict]) -> None:
             "The CSV does not show a strong repeated-name signal; prioritize "
             "base-factory spawn, mesh realization, or stable-pose costs first."
         )
+
+    stable_pose_pipeline_total = substage_totals.get(
+        "stable_pose_duration", 0.0
+    ) + substage_totals.get("obj2trimesh_duration", 0.0)
+    if ratio(stable_pose_pipeline_total, total_duration) >= 0.5:
+        if repeated_cache_keys:
+            print(
+                "Stable-pose work is primary and repeated candidate keys exist; "
+                "consider an exact opt-in stable-pose cache experiment next."
+            )
+        else:
+            print(
+                "Stable-pose work is primary but candidate keys did not repeat; "
+                "prioritize mesh complexity or opt-in stable-pose simplification "
+                "before an exact cache."
+            )
 
     if len(successful) < 10:
         print(

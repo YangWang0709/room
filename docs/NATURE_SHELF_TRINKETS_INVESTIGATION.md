@@ -299,6 +299,95 @@ measured cost, especially for coral, clam, mussel, and conch-like assets.
 Creature paths create most materials and node groups, but their total duration
 is lower than the stable-pose-heavy shell/coral paths in this isolated sample.
 
+## Stable Pose Complexity Microbenchmark
+
+The timing now also records stable-pose input mesh complexity and pose details:
+
+```text
+mesh_vertex_count
+mesh_face_count
+mesh_edge_count
+bbox_min_x/y/z
+bbox_max_x/y/z
+bbox_extent_x/y/z
+obj2trimesh_duration
+stable_pose_count
+stable_pose_best_prob
+stable_pose_cache_candidate_key
+```
+
+The cache candidate key is diagnostic only. It includes the wrapped base
+factory, mesh complexity, bbox extent, and a hash of the stable-pose input
+mesh. No cache is used and no stable-pose result is changed.
+
+Run used:
+
+```bash
+INFINIGEN_PROFILE_NATURE_SHELF_TRINKETS=1 \
+python scripts/bench_nature_shelf_trinkets_factory.py \
+  --samples 100 \
+  --seed 0 \
+  --output_folder outputs/bench_nature_shelf_trinkets_100
+```
+
+CSV:
+
+```text
+outputs/bench_nature_shelf_trinkets_100/infinigen_nature_shelf_trinkets_timing.csv
+```
+
+Result: `100` successful samples, `0` failures, total measured
+`create_asset` time `177.305s`, average `1.773s`, max `7.040s`.
+
+Substage split:
+
+| substage | total | share |
+| --- | ---: | ---: |
+| `stable_pose_duration` | `95.971s` | `54.1%` |
+| `obj2trimesh_duration` | `26.151s` | `14.7%` |
+| stable-pose pipeline | `122.121s` | `68.9%` |
+| `base_factory_spawn_duration` | `46.610s` | `26.3%` |
+
+Top base factories:
+
+| base factory | count | total | avg | dominant signal |
+| --- | ---: | ---: | ---: | --- |
+| `ClamFactory` | 11 | `49.970s` | `4.543s` | stable pose |
+| `MusselFactory` | 12 | `27.341s` | `2.278s` | stable pose |
+| `CoralFactory` | 5 | `25.904s` | `5.181s` | `obj2trimesh` plus stable pose |
+| `HerbivoreFactory` | 11 | `18.575s` | `1.689s` | base spawn |
+| `CarnivoreFactory` | 14 | `14.111s` | `1.008s` | base spawn |
+
+Mesh complexity and stable-pose signal:
+
+| base factory | avg vertices | avg faces | stable total | stable avg |
+| --- | ---: | ---: | ---: | ---: |
+| `ClamFactory` | 262,648 | 528,384 | `44.381s` | `4.035s` |
+| `MusselFactory` | 264,196 | 528,384 | `21.202s` | `1.767s` |
+| `CoralFactory` | 1,719,138 | 3,445,702 | `7.209s` | `1.442s` |
+| `ConchFactory` | 176,443 | 352,886 | `6.746s` | `0.519s` |
+
+Across the `75` non-creature stable-pose rows, `stable_pose_duration` and
+face / vertex count had low correlation (`0.131`). `stable_pose_duration` and
+`stable_pose_count` had a modest correlation (`0.275`). This suggests that
+face count alone does not explain the expensive rows. `ClamFactory` produced
+the slowest `compute_stable_poses()` rows, while `CoralFactory` produced the
+largest meshes and was often dominated by `obj2trimesh`.
+
+Cache signal:
+
+```text
+candidate_keys: 75
+unique_candidate_keys: 75
+repeated_candidate_keys: 0
+```
+
+No repeated exact candidate key was observed in this sample, so an exact
+stable-pose cache is likely to have limited benefit unless a later full-scene
+populate sample shows repeated meshes. Stable-pose simplification or a
+mesh-complexity guard is a stronger next investigation, but only as a separate
+opt-in experiment with a visual-quality gate.
+
 ## Current Judgment
 
 The recent complete 10-room proxy log points to populate clutter as the new
@@ -314,9 +403,14 @@ largest repeated datablock patterns and whether runtime is dominated by
 datablock creation, mesh realization, or stable-pose computation.
 
 Next investigation should start with the stable-pose-heavy base factories
-(`CoralFactory`, then `ClamFactory` / `MusselFactory`) before broad material
-or node-group reuse. If a later larger sample shows
+before broad material or node-group reuse. If a later larger sample shows
 `base_factory.spawn_asset` dominating instead, inspect the concrete wrapped
 base factory first. If material / texture / node-group creation dominates,
 consider only a narrow opt-in material or template reuse experiment with a
 separate visual-quality gate.
+
+After the 100-sample complexity benchmark, the next most useful source
+investigation is more specific: inspect `ClamFactory` stable-pose input and
+`trimesh.poses.compute_stable_poses()` behavior first, then `MusselFactory`,
+then `CoralFactory` `obj2trimesh` conversion for very large meshes. Material,
+texture, and node-group creation remain secondary for this benchmark.

@@ -31,22 +31,34 @@ rerunning a full 10-room scene:
 ```bash
 INFINIGEN_PROFILE_NATURE_SHELF_TRINKETS=1 \
 python scripts/bench_nature_shelf_trinkets_factory.py \
-  --samples 30 \
+  --samples 100 \
   --seed 0 \
-  --output_folder outputs/bench_nature_shelf_trinkets
+  --output_folder outputs/bench_nature_shelf_trinkets_100
 python scripts/analyze_nature_shelf_trinkets.py \
-  outputs/bench_nature_shelf_trinkets/infinigen_nature_shelf_trinkets_timing.csv
+  outputs/bench_nature_shelf_trinkets_100/infinigen_nature_shelf_trinkets_timing.csv
 ```
 
-The first 30-sample targeted run completed with `30` successful samples and
+The latest 100-sample targeted run completed with `100` successful samples and
 `0` failures. It is only a microbenchmark for
 `NatureShelfTrinketsFactory.create_asset()` internals, not a complete-scene
 walltime result. In that sample, `stable_pose_duration` accounted for
-`32.143s` / `67.6%` of measured `create_asset` time, while
-`base_factory_spawn_duration` accounted for `15.275s` / `32.1%`.
-`CoralFactory`, `ClamFactory`, and `MusselFactory` were the most relevant
-stable-pose-heavy paths. Creature factories created most materials and node
-groups, but were not the duration leaders in this sample.
+`95.971s` / `54.1%` of measured `create_asset` time, and
+`obj2trimesh_duration` accounted for `26.151s` / `14.7%`. Together the
+stable-pose pipeline accounted for `122.121s` / `68.9%`, while
+`base_factory_spawn_duration` accounted for `46.610s` / `26.3%`.
+
+Top duration factories were `ClamFactory` (`49.970s`), `MusselFactory`
+(`27.341s`), and `CoralFactory` (`25.904s`). `ClamFactory` and
+`MusselFactory` were dominated by `compute_stable_poses()` on about `528k`
+faces per sample. `CoralFactory` used much larger meshes, about `3.45m`
+average faces, and was often dominated by `obj2trimesh` conversion rather than
+`compute_stable_poses()` itself.
+
+The diagnostic `stable_pose_cache_candidate_key` had `75` keys, `75` unique
+keys, and `0` repeats. Exact stable-pose cache likely has limited benefit for
+this sample. Material / texture / node-group creation is not the first
+duration target in this benchmark, even though creature factories still create
+most materials and node groups.
 
 Recommended next order:
 
@@ -56,20 +68,26 @@ Recommended next order:
 2. Use the targeted benchmark for more samples or specific seeds when the goal
    is internal cost attribution. Keep interpreting it as a microbenchmark, not
    complete-scene walltime.
-3. First inspect stable-pose-heavy paths, starting with `CoralFactory`, then
-   `ClamFactory` / `MusselFactory`. Look at mesh density and the geometry fed
-   into `trimesh.poses.compute_stable_poses()`.
-4. If a later larger sample shows `base_factory.spawn_asset` dominating,
+3. First inspect stable-pose-heavy paths, starting with `ClamFactory`, then
+   `MusselFactory`. Look at the geometry fed into
+   `trimesh.poses.compute_stable_poses()` and whether a separate opt-in
+   simplification path can preserve visual quality.
+4. Inspect `CoralFactory` separately for `obj2trimesh` conversion cost on very
+   large meshes before changing stable-pose logic.
+5. Do not start with exact stable-pose cache unless a later full-scene or
+   larger targeted sample shows repeated exact candidate keys. Any cache must
+   be opt-in.
+6. If a later larger sample shows `base_factory.spawn_asset` dominating,
    inspect the concrete wrapped base factory before broad wrapper changes.
-5. If a later CSV shows repeated material, texture, or node-group names with high
+7. If a later CSV shows repeated material, texture, or node-group names with high
    creation counts, design a separate opt-in reuse experiment for the narrowest
    repeated template only.
-6. Keep `BookStackFactory` and `LargePlantContainerFactory` as second-priority
+8. Keep `BookStackFactory` and `LargePlantContainerFactory` as second-priority
    populate targets after the NatureShelfTrinkets evidence is clearer.
-7. Do not run concurrent benchmarks in this phase.
-8. Do not reduce clutter count or scene complexity unless a later quality gate
+9. Do not run concurrent benchmarks in this phase.
+10. Do not reduce clutter count or scene complexity unless a later quality gate
    explicitly allows it.
-9. Do not change solver behavior, proposal order, accept/reject behavior, or
+11. Do not change solver behavior, proposal order, accept/reject behavior, or
    random number flow.
 
 ## Latest LargeShelf Child Reuse Short Sample

@@ -45,6 +45,23 @@ def sample_timeout(seconds: float):
             signal.setitimer(signal.ITIMER_REAL, old_timer[0], old_timer[1])
 
 
+def parse_bool(value: str) -> bool:
+    value = value.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise argparse.ArgumentTypeError(
+        "expected one of true/false, yes/no, on/off, or 1/0"
+    )
+
+
+def parse_base_factory_filter(value: str | None) -> set[str]:
+    if not value:
+        return set()
+    return {item.strip() for item in value.split(",") if item.strip()}
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -52,12 +69,40 @@ def parse_args() -> argparse.Namespace:
             "per-create_asset timing rows."
         )
     )
-    parser.add_argument("--samples", type=int, default=30)
+    parser.add_argument("--samples", type=int, default=100)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
         "--output_folder",
         type=Path,
         default=Path("outputs/bench_nature_shelf_trinkets"),
+    )
+    parser.add_argument(
+        "--base-factory-filter",
+        default="",
+        help=(
+            "Optional comma-separated wrapped base factory class names, for "
+            "example CoralFactory,ClamFactory,MusselFactory. The benchmark "
+            "uses seed rejection and does not override NatureShelfTrinkets "
+            "base-factory selection."
+        ),
+    )
+    parser.add_argument(
+        "--keep-blend",
+        type=parse_bool,
+        default=False,
+        help=(
+            "Save a .blend with the last successful sample left in the scene. "
+            "Defaults to false."
+        ),
+    )
+    parser.add_argument(
+        "--csv-path",
+        type=Path,
+        default=None,
+        help=(
+            "Optional explicit timing CSV path. Defaults to "
+            "<output_folder>/infinigen_nature_shelf_trinkets_timing.csv."
+        ),
     )
     parser.add_argument(
         "--sample_timeout_seconds",
@@ -100,7 +145,8 @@ def benchmark(args: argparse.Namespace) -> int:
 
     output_folder = args.output_folder
     output_folder.mkdir(parents=True, exist_ok=True)
-    csv_path = output_folder / CSV_NAME
+    csv_path = args.csv_path or (output_folder / CSV_NAME)
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
     if csv_path.exists():
         csv_path.unlink()
 
@@ -111,23 +157,61 @@ def benchmark(args: argparse.Namespace) -> int:
 
     rng = np.random.default_rng(args.seed)
     gc_targets = [getattr(bpy.data, name) for name in GC_TARGET_NAMES]
+    base_factory_filter = parse_base_factory_filter(args.base_factory_filter)
+    if base_factory_filter:
+        available_base_factories = {
+            factory_class.__name__
+            for factory_class in NatureShelfTrinketsFactory.factories
+        }
+        unknown_base_factories = base_factory_filter - available_base_factories
+        if unknown_base_factories:
+            raise ValueError(
+                "Unknown --base-factory-filter entries: "
+                f"{', '.join(sorted(unknown_base_factories))}. "
+                f"Available: {', '.join(sorted(available_base_factories))}"
+            )
+
     failures = 0
+    skipped = 0
     total_start = time.perf_counter()
+    last_kept_asset = None
+    last_kept_placeholder = None
 
     print("NatureShelfTrinketsFactory targeted benchmark")
     print(f"samples: {args.samples}")
     print(f"seed: {args.seed}")
     print(f"output_folder: {output_folder}")
     print(f"timing_csv: {csv_path}")
+    print(
+        "base_factory_filter: "
+        f"{','.join(sorted(base_factory_filter)) if base_factory_filter else '(none)'}"
+    )
+    print(f"keep_blend: {args.keep_blend}")
     print(f"sample_timeout_seconds: {args.sample_timeout_seconds}")
 
-    for sample_index in range(args.samples):
+    sample_index = 0
+    attempts = 0
+    max_attempts = args.samples * 1000
+    while sample_index < args.samples:
+        attempts += 1
+        if attempts > max_attempts:
+            raise RuntimeError(
+                "Exceeded maximum seed attempts while applying "
+                "--base-factory-filter"
+            )
+
         factory_seed = int(rng.integers(0, 1_000_000_000))
         inst_seed = int(rng.integers(0, 10_000_000))
         factory = NatureShelfTrinketsFactory(factory_seed)
+        base_factory_class = factory.base_factory.__class__.__name__
+        if base_factory_filter and base_factory_class not in base_factory_filter:
+            skipped += 1
+            continue
+
         placeholder = None
         asset = None
         sample_start = time.perf_counter()
+        is_last_sample = sample_index == args.samples - 1
 
         try:
             with butil.GarbageCollect(
@@ -140,7 +224,7 @@ def benchmark(args: argparse.Namespace) -> int:
                 print(
                     f"sample {sample_index + 1:03d}/{args.samples:03d} "
                     f"factory_seed={factory_seed} inst_seed={inst_seed} "
-                    f"base_factory={factory.base_factory.__class__.__name__} "
+                    f"base_factory={base_factory_class} "
                     "starting",
                     flush=True,
                 )
@@ -152,8 +236,12 @@ def benchmark(args: argparse.Namespace) -> int:
                     FixedSeed(int_hash((factory.factory_seed, inst_seed))),
                 ):
                     asset = factory.create_asset(inst_seed, placeholder=placeholder)
-                delete_object_tree(asset, bpy, butil)
-                delete_object_tree(placeholder, bpy, butil)
+                if args.keep_blend and is_last_sample:
+                    last_kept_asset = asset
+                    last_kept_placeholder = placeholder
+                else:
+                    delete_object_tree(asset, bpy, butil)
+                    delete_object_tree(placeholder, bpy, butil)
         except Exception as exc:
             failures += 1
             delete_object_tree(asset, bpy, butil)
@@ -167,13 +255,24 @@ def benchmark(args: argparse.Namespace) -> int:
             print(
                 f"sample {sample_index + 1:03d}/{args.samples:03d} "
                 f"factory_seed={factory_seed} inst_seed={inst_seed} "
-                f"base_factory={factory.base_factory.__class__.__name__} "
+                f"base_factory={base_factory_class} "
                 f"duration={time.perf_counter() - sample_start:.3f}s"
             )
+        finally:
+            sample_index += 1
+
+    if args.keep_blend and last_kept_asset is not None:
+        blend_path = output_folder / "nature_shelf_trinkets_bench.blend"
+        bpy.ops.wm.save_as_mainfile(filepath=str(blend_path))
+        print(f"blend_path: {blend_path}")
+    elif last_kept_asset is not None or last_kept_placeholder is not None:
+        delete_object_tree(last_kept_asset, bpy, butil)
+        delete_object_tree(last_kept_placeholder, bpy, butil)
 
     butil.garbage_collect(gc_targets, keep_in_use=True)
     print(f"total_duration: {time.perf_counter() - total_start:.3f}s")
     print(f"failures: {failures}")
+    print(f"skipped_by_filter: {skipped}")
     print(f"timing_csv: {csv_path}")
     return 0
 
