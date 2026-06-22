@@ -9,6 +9,7 @@
 import importlib
 import logging
 import os
+import types
 from collections import defaultdict
 
 import bmesh
@@ -112,6 +113,66 @@ def import_material(factory_name):
                 raise Exception(f"{factory_name} not Found.")
 
 
+def _snake_to_camel(name):
+    return "".join(part[:1].upper() + part[1:] for part in name.split("_") if part)
+
+
+def _public_callable_names(module):
+    return sorted(
+        name
+        for name, value in vars(module).items()
+        if not name.startswith("_") and callable(value)
+    )
+
+
+def resolve_material_generator(obj, context="room_material"):
+    if callable(obj):
+        return obj
+
+    if isinstance(obj, types.ModuleType):
+        module_name = obj.__name__
+        module_leaf = module_name.rsplit(".", 1)[-1]
+        for candidate_name in dict.fromkeys(
+            [module_leaf, _snake_to_camel(module_leaf)]
+        ):
+            candidate = getattr(obj, candidate_name, None)
+            if callable(candidate):
+                return candidate
+
+        local_generator_candidates = [
+            (name, value)
+            for name, value in vars(obj).items()
+            if not name.startswith("_")
+            and name[:1].isupper()
+            and callable(value)
+            and getattr(value, "__module__", None) == module_name
+        ]
+        if len(local_generator_candidates) == 1:
+            return local_generator_candidates[0][1]
+
+        local_callable_candidates = [
+            (name, value)
+            for name, value in vars(obj).items()
+            if not name.startswith("_")
+            and callable(value)
+            and getattr(value, "__module__", None) == module_name
+        ]
+        if len(local_callable_candidates) == 1:
+            return local_callable_candidates[0][1]
+
+        available = _public_callable_names(obj)
+        raise TypeError(
+            "Could not resolve material generator module "
+            f"{module_name!r} in {context!r}; "
+            f"available public callable names: {available}"
+        )
+
+    raise TypeError(
+        "Expected callable material generator or module in "
+        f"{context!r}; got {type(obj).__name__}: {obj!r}"
+    )
+
+
 room_ceiling_fns = defaultdict(
     lambda: material_assignments.ceiling,
     {
@@ -208,7 +269,14 @@ pillar_rooms = {
 
 
 def room_walls(walls: list[bpy.types.Object], constants: RoomConstants, n_walls=3):
-    wall_fns = list(weighted_sample(room_wall_fns[room_type(r.name)])() for r in walls)
+    wall_fns = []
+    for r in walls:
+        room_type_ = room_type(r.name)
+        gen_class = weighted_sample(room_wall_fns[room_type_])
+        gen_class = resolve_material_generator(
+            gen_class, context=f"room_walls:{room_type_}"
+        )
+        wall_fns.append(gen_class())
     logger.debug(
         f"{room_walls.__name__} adding materials to {len(walls)=}, using {len(wall_fns)=}"
     )
@@ -305,9 +373,14 @@ def room_walls(walls: list[bpy.types.Object], constants: RoomConstants, n_walls=
 def room_ceilings(ceilings):
     logger.debug(f"{room_ceilings.__name__} adding materials to {len(ceilings)=}")
 
-    ceiling_fns = list(
-        weighted_sample(room_ceiling_fns[room_type(r.name)])() for r in ceilings
-    )
+    ceiling_fns = []
+    for r in ceilings:
+        room_type_ = room_type(r.name)
+        gen_class = weighted_sample(room_ceiling_fns[room_type_])
+        gen_class = resolve_material_generator(
+            gen_class, context=f"room_ceilings:{room_type_}"
+        )
+        ceiling_fns.append(gen_class())
     for ceiling_fn in set(ceiling_fns):
         rooms_ = [o for o, f in zip(ceilings, ceiling_fns) if f == ceiling_fn]
         if ceiling_fn.__class__.__name__ == "Plaster":
@@ -321,7 +394,11 @@ def room_ceilings(ceilings):
 def room_floors(floors, n_floors=3):
     floor_material_gens = []
     for r in floors:
-        gen_class = weighted_sample(room_floor_fns[room_type(r.name)])
+        room_type_ = room_type(r.name)
+        gen_class = weighted_sample(room_floor_fns[room_type_])
+        gen_class = resolve_material_generator(
+            gen_class, context=f"room_floors:{room_type_}"
+        )
         floor_material_gens.append(gen_class())
 
     logger.debug(
