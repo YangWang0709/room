@@ -50,6 +50,8 @@ PLANT_ASSETS_TIMING_FIELDNAMES = [
     "plant_factory_class",
     "concrete_plant_factory_class",
     "pot_factory_class",
+    "geometry_template_candidate_key",
+    "geometry_reuse_risk_level",
     "create_asset_total_duration",
     "container_spawn_duration",
     "geometry_duration",
@@ -59,6 +61,12 @@ PLANT_ASSETS_TIMING_FIELDNAMES = [
     "dirt_geometry_duration",
     "dirt_material_duration",
     "plant_spawn_duration",
+    "leaf_count",
+    "stem_count",
+    "branch_count",
+    "leaf_mesh_count",
+    "stem_mesh_count",
+    "branch_mesh_count",
     "leaf_generation_duration",
     "stem_generation_duration",
     "branch_generation_duration",
@@ -137,6 +145,43 @@ def _concrete_plant_factory_class(factory):
     return concrete_factory.__class__.__name__
 
 
+def _geometry_template_candidate_key(factory):
+    concrete_factory = getattr(factory.plant_factory, "factory", None)
+    if concrete_factory is None:
+        return factory.plant_factory.__class__.__name__
+
+    method_names = []
+    for method_name in ("build_leaf", "build_stem", "build_branch", "build_husk"):
+        if hasattr(concrete_factory, method_name):
+            method_names.append(method_name)
+    nested_names = []
+    for attr_name in ("branch_factory", "branches_factory", "ear_factory"):
+        if hasattr(concrete_factory, attr_name):
+            nested_names.append(attr_name)
+    return (
+        f"{concrete_factory.__class__.__name__}"
+        f"|is_grass={getattr(concrete_factory, 'is_grass', False)}"
+        f"|methods={','.join(method_names)}"
+        f"|nested={','.join(nested_names)}"
+    )
+
+
+def _geometry_reuse_risk_level(factory):
+    concrete_class = _concrete_plant_factory_class(factory)
+    if concrete_class in {"WheatMonocotFactory", "GrassesMonocotFactory"}:
+        return "medium"
+    if concrete_class in {"VeratrumMonocotFactory", "AgaveMonocotFactory"}:
+        return "high"
+    if concrete_class in {
+        "BananaMonocotFactory",
+        "TaroMonocotFactory",
+        "MaizeMonocotFactory",
+        "TussockMonocotFactory",
+    }:
+        return "medium"
+    return "high"
+
+
 def _empty_plant_assets_timing_row(factory, i, params, before_sets):
     row = {
         "factory_class": factory.__class__.__name__,
@@ -146,6 +191,8 @@ def _empty_plant_assets_timing_row(factory, i, params, before_sets):
         "plant_factory_class": factory.plant_factory.__class__.__name__,
         "concrete_plant_factory_class": _concrete_plant_factory_class(factory),
         "pot_factory_class": factory.base_factory.__class__.__name__,
+        "geometry_template_candidate_key": _geometry_template_candidate_key(factory),
+        "geometry_reuse_risk_level": _geometry_reuse_risk_level(factory),
         "create_asset_total_duration": 0.0,
         "container_spawn_duration": 0.0,
         "geometry_duration": 0.0,
@@ -155,6 +202,12 @@ def _empty_plant_assets_timing_row(factory, i, params, before_sets):
         "dirt_geometry_duration": 0.0,
         "dirt_material_duration": 0.0,
         "plant_spawn_duration": 0.0,
+        "leaf_count": 0,
+        "stem_count": 0,
+        "branch_count": 0,
+        "leaf_mesh_count": 0,
+        "stem_mesh_count": 0,
+        "branch_mesh_count": 0,
         "leaf_generation_duration": 0.0,
         "stem_generation_duration": 0.0,
         "branch_generation_duration": 0.0,
@@ -183,7 +236,14 @@ def _finish_plant_assets_timing_row(row: dict, before_sets):
     _write_plant_assets_timing_row(row)
 
 
-def _wrap_plant_stage_method(row: dict, target, method_name: str, duration_field: str):
+def _wrap_plant_stage_method(
+    row: dict,
+    target,
+    method_name: str,
+    duration_field: str,
+    count_field: str,
+    mesh_count_field: str,
+):
     if target is None or not hasattr(target, method_name):
         return None
 
@@ -193,9 +253,15 @@ def _wrap_plant_stage_method(row: dict, target, method_name: str, duration_field
 
     def timed_method(*args, **kwargs):
         stage_start = time.perf_counter()
+        mesh_names_before = set(bpy.data.meshes.keys())
         try:
             return original(*args, **kwargs)
         finally:
+            mesh_names_after = set(bpy.data.meshes.keys())
+            row[count_field] = row.get(count_field, 0) + 1
+            row[mesh_count_field] = row.get(mesh_count_field, 0) + len(
+                mesh_names_after - mesh_names_before
+            )
             _record_plant_duration(row, duration_field, stage_start)
 
     setattr(target, method_name, timed_method)
@@ -208,21 +274,36 @@ def _install_plant_stage_timing(row: dict, plant_factory):
 
     for method_name in ("build_leaf",):
         wrapped_item = _wrap_plant_stage_method(
-            row, concrete_factory, method_name, "leaf_generation_duration"
+            row,
+            concrete_factory,
+            method_name,
+            "leaf_generation_duration",
+            "leaf_count",
+            "leaf_mesh_count",
         )
         if wrapped_item is not None:
             wrapped.append(wrapped_item)
 
     for method_name in ("build_stem",):
         wrapped_item = _wrap_plant_stage_method(
-            row, concrete_factory, method_name, "stem_generation_duration"
+            row,
+            concrete_factory,
+            method_name,
+            "stem_generation_duration",
+            "stem_count",
+            "stem_mesh_count",
         )
         if wrapped_item is not None:
             wrapped.append(wrapped_item)
 
     for method_name in ("build_branch", "build_husk"):
         wrapped_item = _wrap_plant_stage_method(
-            row, concrete_factory, method_name, "branch_generation_duration"
+            row,
+            concrete_factory,
+            method_name,
+            "branch_generation_duration",
+            "branch_count",
+            "branch_mesh_count",
         )
         if wrapped_item is not None:
             wrapped.append(wrapped_item)
@@ -230,7 +311,12 @@ def _install_plant_stage_timing(row: dict, plant_factory):
     for attr_name in ("branch_factory", "branches_factory", "ear_factory"):
         nested_factory = getattr(concrete_factory, attr_name, None)
         wrapped_item = _wrap_plant_stage_method(
-            row, nested_factory, "create_asset", "branch_generation_duration"
+            row,
+            nested_factory,
+            "create_asset",
+            "branch_generation_duration",
+            "branch_count",
+            "branch_mesh_count",
         )
         if wrapped_item is not None:
             wrapped.append(wrapped_item)

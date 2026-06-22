@@ -39,6 +39,74 @@ The three active opt-in speed points are:
 All remain disabled by default in the original Infinigen path and must be
 enabled by script or environment variables.
 
+## Concrete Monocot Geometry Reuse Feasibility - 2026-06-22
+
+Profile type: targeted `LargePlantContainerFactory` microbenchmark with
+enhanced `INFINIGEN_PROFILE_PLANT_ASSETS=1` instrumentation. This round did
+not implement Plant geometry reuse and did not change the stable Isaac static
+script.
+
+CSV:
+
+```text
+outputs/bench_plant_assets_concrete_deep/infinigen_plant_assets_timing.csv
+```
+
+Result:
+
+| metric | value |
+| --- | ---: |
+| samples | 50 |
+| failures | 0 |
+| CSV rows | 50 |
+| benchmark wall time | `217.514s` |
+| total measured duration | `214.538s` |
+| avg duration | `4.291s` |
+| max duration | `13.230s` |
+| created meshes | 1,795 |
+| created materials | 50 |
+| created textures | 0 |
+| created node groups | 291 |
+| created objects | 1,595 |
+
+Substage attribution still points to geometry, not materials:
+
+| substage | total | share |
+| --- | ---: | ---: |
+| `geometry_duration` | `192.574s` | `89.8%` |
+| `plant_spawn_duration` | `170.618s` | `79.5%` |
+| `leaf_generation_duration` | `87.873s` | `41.0%` |
+| `branch_generation_duration` | `31.567s` | `14.7%` |
+| `stem_generation_duration` | `28.268s` | `13.2%` |
+| `material_generation_duration` | `0.991s` | `0.5%` |
+
+Concrete duration top:
+
+| factory | count | total | avg | max |
+| --- | ---: | ---: | ---: | ---: |
+| `WheatMonocotFactory` | 7 | `50.353s` | `7.193s` | `13.230s` |
+| `VeratrumMonocotFactory` | 8 | `39.694s` | `4.962s` | `6.107s` |
+| `GrassesMonocotFactory` | 8 | `37.763s` | `4.720s` | `7.701s` |
+| `AgaveMonocotFactory` | 4 | `22.650s` | `5.663s` | `6.486s` |
+| `MaizeMonocotFactory` | 7 | `21.643s` | `3.092s` | `5.204s` |
+
+Leaf / stem / branch totals by focused factory:
+
+| factory | leaf | stem | branch | total |
+| --- | ---: | ---: | ---: | ---: |
+| `WheatMonocotFactory` | `12.834s` | `10.326s` | `14.420s` | `37.580s` |
+| `GrassesMonocotFactory` | `14.953s` | `12.413s` | `0.000s` | `27.365s` |
+| `VeratrumMonocotFactory` | `7.650s` | `4.029s` | `16.270s` | `27.949s` |
+| `AgaveMonocotFactory` | `13.260s` | `0.572s` | `0.000s` | `13.832s` |
+
+`geometry_template_candidate_key` repeated for each concrete factory family,
+but the key is intentionally coarse. It is a pointer for investigation, not a
+safe cache key. The first future opt-in geometry reuse experiment should
+therefore start narrowly with `WheatMonocotFactory`, with
+`GrassesMonocotFactory` as the next candidate. `VeratrumMonocotFactory` and
+`AgaveMonocotFactory` should not be first-pass reuse targets because their
+branching and leaf deformation are higher visual-risk sources of variation.
+
 ## Plant Asset Deep Timing - 2026-06-22
 
 Profile type: targeted `LargePlantContainerFactory` microbenchmark with

@@ -54,17 +54,17 @@ Latest targeted run:
 ```bash
 INFINIGEN_PROFILE_PLANT_ASSETS=1 \
 python scripts/bench_plant_assets_factory.py \
-  --samples 30 \
+  --samples 50 \
   --seed 0 \
-  --output_folder outputs/bench_plant_assets_deep
+  --output_folder outputs/bench_plant_assets_concrete_deep
 python scripts/analyze_plant_assets_timing.py \
-  outputs/bench_plant_assets_deep/infinigen_plant_assets_timing.csv
+  outputs/bench_plant_assets_concrete_deep/infinigen_plant_assets_timing.csv
 ```
 
-Summary: `30/30` samples succeeded, total measured duration was `127.811s`,
-average `4.260s`, max `10.106s`. `plant_spawn_duration` was `99.939s`
-(`78.2%`). The measured concrete monocot leaf / stem / branch substages were
-the dominant internal cost, while material generation was only `0.657s`.
+Summary: `50/50` samples succeeded, total measured duration was `214.538s`,
+average `4.291s`, max `13.230s`. `plant_spawn_duration` was `170.618s`
+(`79.5%`). The measured concrete monocot leaf / stem / branch substages were
+the dominant internal cost, while material generation was only `0.991s`.
 
 Recommended next Plant experiment, if continuing this line:
 
@@ -73,9 +73,12 @@ INFINIGEN_REUSE_PLANT_TEMPLATE_GEOMETRY=1
 ```
 
 Keep it default-off, narrow, and quality-gated. Start with one concrete
-monocot family such as `WheatMonocotFactory`, `GrassesMonocotFactory`, or
-`VeratrumMonocotFactory`. Do not reduce plant count, leaf count, stem count,
-or general plant complexity as the first path. Do not use concurrency or C++.
+monocot family. Current timing and risk judgment point to
+`WheatMonocotFactory` first and `GrassesMonocotFactory` second. Do not start
+with `VeratrumMonocotFactory` or `AgaveMonocotFactory` because their branch
+systems and leaf deformation carry higher visual-randomness risk. Do not
+reduce plant count, leaf count, stem count, or general plant complexity as the
+first path. Do not use concurrency or C++.
 
 ## Current Populate Multi-Track Status
 
@@ -163,16 +166,32 @@ P2 plant timing is available with:
 
 ```bash
 INFINIGEN_PROFILE_PLANT_ASSETS=1
-python scripts/bench_plant_assets_factory.py --samples 20 --seed 0 \
-  --output_folder outputs/bench_plant_assets
+python scripts/bench_plant_assets_factory.py --samples 50 --seed 0 \
+  --output_folder outputs/bench_plant_assets_concrete_deep
 python scripts/analyze_plant_assets_timing.py \
-  outputs/bench_plant_assets/infinigen_plant_assets_timing.csv
+  outputs/bench_plant_assets_concrete_deep/infinigen_plant_assets_timing.csv
 ```
 
-The first 20-sample `LargePlantContainerFactory` run had `0` failures. The
-largest measured stage was `plant_spawn_duration` (`62.942s` of `81.426s`),
-so inspect concrete `MonocotFactory` subfactories before any plant-wide reuse
-or simplification.
+The latest 50-sample `LargePlantContainerFactory` run had `0` failures and
+measured `214.538s` total. The largest measured stages were
+`geometry_duration` (`192.574s`) and `plant_spawn_duration` (`170.618s`).
+Leaf / stem / branch geometry accounted for `87.873s`, `28.268s`, and
+`31.567s` respectively. Material generation was only `0.991s`, so Plant
+material reuse is not the first priority.
+
+Recommended next Plant experiment, if continuing this line:
+
+```bash
+INFINIGEN_REUSE_PLANT_TEMPLATE_GEOMETRY=1
+```
+
+Do not implement this broadly. Start with a narrow, default-off
+`WheatMonocotFactory` template experiment; `GrassesMonocotFactory` is the
+second candidate. Do not start with `VeratrumMonocotFactory` or
+`AgaveMonocotFactory`; their branch systems and leaf deformation are higher
+visual-risk sources of random variation. Any Plant reuse must pass Blender /
+Isaac visual checks and must not make plants look copied or reduce plant
+complexity.
 
 P3 datablock growth attribution is ready for a future integrated sample:
 

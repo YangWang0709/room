@@ -60,6 +60,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--csv-path", type=Path, default=None)
     parser.add_argument("--max-factory-seed", type=int, default=100_000_000)
+    parser.add_argument("--max-filter-attempts", type=int, default=5000)
+    parser.add_argument("--concrete-plant-filter", default="")
     parser.add_argument("--sample_timeout_seconds", type=float, default=300.0)
     return parser.parse_args()
 
@@ -76,6 +78,18 @@ def delete_object_tree(root, bpy_module, butil_module) -> None:
             butil_module.delete(obj)
 
 
+def parse_concrete_plant_filter(value: str) -> set[str]:
+    return {part.strip() for part in value.split(",") if part.strip()}
+
+
+def concrete_plant_factory_name(factory) -> str:
+    plant_factory = getattr(factory, "plant_factory", None)
+    concrete_factory = getattr(plant_factory, "factory", None)
+    if concrete_factory is None:
+        return ""
+    return concrete_factory.__class__.__name__
+
+
 def benchmark(args: argparse.Namespace) -> int:
     import bpy
 
@@ -89,12 +103,15 @@ def benchmark(args: argparse.Namespace) -> int:
         raise ValueError("--samples must be positive")
     if args.max_factory_seed <= 0:
         raise ValueError("--max-factory-seed must be positive")
+    if args.max_filter_attempts <= 0:
+        raise ValueError("--max-filter-attempts must be positive")
 
     factory_classes = {
         "LargePlantContainerFactory": LargePlantContainerFactory,
         "PlantContainerFactory": PlantContainerFactory,
     }
     factory_class = factory_classes[args.factory_class]
+    concrete_filter = parse_concrete_plant_filter(args.concrete_plant_filter)
     output_folder = args.output_folder
     output_folder.mkdir(parents=True, exist_ok=True)
     csv_path = args.csv_path or (output_folder / CSV_NAME)
@@ -118,12 +135,22 @@ def benchmark(args: argparse.Namespace) -> int:
     print(f"output_folder: {output_folder}")
     print(f"timing_csv: {csv_path}")
     print(f"max_factory_seed: {args.max_factory_seed}")
+    print(f"concrete_plant_filter: {','.join(sorted(concrete_filter)) or '(none)'}")
     print(f"sample_timeout_seconds: {args.sample_timeout_seconds}")
 
-    for sample_index in range(args.samples):
+    sample_index = 0
+    attempts = 0
+    skipped_by_filter = 0
+    while sample_index < args.samples:
+        attempts += 1
+        if attempts > args.max_filter_attempts:
+            raise RuntimeError(
+                f"Reached --max-filter-attempts={args.max_filter_attempts} "
+                f"with {sample_index}/{args.samples} accepted samples."
+            )
         factory_seed = int(rng.integers(0, args.max_factory_seed))
         inst_seed = int(rng.integers(0, 10_000_000))
-        factory = factory_class(factory_seed)
+        factory = None
         placeholder = None
         asset = None
         sample_start = time.perf_counter()
@@ -136,9 +163,22 @@ def benchmark(args: argparse.Namespace) -> int:
                 factory_seed=factory_seed,
                 inst_seed=inst_seed,
             ):
+                factory = factory_class(factory_seed)
+                concrete_name = concrete_plant_factory_name(factory)
+                if concrete_filter and concrete_name not in concrete_filter:
+                    skipped_by_filter += 1
+                    print(
+                        f"skip attempt {attempts:03d}: "
+                        f"factory_seed={factory_seed} concrete={concrete_name}",
+                        flush=True,
+                    )
+                    continue
+
+                sample_index += 1
                 print(
-                    f"sample {sample_index + 1:03d}/{args.samples:03d} "
-                    f"factory_seed={factory_seed} inst_seed={inst_seed} starting",
+                    f"sample {sample_index:03d}/{args.samples:03d} "
+                    f"factory_seed={factory_seed} inst_seed={inst_seed} "
+                    f"concrete={concrete_name} starting",
                     flush=True,
                 )
                 placeholder = factory.spawn_placeholder(
@@ -153,19 +193,21 @@ def benchmark(args: argparse.Namespace) -> int:
             delete_object_tree(asset, bpy, butil)
             delete_object_tree(placeholder, bpy, butil)
             print(
-                f"sample {sample_index + 1:03d}/{args.samples:03d} "
+                f"sample {sample_index:03d}/{args.samples:03d} "
                 f"factory_seed={factory_seed} inst_seed={inst_seed} "
                 f"failed={exc.__class__.__name__}: {exc}"
             )
         else:
             print(
-                f"sample {sample_index + 1:03d}/{args.samples:03d} "
+                f"sample {sample_index:03d}/{args.samples:03d} "
                 f"duration={time.perf_counter() - sample_start:.3f}s"
             )
 
     butil.garbage_collect(gc_targets, keep_in_use=True)
     print(f"total_duration: {time.perf_counter() - total_start:.3f}s")
     print(f"failures: {failures}")
+    print(f"attempts: {attempts}")
+    print(f"skipped_by_filter: {skipped_by_filter}")
     print(f"timing_csv: {csv_path}")
     return 0
 

@@ -11,7 +11,7 @@ from pathlib import Path
 
 DEFAULT_CSV = Path("/tmp/infinigen_plant_assets_timing.csv")
 DURATION_FIELD = "create_asset_total_duration"
-COUNT_FIELDS = [
+CREATED_DATABLOCK_FIELDS = [
     "created_mesh_count",
     "created_material_count",
     "created_texture_count",
@@ -19,6 +19,15 @@ COUNT_FIELDS = [
     "created_object_count",
     "created_image_count",
 ]
+GEOMETRY_COUNT_FIELDS = [
+    "leaf_count",
+    "stem_count",
+    "branch_count",
+    "leaf_mesh_count",
+    "stem_mesh_count",
+    "branch_mesh_count",
+]
+COUNT_FIELDS = CREATED_DATABLOCK_FIELDS + GEOMETRY_COUNT_FIELDS
 STAGE_FIELDS = [
     "container_spawn_duration",
     "geometry_duration",
@@ -145,6 +154,67 @@ def print_duration_top(by_key: dict[str, dict], title: str) -> None:
     print()
 
 
+def print_concrete_geometry_breakdown(by_key: dict[str, dict]) -> None:
+    print("leaf/stem/branch duration by concrete factory")
+    print("-" * 38)
+    print(
+        "class,count,total,plant_spawn,leaf_duration,stem_duration,"
+        "branch_duration,leaf_count,stem_count,branch_count,"
+        "leaf_mesh_count,stem_mesh_count,branch_mesh_count"
+    )
+    for key, stats in sorted(
+        by_key.items(),
+        key=lambda item: (
+            item[1]["leaf_generation_duration"]
+            + item[1]["stem_generation_duration"]
+            + item[1]["branch_generation_duration"]
+        ),
+        reverse=True,
+    )[:20]:
+        print(
+            f"{key},"
+            f"{int(stats['count'])},"
+            f"{stats['total_duration']:.6f},"
+            f"{stats['plant_spawn_duration']:.6f},"
+            f"{stats['leaf_generation_duration']:.6f},"
+            f"{stats['stem_generation_duration']:.6f},"
+            f"{stats['branch_generation_duration']:.6f},"
+            f"{int(stats['leaf_count'])},"
+            f"{int(stats['stem_count'])},"
+            f"{int(stats['branch_count'])},"
+            f"{int(stats['leaf_mesh_count'])},"
+            f"{int(stats['stem_mesh_count'])},"
+            f"{int(stats['branch_mesh_count'])}"
+        )
+    print()
+
+
+def print_geometry_candidate_keys(rows: list[dict], limit: int = 50) -> None:
+    print("geometry template candidate key repeats")
+    print("-" * 38)
+    counter = Counter(
+        row.get("geometry_template_candidate_key", "") or "(unknown)" for row in rows
+    )
+    risk_by_key = {}
+    concrete_by_key = {}
+    for row in rows:
+        key = row.get("geometry_template_candidate_key", "") or "(unknown)"
+        risk_by_key.setdefault(key, row.get("geometry_reuse_risk_level", ""))
+        concrete_by_key.setdefault(key, row.get("concrete_plant_factory_class", ""))
+
+    repeated = 0
+    for key, count in counter.most_common(limit):
+        if count > 1:
+            repeated += 1
+        print(
+            f"count={count:4d} risk={risk_by_key.get(key, ''):6s} "
+            f"concrete={concrete_by_key.get(key, ''):28s} key={key}"
+        )
+    print(f"repeated_key_count: {repeated}")
+    print(f"unique_key_count: {len(counter)}")
+    print()
+
+
 def print_stage_summary(rows: list[dict]) -> None:
     print("substage duration summary")
     print("-" * 38)
@@ -195,7 +265,15 @@ def print_count_top(by_factory: dict[str, dict], field: str, title: str) -> None
 def print_creation_totals(rows: list[dict]) -> None:
     print("created datablock totals")
     print("-" * 38)
-    for field in COUNT_FIELDS:
+    for field in CREATED_DATABLOCK_FIELDS:
+        print(f"{field}: {sum(as_int(row, field) for row in rows)}")
+    print()
+
+
+def print_geometry_count_totals(rows: list[dict]) -> None:
+    print("leaf/stem/branch count totals")
+    print("-" * 38)
+    for field in GEOMETRY_COUNT_FIELDS:
         print(f"{field}: {sum(as_int(row, field) for row in rows)}")
     print()
 
@@ -294,6 +372,59 @@ def print_recommendation(rows: list[dict], by_factory: dict[str, dict]) -> None:
     print("Do not reduce plant count or complexity as the next default path.")
 
 
+def print_concrete_reuse_recommendation(rows: list[dict]) -> None:
+    print("concrete geometry reuse recommendation")
+    print("-" * 38)
+    if not rows:
+        print("No successful rows were found.")
+        return
+
+    by_concrete = aggregate(rows, "concrete_plant_factory_class")
+    candidates = []
+    for concrete, stats in by_concrete.items():
+        risk_levels = {
+            row.get("geometry_reuse_risk_level", "")
+            for row in rows
+            if (row.get("concrete_plant_factory_class") or "(unknown)") == concrete
+        }
+        risk = sorted(risk_levels)[0] if risk_levels else ""
+        geometry_total = (
+            stats["leaf_generation_duration"]
+            + stats["stem_generation_duration"]
+            + stats["branch_generation_duration"]
+        )
+        candidates.append((risk, geometry_total, stats["total_duration"], concrete))
+
+    medium_candidates = [
+        item for item in candidates if item[0] == "medium" and item[1] > 0
+    ]
+    if medium_candidates:
+        _, geometry_total, total_duration, concrete = max(
+            medium_candidates, key=lambda item: item[1]
+        )
+        print(
+            "First implementation candidate: "
+            f"{concrete} geometry templates "
+            f"(leaf/stem/branch={geometry_total:.3f}s, total={total_duration:.3f}s)."
+        )
+    else:
+        _, geometry_total, total_duration, concrete = max(
+            candidates, key=lambda item: item[1]
+        )
+        print(
+            "No medium-risk geometry candidate dominated this CSV. "
+            f"Top raw geometry target is {concrete} "
+            f"(leaf/stem/branch={geometry_total:.3f}s, total={total_duration:.3f}s)."
+        )
+
+    print(
+        "Do not reuse all Plant assets. Avoid high-risk factories such as "
+        "VeratrumMonocotFactory and AgaveMonocotFactory until a separate visual "
+        "quality gate proves the result."
+    )
+    print()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("csv_path", nargs="?", type=Path, default=DEFAULT_CSV)
@@ -336,9 +467,12 @@ def main() -> None:
     print_duration_top(by_factory, "factory_class duration top")
     print_duration_top(by_plant, "plant_factory_class duration top")
     print_duration_top(by_concrete_plant, "concrete_plant_factory_class duration top")
+    print_concrete_geometry_breakdown(by_concrete_plant)
+    print_geometry_candidate_keys(successful)
     print_plant_spawn_top(successful, limit=20)
     print_stage_summary(successful)
     print_creation_totals(successful)
+    print_geometry_count_totals(successful)
     print_count_top(by_factory, "created_mesh_count", "created mesh count top")
     print_count_top(by_factory, "created_material_count", "created material count top")
     print_count_top(by_factory, "created_texture_count", "created texture count top")
@@ -351,6 +485,7 @@ def main() -> None:
     )
     print_slowest(successful)
     print_recommendation(successful, by_factory)
+    print_concrete_reuse_recommendation(successful)
 
 
 if __name__ == "__main__":

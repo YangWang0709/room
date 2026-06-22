@@ -1,5 +1,120 @@
 # Worklog
 
+## 2026-06-22 - Concrete Plant geometry reuse candidate investigation
+
+### Round Goal
+
+Investigate the minimum opt-in feasibility for concrete monocot geometry reuse
+without implementing reuse. This round did not optimize Plant generation, did
+not reduce plant count or complexity, did not add material reuse, did not add
+concurrency or C++, and did not change
+`scripts/run_isaac_static_optimized_10room.sh`.
+
+### Changes
+
+Enhanced optional Plant timing behind:
+
+```bash
+INFINIGEN_PROFILE_PLANT_ASSETS=1
+```
+
+The CSV now records:
+
+```text
+concrete_plant_factory_class
+geometry_template_candidate_key
+geometry_reuse_risk_level
+leaf_count / stem_count / branch_count
+leaf_mesh_count / stem_mesh_count / branch_mesh_count
+leaf_generation_duration / stem_generation_duration / branch_generation_duration
+```
+
+Updated:
+
+```text
+infinigen/assets/objects/tableware/plant_container.py
+scripts/bench_plant_assets_factory.py
+scripts/analyze_plant_assets_timing.py
+docs/PLANT_POPULATE_INVESTIGATION.md
+docs/PLANT_TEMPLATE_GEOMETRY_REUSE_PLAN.md
+docs/PROFILE_RESULTS.md
+docs/NEXT_STEPS.md
+```
+
+The benchmark also supports:
+
+```bash
+--concrete-plant-filter WheatMonocotFactory,GrassesMonocotFactory
+```
+
+### Source Investigation
+
+Focused concrete monocot paths:
+
+```text
+WheatMonocotFactory    infinigen/assets/objects/monocot/grasses.py
+GrassesMonocotFactory  infinigen/assets/objects/monocot/grasses.py
+VeratrumMonocotFactory infinigen/assets/objects/monocot/veratrum.py
+AgaveMonocotFactory    infinigen/assets/objects/monocot/agave.py
+```
+
+Shared call chain:
+
+```text
+PlantContainerFactory.create_asset()
+  MonocotFactory.spawn_asset()
+    MonocotFactory.create_asset()
+      concrete_monocot_factory.create_asset()
+        create_raw()
+          make_collection()
+            build_instance()
+              build_leaf()
+          build_stem()
+          surface.add_geomod(..., apply=True)
+        optional branch / ear / husk create_asset()
+        decorate_monocot()
+```
+
+### Benchmark
+
+Command:
+
+```bash
+INFINIGEN_PROFILE_PLANT_ASSETS=1 \
+python scripts/bench_plant_assets_factory.py \
+  --samples 50 \
+  --seed 0 \
+  --output_folder outputs/bench_plant_assets_concrete_deep
+```
+
+Result: `50/50` samples, `0` failures. CSV:
+
+```text
+outputs/bench_plant_assets_concrete_deep/infinigen_plant_assets_timing.csv
+```
+
+Measured total was `214.538s`, average `4.291s`, max `13.230s`, and benchmark
+wall time `217.514s`. `plant_spawn_duration` was `170.618s` / `79.5%`.
+Leaf generation was `87.873s`, branch generation was `31.567s`, and stem
+generation was `28.268s`. Material generation was only `0.991s`, so Plant
+material reuse is still not the first target.
+
+Top concrete duration classes were `WheatMonocotFactory` (`50.353s`),
+`VeratrumMonocotFactory` (`39.694s`), `GrassesMonocotFactory` (`37.763s`),
+and `AgaveMonocotFactory` (`22.650s`).
+
+### Judgment
+
+The first future implementation candidate is a narrow, default-off
+`WheatMonocotFactory` geometry-template experiment. `GrassesMonocotFactory`
+is the second candidate. Do not start with `VeratrumMonocotFactory` or
+`AgaveMonocotFactory`; their branch systems and leaf deformation are higher
+visual-risk sources of random variation.
+
+`geometry_template_candidate_key` is intentionally coarse and repeated at the
+concrete-family level. It is useful for grouping and risk review, but is not a
+safe cache key by itself.
+
 ## 2026-06-22 - Deep Plant asset timing investigation
 
 ### Round Goal
