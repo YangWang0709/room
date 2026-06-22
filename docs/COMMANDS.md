@@ -98,6 +98,34 @@ OUTPUT_ROOT=outputs/bench_9950x3d_manual_ccd4 \
 bash scripts/run_9950x3d_parallel_scene_bench.sh
 ```
 
+Manual JOBS=3 bounded interpolation:
+
+```bash
+CLEAN=1 \
+BENCH_MODE=single \
+CPU_STRATEGY=manual \
+CPU_SETS="0-4,16-20;5-9,21-25;10-15,26-31" \
+JOBS=3 \
+SEEDS=10,11,12 \
+TIMEOUT_SECONDS=1800 \
+OUTPUT_ROOT=outputs/bench_9950x3d_manual_jobs3 \
+bash scripts/run_9950x3d_parallel_scene_bench.sh
+```
+
+Manual JOBS=4 CCD split full-timeout coarse-only run:
+
+```bash
+CLEAN=1 \
+BENCH_MODE=single \
+CPU_STRATEGY=manual \
+CPU_SETS="0-3,16-19;4-7,20-23;8-11,24-27;12-15,28-31" \
+JOBS=4 \
+SEEDS=20,21,22,23 \
+TIMEOUT_SECONDS=14400 \
+OUTPUT_ROOT=outputs/bench_9950x3d_manual_ccd4_fulltimeout \
+bash scripts/run_9950x3d_parallel_scene_bench.sh
+```
+
 Manual 2-way physical-core-only comparison:
 
 ```bash

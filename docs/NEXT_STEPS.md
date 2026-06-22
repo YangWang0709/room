@@ -18,6 +18,33 @@ CCD1 / L3: 8-15,24-31
 Do not use `0-15;16-31` as a CCD split; that separates SMT siblings, not L3
 groups.
 
+Latest follow-up:
+
+```text
+JOBS=3 bounded:
+  CPU_SETS=0-4,16-20;5-9,21-25;10-15,26-31
+  SEEDS=10,11,12 TIMEOUT_SECONDS=1800
+  complete=0 timeout=3 failed=0 fatal=0 progress_score=302082 max_rss_kb=3306032
+
+JOBS=4 CCD split full-timeout:
+  CPU_SETS=0-3,16-19;4-7,20-23;8-11,24-27;12-15,28-31
+  SEEDS=20,21,22,23 TIMEOUT_SECONDS=14400
+  complete=3 timeout=0 failed=1 scenes/hour=1.378 max_rss_kb=11260204
+```
+
+JOBS=4 remains the best throughput candidate by bounded progress and the
+first real full-timeout `scenes/hour` result, but it is not yet a clean
+unattended full-run default because seed 21 failed late in `room_walls` with
+`TypeError: Concrete.generate() got an unexpected keyword argument 'vertical'`.
+The run had no Wheat reuse, no USD export, no timeout, no swap, no OOM, and no
+killed process. Keep `TIMEOUT_SECONDS=14400` for follow-up full-timeout runs;
+it was enough for this sample.
+
+Next 9950X3D action: isolate the seed 21 failure before increasing parallelism
+or entering fullopt_wheat quality validation. Do not test JOBS=5/6 yet. Keep
+`EXPORT_USD` / `EXPORT_JOBS` as a separate benchmark after coarse-only
+generation is clean.
+
 Latest bounded comparison:
 
 ```text

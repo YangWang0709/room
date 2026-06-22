@@ -1,5 +1,58 @@
 # Profile Results
 
+## 9950X3D JOBS=3 And JOBS=4 Full-Timeout Follow-Up - 2026-06-23
+
+Profile type: 9950X3D-specific multi-scene CPU parallel benchmark for indoor
+coarse generation. This round did not enable Wheat reuse and did not export
+USD. It did not change generation logic, solver behavior, asset factories, or
+stable Isaac script defaults.
+
+Correct observed CCD / L3 groups:
+
+```text
+CCD0 / L3: 0-7,16-23
+CCD1 / L3: 8-15,24-31
+```
+
+`0-15;16-31` is SMT-sibling grouping, not CCD grouping.
+
+Follow-up results:
+
+| case | CPU sets | jobs | seeds | timeout s | complete | timeout | failed | scenes/hour | max RSS KB | progress_score |
+| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| JOBS=3 bounded | `0-4,16-20;5-9,21-25;10-15,26-31` | 3 | `10,11,12` | 1800 | 0 | 3 | 0 | 0.000 | 3306032 | 302082 |
+| JOBS=4 CCD split full-timeout | `0-3,16-19;4-7,20-23;8-11,24-27;12-15,28-31` | 4 | `20,21,22,23` | 14400 | 3 | 0 | 1 | 1.378 | 11260204 | 407391 |
+
+JOBS=3 was stable but did not outperform the prior 4-way CCD split bounded
+result. The 4-way CCD split full-timeout run produced real coarse-only
+throughput, with three completed scenes, no timeout, no swap, no OOM, and no
+killed process. Seed 21 failed late in `room_walls` with:
+
+```text
+TypeError: Concrete.generate() got an unexpected keyword argument 'vertical'
+```
+
+The analyzer reported `fatal=4` because completed Blender logs also include
+`Error: Not freed memory blocks` shutdown messages. The actionable fatal
+condition is seed 21's Traceback; the completed seeds wrote `scene.blend`.
+
+Current recommendation: keep `JOBS=4` with the 4-way CCD split as the best
+throughput candidate, but do not treat it as a clean unattended full-run
+default until the seed 21 failure is understood or shown to be seed/content
+specific. Do not move to JOBS=5/6 yet. Keep `EXPORT_USD` and `EXPORT_JOBS`
+for a separate benchmark after coarse generation is clean. Do not enter
+fullopt_wheat quality validation directly from this run, because Wheat reuse
+was not enabled here and the coarse-only full-timeout run had one failure.
+`TIMEOUT_SECONDS=14400` was enough for this sample.
+
+Local report:
+
+```text
+outputs/bench_9950x3d_compare_snapshots/compare_jobs3_vs_jobs4_fulltimeout.md
+```
+
+Generated `outputs` are local experiment data and must not be committed.
+
 ## 9950X3D Parallel Scene Benchmark Comparison - 2026-06-22
 
 Profile type: bounded 1800s Ryzen 9 9950X3D scene-level multiprocessing

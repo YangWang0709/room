@@ -1,5 +1,63 @@
 # Worklog
 
+## 2026-06-23 - 9950X3D JOBS=3 and JOBS=4 full-timeout follow-up
+
+### Round Goal
+
+Continue the 9950X3D multi-scene CPU parallel benchmark without changing
+generation logic, solver behavior, asset factories, stable Isaac defaults,
+Wheat reuse defaults, or USD export behavior. This round measured:
+
+```text
+JOBS=3 bounded
+JOBS=4 CCD split full-timeout coarse-only
+```
+
+Correct CCD / L3 groups:
+
+```text
+CCD0 / L3: 0-7,16-23
+CCD1 / L3: 8-15,24-31
+```
+
+`0-15;16-31` is not CCD grouping.
+
+### Result
+
+| case | jobs | CPU sets | complete | timeout | failed | scenes/hour | max RSS KB | progress_score |
+| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| JOBS=3 bounded | 3 | `0-4,16-20;5-9,21-25;10-15,26-31` | 0 | 3 | 0 | 0.000 | 3306032 | 302082 |
+| JOBS=4 CCD split full-timeout | 4 | `0-3,16-19;4-7,20-23;8-11,24-27;12-15,28-31` | 3 | 0 | 1 | 1.378 | 11260204 | 407391 |
+
+JOBS=3 was stable but did not beat the 4-way CCD split bounded signal. The
+JOBS=4 full-timeout run produced three complete coarse scenes and no timeout,
+swap, OOM, or killed process. Seed 21 failed late in `room_walls` with:
+
+```text
+TypeError: Concrete.generate() got an unexpected keyword argument 'vertical'
+```
+
+Wheat reuse was not enabled, and USD export was not enabled. The analyzer's
+`fatal=4` includes Blender `Error: Not freed memory blocks` shutdown messages
+from completed seeds; the actionable failure is seed 21's Traceback.
+
+### Recommendation
+
+Keep `JOBS=4` with the 4-way CCD split as the current throughput candidate,
+but do not treat it as a clean unattended full-run default until the seed 21
+failure is understood or shown to be seed/content-specific. Do not proceed to
+JOBS=5/6 yet. Keep `EXPORT_USD` / `EXPORT_JOBS` for a separate benchmark, and
+do not enter fullopt_wheat quality validation directly from this failed
+coarse-only sample. `TIMEOUT_SECONDS=14400` was sufficient for this sample.
+
+Local report:
+
+```text
+outputs/bench_9950x3d_compare_snapshots/compare_jobs3_vs_jobs4_fulltimeout.md
+```
+
+Generated outputs remain local experiment data and must not be committed.
+
 ## 2026-06-22 - 9950X3D manual CCD benchmark comparison
 
 ### Round Goal
