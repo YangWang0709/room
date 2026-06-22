@@ -8,6 +8,15 @@ one Blender / `bpy` process, and it does not modify Infinigen generation logic,
 the solver, asset factories, proposal order, or the stable
 `scripts/run_isaac_static_optimized_10room.sh` defaults.
 
+Correct observed CCD / L3 groups on this 9950X3D:
+
+```text
+CCD0 / L3: 0-7,16-23
+CCD1 / L3: 8-15,24-31
+```
+
+Do not use `0-15;16-31` as a CCD split.
+
 Dry-run the default matrix:
 
 ```bash
@@ -72,6 +81,34 @@ BENCH_MODE=single \
 JOBS=2 \
 CPU_STRATEGY=split_llc \
 SEEDS=10,11,12,13 \
+bash scripts/run_9950x3d_parallel_scene_bench.sh
+```
+
+Manual 4-way CCD split used in the 2026-06-22 bounded comparison:
+
+```bash
+CLEAN=1 \
+BENCH_MODE=single \
+CPU_STRATEGY=manual \
+CPU_SETS="0-3,16-19;4-7,20-23;8-11,24-27;12-15,28-31" \
+JOBS=4 \
+SEEDS=10,11,12,13 \
+TIMEOUT_SECONDS=1800 \
+OUTPUT_ROOT=outputs/bench_9950x3d_manual_ccd4 \
+bash scripts/run_9950x3d_parallel_scene_bench.sh
+```
+
+Manual 2-way physical-core-only comparison:
+
+```bash
+CLEAN=1 \
+BENCH_MODE=single \
+CPU_STRATEGY=manual \
+CPU_SETS="0-7;8-15" \
+JOBS=2 \
+SEEDS=10,11 \
+TIMEOUT_SECONDS=1800 \
+OUTPUT_ROOT=outputs/bench_9950x3d_physical2 \
 bash scripts/run_9950x3d_parallel_scene_bench.sh
 ```
 

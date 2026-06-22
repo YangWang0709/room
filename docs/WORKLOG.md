@@ -1,5 +1,67 @@
 # Worklog
 
+## 2026-06-22 - 9950X3D manual CCD benchmark comparison
+
+### Round Goal
+
+Fix the single-mode path issue in the 9950X3D benchmark script, preserve the
+user's 2-way CCD result, then compare:
+
+```text
+2-way CCD
+4-way CCD split
+2-way physical cores only
+```
+
+No Infinigen generation logic, solver behavior, asset factories, stable Isaac
+script defaults, or Wheat reuse defaults were changed.
+
+### Script Fix
+
+Updated `scripts/run_9950x3d_parallel_scene_bench.sh` so single-mode output
+paths stay tied to the current case directory. The script now creates per-seed
+case/log directories before launch, records `output_root` and `case_dir` in
+case metadata, allows `CLEAN=1` for independent `outputs/bench_9950x3d_*`
+benchmark roots, refuses to clean comparison snapshots, and uses an output-root
+lock plus active-process check to avoid overlapping runs deleting each other's
+logs.
+
+Dry-run validation confirmed `single_jobs2_manual` no longer references
+`cases/jobs1_none/logs/seed_10`.
+
+### Benchmark Result
+
+Correct observed CCD / L3 groups:
+
+```text
+CCD0 / L3: 0-7,16-23
+CCD1 / L3: 8-15,24-31
+```
+
+`0-15;16-31` is not a CCD split.
+
+Summary:
+
+| case | jobs | CPU sets | complete | timeout | failed | fatal | max RSS KB | progress_score |
+| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2-way CCD | 2 | `0-7,16-23;8-15,24-31` | 0 | 2 | 0 | 0 | 2818032 | 200849 |
+| 4-way CCD split | 4 | `0-3,16-19;4-7,20-23;8-11,24-27;12-15,28-31` | 0 | 4 | 0 | 0 | 3015204 | 403039 |
+| 2-way physical-only | 2 | `0-7;8-15` | 0 | 2 | 0 | 0 | 3122024 | 200878 |
+
+All scenes timed out at 1800s, so `scenes/hour` is zero for all cases. None
+showed Traceback, killed/OOM, fatal markers, or swap. The current bounded
+recommendation is `JOBS=4` with the 4-way CCD split for aggregate progress,
+but `JOBS=3` should be tested before accepting a full-run default. Keep
+`EXPORT_USD=0` until coarse generation completes under a longer/full timeout.
+
+Combined local report:
+
+```text
+outputs/bench_9950x3d_compare_snapshots/compare_9950x3d_parallel_results.md
+```
+
+Generated outputs are local experiment data and must not be committed.
+
 ## 2026-06-22 - 9950X3D parallel scene benchmark tooling
 
 ### Round Goal

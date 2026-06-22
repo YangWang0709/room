@@ -27,6 +27,10 @@ TOPOLOGY_DIR="${OUTPUT_ROOT}/topology"
 TOPOLOGY_TXT="${TOPOLOGY_DIR}/cpu_topology.txt"
 TOPOLOGY_JSON="${TOPOLOGY_DIR}/cpu_topology.json"
 RECOMMENDED_CPU_SETS="${TOPOLOGY_DIR}/recommended_cpu_sets.md"
+LOCK_KEY="${OUTPUT_ROOT//\//_}"
+LOCK_KEY="${LOCK_KEY// /_}"
+RUN_LOCK_DIR="${TMPDIR:-/tmp}/infinigen_9950x3d_bench_${LOCK_KEY}.lock"
+LOCK_HELD=0
 
 PROFILE_ENV_VARS=(
   INFINIGEN_PROFILE_TIMING
@@ -85,19 +89,83 @@ require_tools() {
   fi
 }
 
+cleanup_lock() {
+  if [[ "${LOCK_HELD:-0}" == "1" ]]; then
+    rm -rf "$RUN_LOCK_DIR"
+  fi
+}
+
+acquire_output_root_lock() {
+  local lock_parent
+  lock_parent="$(dirname "$RUN_LOCK_DIR")"
+  mkdir -p "$lock_parent"
+
+  if mkdir "$RUN_LOCK_DIR" 2>/dev/null; then
+    LOCK_HELD=1
+    echo "$$" > "${RUN_LOCK_DIR}/pid"
+    echo "$(timestamp)" > "${RUN_LOCK_DIR}/started_at"
+    echo "$OUTPUT_ROOT" > "${RUN_LOCK_DIR}/output_root"
+    trap cleanup_lock EXIT
+    return
+  fi
+
+  local lock_pid
+  lock_pid="$(cat "${RUN_LOCK_DIR}/pid" 2>/dev/null || true)"
+  if [[ -n "$lock_pid" ]] && kill -0 "$lock_pid" 2>/dev/null; then
+    echo "Benchmark output root is already locked: ${OUTPUT_ROOT}" >&2
+    echo "Lock: ${RUN_LOCK_DIR} (pid ${lock_pid})" >&2
+    echo "Use a different OUTPUT_ROOT or wait for the active run to finish." >&2
+    exit 2
+  fi
+
+  echo "Removing stale benchmark lock: ${RUN_LOCK_DIR}" >&2
+  rm -rf "$RUN_LOCK_DIR"
+  if ! mkdir "$RUN_LOCK_DIR" 2>/dev/null; then
+    echo "Failed to acquire benchmark output root lock: ${RUN_LOCK_DIR}" >&2
+    exit 2
+  fi
+  LOCK_HELD=1
+  echo "$$" > "${RUN_LOCK_DIR}/pid"
+  echo "$(timestamp)" > "${RUN_LOCK_DIR}/started_at"
+  echo "$OUTPUT_ROOT" > "${RUN_LOCK_DIR}/output_root"
+  trap cleanup_lock EXIT
+}
+
+active_output_root_users() {
+  ps -eo pid=,ppid=,cmd= \
+    | awk -v self="$$" -v root="$OUTPUT_ROOT" '
+        $1 != self && $2 != self && $3 != "awk" && index($0, root) { print }
+      ' || true
+}
+
+ensure_no_active_output_root_users() {
+  local active
+  active="$(active_output_root_users)"
+  if [[ -n "$active" ]]; then
+    echo "Refusing to use OUTPUT_ROOT while active processes reference it: ${OUTPUT_ROOT}" >&2
+    echo "$active" >&2
+    echo "Wait for the active benchmark/generation processes to finish or choose another OUTPUT_ROOT." >&2
+    exit 2
+  fi
+}
+
 safe_clean_output_root() {
   if [[ "$CLEAN" != "1" ]]; then
     return
   fi
 
   case "$OUTPUT_ROOT" in
-    outputs/bench_9950x3d_parallel_scenes*)
+    outputs/bench_9950x3d_compare_snapshots|outputs/bench_9950x3d_compare_snapshots/*)
+      echo "Refusing CLEAN=1 for comparison snapshot path: ${OUTPUT_ROOT}" >&2
+      exit 2
+      ;;
+    outputs/bench_9950x3d_*)
       echo "Removing existing benchmark output: ${OUTPUT_ROOT}"
       rm -rf "$OUTPUT_ROOT"
       ;;
     *)
       echo "Refusing CLEAN=1 for unexpected OUTPUT_ROOT: ${OUTPUT_ROOT}" >&2
-      echo "Use an outputs/bench_9950x3d_parallel_scenes* path." >&2
+      echo "Use an outputs/bench_9950x3d_* path outside outputs/bench_9950x3d_compare_snapshots." >&2
       exit 2
       ;;
   esac
@@ -638,7 +706,7 @@ run_generate_seed() {
   local time_txt="${log_dir}/time.txt"
   local env_txt="${log_dir}/env.txt"
   local result_file="${log_dir}/result_generate.env"
-  mkdir -p "$output_folder" "$log_dir"
+  mkdir -p "$seed_dir" "$output_folder" "$log_dir"
 
   local started_at ended_at exit_code status
   if [[ "$RESUME" == "1" && -f "${output_folder}/scene.blend" ]]; then
@@ -798,6 +866,8 @@ write_case_info() {
 
   {
     echo "case_name=${case_name}"
+    echo "output_root=${OUTPUT_ROOT}"
+    echo "case_dir=${case_dir}"
     echo "jobs=${jobs}"
     echo "cpu_strategy=${strategy}"
     echo "cpu_sets=${cpu_sets_joined}"
@@ -898,6 +968,8 @@ run_single() {
 main() {
   parse_seeds
   require_tools
+  acquire_output_root_lock
+  ensure_no_active_output_root_users
   safe_clean_output_root
   mkdir -p "$OUTPUT_ROOT"
   collect_topology_text

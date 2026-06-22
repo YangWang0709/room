@@ -8,7 +8,36 @@ one seed, one scene, one independent Python-Blender process. Do not add Python
 threads inside a single Blender / `bpy` process, do not change the solver, and
 do not change asset factories or proposal / accept / reject behavior.
 
-Use:
+The correct observed CCD / L3 groups for this machine are:
+
+```text
+CCD0 / L3: 0-7,16-23
+CCD1 / L3: 8-15,24-31
+```
+
+Do not use `0-15;16-31` as a CCD split; that separates SMT siblings, not L3
+groups.
+
+Latest bounded comparison:
+
+```text
+2-way CCD:          JOBS=2 CPU_SETS=0-7,16-23;8-15,24-31
+4-way CCD split:    JOBS=4 CPU_SETS=0-3,16-19;4-7,20-23;8-11,24-27;12-15,28-31
+2-way physical-only JOBS=2 CPU_SETS=0-7;8-15
+```
+
+All three 1800s cases timed out in solve with `complete=0`, `failed=0`,
+`fatal=0`, no Traceback/killed/OOM marker, and no swap. `scenes/hour` is
+therefore tied at zero. The bounded progress scores were `200849` for 2-way
+CCD, `403039` for 4-way CCD split, and `200878` for 2-way physical-only. Max
+RSS stayed modest: `2818032 KB`, `3015204 KB`, and `3122024 KB`.
+
+Current recommendation: use 4-way CCD split for the next bounded-throughput
+experiment, but test `JOBS=3` before selecting a full-run default. Do not
+enable `EXPORT_USD` yet; first extend timeout/full-timeout enough to get
+complete coarse scenes and real `scenes/hour`.
+
+Useful dry-run:
 
 ```bash
 DRY_RUN=1 BENCH_MODE=matrix SEEDS=10,11,12,13 TIMEOUT_SECONDS=300 \
@@ -39,9 +68,9 @@ JOBS=4 CPU_STRATEGY=split_llc
 JOBS=4 CPU_STRATEGY=physical_cores_only
 ```
 
-Start with `JOBS=2`. If failure rate is zero and there is no swap/OOM signal,
-test `JOBS=3` and compare with `JOBS=4`. Do not jump straight to `JOBS=8`.
-USD export remains `EXPORT_JOBS=1` by default and should happen after coarse
+Start follow-up with `JOBS=3`, then run a longer/full-timeout coarse-only
+comparison for the best bounded cases. Do not jump straight to `JOBS=8`. USD
+export remains `EXPORT_JOBS=1` by default and should happen after coarse
 generation, not concurrently with generation, until export is measured as a
 bottleneck.
 

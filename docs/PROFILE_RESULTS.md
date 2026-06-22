@@ -1,5 +1,48 @@
 # Profile Results
 
+## 9950X3D Parallel Scene Benchmark Comparison - 2026-06-22
+
+Profile type: bounded 1800s Ryzen 9 9950X3D scene-level multiprocessing
+comparison. This run did not change generation logic, solver behavior, asset
+factories, `scripts/run_isaac_static_optimized_10room.sh` defaults, or Wheat
+reuse defaults.
+
+Correct observed CCD / L3 groups:
+
+```text
+CCD0 / L3: 0-7,16-23
+CCD1 / L3: 8-15,24-31
+```
+
+`0-15;16-31` is SMT-sibling grouping, not CCD grouping.
+
+Compared cases:
+
+| case | CPU sets | jobs | seeds | complete | timeout | failed | scenes/hour | avg wall s | max RSS KB | fatal | progress_score |
+| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2-way CCD | `0-7,16-23;8-15,24-31` | 2 | `10,11` | 0 | 2 | 0 | 0.000 | 1800.090 | 2818032 | 0 | 200849 |
+| 4-way CCD split | `0-3,16-19;4-7,20-23;8-11,24-27;12-15,28-31` | 4 | `10,11,12,13` | 0 | 4 | 0 | 0.000 | 1800.102 | 3015204 | 0 | 403039 |
+| 2-way physical-only | `0-7;8-15` | 2 | `10,11` | 0 | 2 | 0 | 0.000 | 1800.105 | 3122024 | 0 | 200878 |
+
+All runs timed out in solve/coarse generation and had no Traceback, killed/OOM
+signal, fatal marker, or swap use. Because `complete=0` for all cases,
+`scenes/hour` is tied at zero; the useful bounded signal is progress score.
+The 4-way CCD split produced about 2.01x the aggregate bounded progress of the
+2-way CCD case with modest RSS and no fatal markers. The physical-only 2-way
+case did not materially improve over full CCD SMT for the matched seed 10/11
+pair and used a higher max RSS.
+
+Current bounded-throughput recommendation: use `JOBS=4` with the 4-way CCD
+split for the next throughput experiment, but test `JOBS=3` before treating it
+as a full-run default. Keep `EXPORT_USD=0` until coarse generation completes
+under a longer/full timeout. Full comparison report:
+
+```text
+outputs/bench_9950x3d_compare_snapshots/compare_9950x3d_parallel_results.md
+```
+
+Generated `outputs` are local experiment data and must not be committed.
+
 ## 9950X3D Parallel Scene Benchmark Setup - 2026-06-22
 
 Profile type: hardware / system benchmark preparation for Ryzen 9 9950X3D
