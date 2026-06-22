@@ -1,5 +1,80 @@
 # Worklog
 
+## 2026-06-22 - Deep Plant asset timing investigation
+
+### Round Goal
+
+Investigate `PlantContainerFactory` / `LargePlantContainerFactory` as the next
+populate-stage candidate after the accepted Isaac static configuration. No
+Plant optimization was added. The stable
+`scripts/run_isaac_static_optimized_10room.sh` defaults were not changed.
+Solver behavior, proposal / accept / reject logic, batch-remove behavior,
+LargeShelf reuse, NatureShelf fast pose, door configuration, concurrency,
+C++ paths, plant count, and plant complexity were not changed.
+
+### Changes
+
+Enhanced optional timing behind:
+
+```bash
+INFINIGEN_PROFILE_PLANT_ASSETS=1
+```
+
+The CSV now records the concrete monocot factory class, container duration,
+leaf / stem / branch timing when safely observable, modifier apply duration,
+material and node-group prefix tops, and the existing before/after datablock
+counts. The timing remains default-off.
+
+Updated:
+
+```text
+scripts/bench_plant_assets_factory.py
+scripts/analyze_plant_assets_timing.py
+docs/PLANT_POPULATE_INVESTIGATION.md
+```
+
+### Benchmark
+
+Command:
+
+```bash
+INFINIGEN_PROFILE_PLANT_ASSETS=1 \
+python scripts/bench_plant_assets_factory.py \
+  --samples 30 \
+  --seed 0 \
+  --output_folder outputs/bench_plant_assets_deep
+```
+
+Result: `30/30` samples, `0` failures. CSV:
+
+```text
+outputs/bench_plant_assets_deep/infinigen_plant_assets_timing.csv
+```
+
+Measured total was `127.811s`, average `4.260s`, and max `10.106s`.
+`plant_spawn_duration` was `99.939s` / `78.2%`. Concrete monocot geometry was
+the main cost: leaf generation `50.844s`, branch generation `20.284s`, and
+stem generation `16.744s`. Created datablocks were `1,142` meshes, `30`
+materials, `0` textures, `176` node groups, and `1,022` objects.
+
+Top concrete monocot factories by total duration were
+`VeratrumMonocotFactory`, `GrassesMonocotFactory`, `WheatMonocotFactory`, and
+`MaizeMonocotFactory`.
+
+### Judgment
+
+Material reuse is not the first Plant target in this benchmark. Node-group
+reuse might be useful only for fixed helper groups, but the larger speed lever
+appears to be leaf / stem / branch geometry template work. The first future
+Plant optimization switch to consider is:
+
+```bash
+INFINIGEN_REUSE_PLANT_TEMPLATE_GEOMETRY=1
+```
+
+It must remain opt-in, narrow, and quality-gated because plant silhouettes and
+leaf/stem variation are visually important.
+
 ## 2026-06-22 - Standard optimized Isaac static 10-room command
 
 Added `scripts/run_isaac_static_optimized_10room.sh` as the standard command

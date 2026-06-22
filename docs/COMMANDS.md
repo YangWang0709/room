@@ -83,6 +83,43 @@ export directory together; do not move only a single `.usdc` file. If the
 scene appears black, add a Dome Light or Point Light, and check material /
 texture resolve warnings in Isaac Sim.
 
+## Run Plant Asset Timing Benchmark
+
+This benchmark is for `PlantContainerFactory` / `LargePlantContainerFactory`
+investigation only. It does not run a full indoor scene and does not enable a
+Plant optimization.
+
+```bash
+INFINIGEN_PROFILE_PLANT_ASSETS=1 \
+python scripts/bench_plant_assets_factory.py \
+  --samples 30 \
+  --seed 0 \
+  --output_folder outputs/bench_plant_assets_deep
+```
+
+Analyze:
+
+```bash
+python scripts/analyze_plant_assets_timing.py \
+  outputs/bench_plant_assets_deep/infinigen_plant_assets_timing.csv
+```
+
+Optional factory selection:
+
+```bash
+INFINIGEN_PROFILE_PLANT_ASSETS=1 \
+python scripts/bench_plant_assets_factory.py \
+  --factory-class PlantContainerFactory \
+  --samples 30 \
+  --seed 0 \
+  --output_folder outputs/bench_plant_assets
+```
+
+The latest deep `LargePlantContainerFactory` run showed
+`plant_spawn_duration` as the dominant stage, with leaf / stem / branch
+geometry costs far above material generation. Future Plant optimizations must
+be opt-in, default-off, and quality-gated.
+
 ## Enter Container
 
 ```bash

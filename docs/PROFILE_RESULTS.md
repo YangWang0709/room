@@ -39,6 +39,62 @@ The three active opt-in speed points are:
 All remain disabled by default in the original Infinigen path and must be
 enabled by script or environment variables.
 
+## Plant Asset Deep Timing - 2026-06-22
+
+Profile type: targeted `LargePlantContainerFactory` microbenchmark with
+enhanced `INFINIGEN_PROFILE_PLANT_ASSETS=1` instrumentation. This round did
+not add a Plant optimization and did not change the stable
+`scripts/run_isaac_static_optimized_10room.sh` defaults.
+
+CSV:
+
+```text
+outputs/bench_plant_assets_deep/infinigen_plant_assets_timing.csv
+```
+
+Result:
+
+| metric | value |
+| --- | ---: |
+| samples | 30 |
+| failures | 0 |
+| CSV rows | 30 |
+| total measured duration | `127.811s` |
+| avg duration | `4.260s` |
+| max duration | `10.106s` |
+| created meshes | 1,142 |
+| created materials | 30 |
+| created textures | 0 |
+| created node groups | 176 |
+| created objects | 1,022 |
+
+The dominant stage was still `plant_spawn_duration`: `99.939s` / `78.2%`.
+Safe method-wrapper attribution inside the concrete monocot factory measured
+`leaf_generation_duration` at `50.844s`, `branch_generation_duration` at
+`20.284s`, and `stem_generation_duration` at `16.744s`.
+`material_generation_duration` was only `0.657s`; material and texture
+creation are not the first Plant bottleneck in this benchmark.
+
+Concrete monocot duration top:
+
+| factory | count | total | avg | max |
+| --- | ---: | ---: | ---: | ---: |
+| `VeratrumMonocotFactory` | 7 | `36.909s` | `5.273s` | `6.488s` |
+| `GrassesMonocotFactory` | 4 | `24.089s` | `6.022s` | `7.888s` |
+| `WheatMonocotFactory` | 2 | `15.044s` | `7.522s` | `10.106s` |
+| `MaizeMonocotFactory` | 4 | `13.067s` | `3.267s` | `4.730s` |
+
+Next Plant optimization should be opt-in only. The first candidate switch name
+is:
+
+```bash
+INFINIGEN_REUSE_PLANT_TEMPLATE_GEOMETRY=1
+```
+
+This is high visual risk and should start narrow, with one concrete monocot
+family and a visual quality gate. `INFINIGEN_REUSE_PLANT_MATERIALS=1` is not
+the first recommendation from this CSV.
+
 ## Populate Multi-Track Profiling - 2026-06-22
 
 Profile type: four independent populate-stage lines. P0 is an opt-in speed

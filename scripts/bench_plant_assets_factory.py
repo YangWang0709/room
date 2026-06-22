@@ -46,7 +46,7 @@ def sample_timeout(seconds: float):
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--samples", type=int, default=20)
+    parser.add_argument("--samples", type=int, default=30)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
         "--factory-class",
@@ -59,6 +59,7 @@ def parse_args() -> argparse.Namespace:
         default=Path("outputs/bench_plant_assets"),
     )
     parser.add_argument("--csv-path", type=Path, default=None)
+    parser.add_argument("--max-factory-seed", type=int, default=100_000_000)
     parser.add_argument("--sample_timeout_seconds", type=float, default=300.0)
     return parser.parse_args()
 
@@ -86,6 +87,8 @@ def benchmark(args: argparse.Namespace) -> int:
 
     if args.samples <= 0:
         raise ValueError("--samples must be positive")
+    if args.max_factory_seed <= 0:
+        raise ValueError("--max-factory-seed must be positive")
 
     factory_classes = {
         "LargePlantContainerFactory": LargePlantContainerFactory,
@@ -114,10 +117,11 @@ def benchmark(args: argparse.Namespace) -> int:
     print(f"factory_class: {args.factory_class}")
     print(f"output_folder: {output_folder}")
     print(f"timing_csv: {csv_path}")
+    print(f"max_factory_seed: {args.max_factory_seed}")
     print(f"sample_timeout_seconds: {args.sample_timeout_seconds}")
 
     for sample_index in range(args.samples):
-        factory_seed = int(rng.integers(0, 1_000_000_000))
+        factory_seed = int(rng.integers(0, args.max_factory_seed))
         inst_seed = int(rng.integers(0, 10_000_000))
         factory = factory_class(factory_seed)
         placeholder = None

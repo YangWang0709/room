@@ -43,6 +43,40 @@ datablock growth attribution for material, texture, and node-group growth.
 Do not start concurrency optimization yet, and do not reduce room count or
 clutter complexity unless a later quality gate explicitly allows it.
 
+## Plant Candidate Bottleneck
+
+The current Plant investigation is timing-only. The stable script
+`scripts/run_isaac_static_optimized_10room.sh` must stay unchanged unless a
+future quality gate explicitly accepts a new opt-in Plant switch.
+
+Latest targeted run:
+
+```bash
+INFINIGEN_PROFILE_PLANT_ASSETS=1 \
+python scripts/bench_plant_assets_factory.py \
+  --samples 30 \
+  --seed 0 \
+  --output_folder outputs/bench_plant_assets_deep
+python scripts/analyze_plant_assets_timing.py \
+  outputs/bench_plant_assets_deep/infinigen_plant_assets_timing.csv
+```
+
+Summary: `30/30` samples succeeded, total measured duration was `127.811s`,
+average `4.260s`, max `10.106s`. `plant_spawn_duration` was `99.939s`
+(`78.2%`). The measured concrete monocot leaf / stem / branch substages were
+the dominant internal cost, while material generation was only `0.657s`.
+
+Recommended next Plant experiment, if continuing this line:
+
+```bash
+INFINIGEN_REUSE_PLANT_TEMPLATE_GEOMETRY=1
+```
+
+Keep it default-off, narrow, and quality-gated. Start with one concrete
+monocot family such as `WheatMonocotFactory`, `GrassesMonocotFactory`, or
+`VeratrumMonocotFactory`. Do not reduce plant count, leaf count, stem count,
+or general plant complexity as the first path. Do not use concurrency or C++.
+
 ## Current Populate Multi-Track Status
 
 The current accepted main speed configuration remains:

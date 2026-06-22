@@ -48,8 +48,10 @@ PLANT_ASSETS_TIMING_FIELDNAMES = [
     "inst_seed",
     "placeholder_name",
     "plant_factory_class",
+    "concrete_plant_factory_class",
     "pot_factory_class",
     "create_asset_total_duration",
+    "container_spawn_duration",
     "geometry_duration",
     "material_duration",
     "pot_create_duration",
@@ -57,9 +59,16 @@ PLANT_ASSETS_TIMING_FIELDNAMES = [
     "dirt_geometry_duration",
     "dirt_material_duration",
     "plant_spawn_duration",
+    "leaf_generation_duration",
+    "stem_generation_duration",
+    "branch_generation_duration",
+    "material_generation_duration",
+    "nodegroup_generation_duration",
+    "modifier_apply_duration",
     "plant_finalize_duration",
     "plant_place_duration",
     "join_duration",
+    "join_objects_duration",
     "mesh_count_before",
     "mesh_count_after",
     "material_count_before",
@@ -78,6 +87,12 @@ PLANT_ASSETS_TIMING_FIELDNAMES = [
     "created_node_group_count",
     "created_object_count",
     "created_image_count",
+    "created_mesh_prefix_top",
+    "created_material_prefix_top",
+    "created_texture_prefix_top",
+    "created_node_group_prefix_top",
+    "created_object_prefix_top",
+    "created_image_prefix_top",
     "success",
     "error_type",
 ]
@@ -115,6 +130,13 @@ def _record_plant_duration(row: dict, field: str, start_time: float):
     row[field] = row.get(field, 0.0) + time.perf_counter() - start_time
 
 
+def _concrete_plant_factory_class(factory):
+    concrete_factory = getattr(factory.plant_factory, "factory", None)
+    if concrete_factory is None:
+        return ""
+    return concrete_factory.__class__.__name__
+
+
 def _empty_plant_assets_timing_row(factory, i, params, before_sets):
     row = {
         "factory_class": factory.__class__.__name__,
@@ -122,8 +144,10 @@ def _empty_plant_assets_timing_row(factory, i, params, before_sets):
         "inst_seed": i,
         "placeholder_name": getattr(params.get("placeholder"), "name", ""),
         "plant_factory_class": factory.plant_factory.__class__.__name__,
+        "concrete_plant_factory_class": _concrete_plant_factory_class(factory),
         "pot_factory_class": factory.base_factory.__class__.__name__,
         "create_asset_total_duration": 0.0,
+        "container_spawn_duration": 0.0,
         "geometry_duration": 0.0,
         "material_duration": 0.0,
         "pot_create_duration": 0.0,
@@ -131,9 +155,16 @@ def _empty_plant_assets_timing_row(factory, i, params, before_sets):
         "dirt_geometry_duration": 0.0,
         "dirt_material_duration": 0.0,
         "plant_spawn_duration": 0.0,
+        "leaf_generation_duration": 0.0,
+        "stem_generation_duration": 0.0,
+        "branch_generation_duration": 0.0,
+        "material_generation_duration": 0.0,
+        "nodegroup_generation_duration": 0.0,
+        "modifier_apply_duration": 0.0,
         "plant_finalize_duration": 0.0,
         "plant_place_duration": 0.0,
         "join_duration": 0.0,
+        "join_objects_duration": 0.0,
         "success": False,
         "error_type": "",
     }
@@ -142,8 +173,74 @@ def _empty_plant_assets_timing_row(factory, i, params, before_sets):
 
 
 def _finish_plant_assets_timing_row(row: dict, before_sets):
-    profile_utils.add_datablock_after_counts(row, before_sets)
+    profile_utils.add_datablock_after_counts(
+        row,
+        before_sets,
+        include_name_samples=True,
+        sample_limit=20,
+        prefix_limit=50,
+    )
     _write_plant_assets_timing_row(row)
+
+
+def _wrap_plant_stage_method(row: dict, target, method_name: str, duration_field: str):
+    if target is None or not hasattr(target, method_name):
+        return None
+
+    original = getattr(target, method_name)
+    if not callable(original):
+        return None
+
+    def timed_method(*args, **kwargs):
+        stage_start = time.perf_counter()
+        try:
+            return original(*args, **kwargs)
+        finally:
+            _record_plant_duration(row, duration_field, stage_start)
+
+    setattr(target, method_name, timed_method)
+    return target, method_name, original
+
+
+def _install_plant_stage_timing(row: dict, plant_factory):
+    concrete_factory = getattr(plant_factory, "factory", None)
+    wrapped = []
+
+    for method_name in ("build_leaf",):
+        wrapped_item = _wrap_plant_stage_method(
+            row, concrete_factory, method_name, "leaf_generation_duration"
+        )
+        if wrapped_item is not None:
+            wrapped.append(wrapped_item)
+
+    for method_name in ("build_stem",):
+        wrapped_item = _wrap_plant_stage_method(
+            row, concrete_factory, method_name, "stem_generation_duration"
+        )
+        if wrapped_item is not None:
+            wrapped.append(wrapped_item)
+
+    for method_name in ("build_branch", "build_husk"):
+        wrapped_item = _wrap_plant_stage_method(
+            row, concrete_factory, method_name, "branch_generation_duration"
+        )
+        if wrapped_item is not None:
+            wrapped.append(wrapped_item)
+
+    for attr_name in ("branch_factory", "branches_factory", "ear_factory"):
+        nested_factory = getattr(concrete_factory, attr_name, None)
+        wrapped_item = _wrap_plant_stage_method(
+            row, nested_factory, "create_asset", "branch_generation_duration"
+        )
+        if wrapped_item is not None:
+            wrapped.append(wrapped_item)
+
+    return wrapped
+
+
+def _restore_plant_stage_timing(wrapped):
+    for target, method_name, original in reversed(wrapped):
+        setattr(target, method_name, original)
 
 
 class PlantPotFactory(PotFactory):
@@ -298,9 +395,14 @@ class PlantContainerFactory(AssetFactory):
             step_start_time = time.perf_counter()
             try:
                 self.dirt_surface.apply(dirt_)
-                butil.apply_modifiers(dirt_)
             finally:
                 _record_plant_duration(row, "dirt_material_duration", step_start_time)
+
+            step_start_time = time.perf_counter()
+            try:
+                butil.apply_modifiers(dirt_)
+            finally:
+                _record_plant_duration(row, "modifier_apply_duration", step_start_time)
 
             step_start_time = time.perf_counter()
             try:
@@ -312,12 +414,16 @@ class PlantContainerFactory(AssetFactory):
                 _record_plant_duration(row, "dirt_geometry_duration", step_start_time)
 
             step_start_time = time.perf_counter()
+            wrapped_stage_methods = _install_plant_stage_timing(
+                row, self.plant_factory
+            )
             try:
                 plant = self.plant_factory.spawn_asset(
                     i=i, loc=(0, 0, 0), rot=(0, 0, 0)
                 )
                 origin2lowest(plant, approximate=True)
             finally:
+                _restore_plant_stage_timing(wrapped_stage_methods)
                 _record_plant_duration(row, "plant_spawn_duration", step_start_time)
 
             step_start_time = time.perf_counter()
@@ -342,7 +448,15 @@ class PlantContainerFactory(AssetFactory):
                 obj = join_objects([obj, plant, dirt_])
             finally:
                 _record_plant_duration(row, "join_duration", step_start_time)
+                row["join_objects_duration"] = row["join_duration"]
 
+            row["container_spawn_duration"] = (
+                row["pot_create_duration"]
+                + row["pot_finalize_duration"]
+                + row["dirt_geometry_duration"]
+                + row["dirt_material_duration"]
+                + row["modifier_apply_duration"]
+            )
             row["geometry_duration"] = (
                 row["pot_create_duration"]
                 + row["dirt_geometry_duration"]
@@ -355,6 +469,7 @@ class PlantContainerFactory(AssetFactory):
                 + row["dirt_material_duration"]
                 + row["plant_finalize_duration"]
             )
+            row["material_generation_duration"] = row["material_duration"]
             row["success"] = True
             return obj
         except BaseException as exc:
