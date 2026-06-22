@@ -30,6 +30,9 @@ NATURE_SHELF_TRINKETS_TIMING_ENV_VAR = "INFINIGEN_PROFILE_NATURE_SHELF_TRINKETS"
 NATURE_SHELF_TRINKETS_TIMING_CSV_ENV_VAR = (
     "INFINIGEN_NATURE_SHELF_TRINKETS_TIMING_CSV"
 )
+FAST_NATURE_TRINKET_STABLE_POSE_ENV_VAR = (
+    "INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE"
+)
 NATURE_SHELF_TRINKETS_TIMING_CSV_NAME = (
     "infinigen_nature_shelf_trinkets_timing.csv"
 )
@@ -51,9 +54,14 @@ NATURE_SHELF_TRINKETS_TIMING_FIELDNAMES = [
     "apply_modifiers_duration",
     "obj2trimesh_duration",
     "stable_pose_duration",
+    "fast_stable_pose_duration",
     "apply_rotation_transform_duration",
     "scale_and_position_duration",
     "apply_final_location_transform_duration",
+    "fast_stable_pose_enabled",
+    "fast_stable_pose_used",
+    "stable_pose_mode",
+    "skipped_compute_stable_poses",
     "mesh_vertex_count",
     "mesh_face_count",
     "mesh_edge_count",
@@ -106,6 +114,10 @@ def _env_truthy(name: str) -> bool:
 
 def _profile_nature_shelf_trinkets_enabled() -> bool:
     return _env_truthy(NATURE_SHELF_TRINKETS_TIMING_ENV_VAR)
+
+
+def _fast_nature_trinket_stable_pose_enabled() -> bool:
+    return _env_truthy(FAST_NATURE_TRINKET_STABLE_POSE_ENV_VAR)
 
 
 def _nature_shelf_trinkets_timing_csv_path() -> Path:
@@ -177,6 +189,20 @@ def _object_tree_count(asset):
         return ""
 
 
+def _is_creature_base_factory(base_factory) -> bool:
+    return isinstance(
+        base_factory,
+        (creatures.HerbivoreFactory, creatures.CarnivoreFactory),
+    )
+
+
+def _fast_stable_pose_allowed(base_factory) -> bool:
+    return isinstance(
+        base_factory,
+        (mollusk.ClamFactory, mollusk.MusselFactory, mollusk.ScallopFactory),
+    )
+
+
 def _mesh_digest(mesh: trimesh.Trimesh) -> str:
     digest = hashlib.blake2b(digest_size=12)
     vertices = np.ascontiguousarray(np.asarray(mesh.vertices))
@@ -242,9 +268,14 @@ def _empty_timing_row(
         "apply_modifiers_duration": 0.0,
         "obj2trimesh_duration": 0.0,
         "stable_pose_duration": 0.0,
+        "fast_stable_pose_duration": 0.0,
         "apply_rotation_transform_duration": 0.0,
         "scale_and_position_duration": 0.0,
         "apply_final_location_transform_duration": 0.0,
+        "fast_stable_pose_enabled": _fast_nature_trinket_stable_pose_enabled(),
+        "fast_stable_pose_used": False,
+        "stable_pose_mode": "original",
+        "skipped_compute_stable_poses": False,
         "mesh_vertex_count": "",
         "mesh_face_count": "",
         "mesh_edge_count": "",
@@ -342,8 +373,10 @@ class NatureShelfTrinketsFactory(AssetFactory):
         # butil.modify_mesh(asset, 'DECIMATE')
         butil.apply_transform(asset, loc=True)
         butil.apply_modifiers(asset)
-        if isinstance(self.base_factory, creatures.HerbivoreFactory) or isinstance(
-            self.base_factory, creatures.CarnivoreFactory
+        if _is_creature_base_factory(self.base_factory):
+            pass
+        elif _fast_nature_trinket_stable_pose_enabled() and _fast_stable_pose_allowed(
+            self.base_factory
         ):
             pass
         else:
@@ -411,10 +444,21 @@ class NatureShelfTrinketsFactory(AssetFactory):
             finally:
                 _record_duration(row, "apply_modifiers_duration", step_start_time)
 
-            if isinstance(self.base_factory, creatures.HerbivoreFactory) or isinstance(
-                self.base_factory, creatures.CarnivoreFactory
-            ):
+            if _is_creature_base_factory(self.base_factory):
                 pass
+            elif (
+                _fast_nature_trinket_stable_pose_enabled()
+                and _fast_stable_pose_allowed(self.base_factory)
+            ):
+                step_start_time = time.perf_counter()
+                try:
+                    row["fast_stable_pose_used"] = True
+                    row["stable_pose_mode"] = "fast_bbox_bottom_align"
+                    row["skipped_compute_stable_poses"] = True
+                finally:
+                    _record_duration(
+                        row, "fast_stable_pose_duration", step_start_time
+                    )
             else:
                 if isinstance(asset, trimesh.Trimesh):
                     mesh = asset

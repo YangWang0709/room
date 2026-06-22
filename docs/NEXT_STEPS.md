@@ -60,34 +60,66 @@ this sample. Material / texture / node-group creation is not the first
 duration target in this benchmark, even though creature factories still create
 most materials and node groups.
 
+An opt-in fast shell stable-pose experiment now exists behind:
+
+```bash
+INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
+```
+
+It only affects `ClamFactory`, `MusselFactory`, and `ScallopFactory`. It does
+not affect `CoralFactory` because Coral has separate `obj2trimesh` cost and
+higher shape / support risk. The shell-only 100-sample A/B showed total time
+dropping from `268.269s` to `10.937s`, with `0` failures and unchanged mesh /
+object / material counts. The unfiltered candidate run was not completed
+because it stalled on a non-fast `CoralFactory` sample, so use the shell-only
+A/B only as evidence for the fast scope itself.
+
+A small manual visual check blend was generated at:
+
+```text
+outputs/bench_nature_shelf_trinkets_pose_ab/visual_check_fast_shell/nature_shelf_trinkets_bench.blend
+```
+
+This output is not committed. Open it manually in Blender or Isaac and inspect
+for floating, inverted shells, bottom-alignment errors, shelf intersection, or
+obvious visual quality loss.
+
 Recommended next order:
 
 1. Do not rerun a full 10-room scene just to collect NatureShelfTrinkets
    internals. The bounded 1800s sample timed out inside `[solve_large]`, did
    not reach final `populate_assets`, and wrote no Nature timing CSV.
-2. Use the targeted benchmark for more samples or specific seeds when the goal
+2. Manually inspect the fast shell visual check blend. Do not enter a full
+   Isaac quality run until the small blend has no obvious floating, inverted,
+   or intersecting shell trinkets.
+3. If the small visual check passes, run a full Isaac static visual quality
+   test with:
+   `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1`,
+   `INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1`,
+   `INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1`, and
+   `populate_doors.door_chance=0`.
+4. Keep exact stable-pose cache off the main path unless a later full-scene or
+   larger targeted sample shows repeated exact candidate keys.
+5. Use the targeted benchmark for more samples or specific seeds when the goal
    is internal cost attribution. Keep interpreting it as a microbenchmark, not
    complete-scene walltime.
-3. First inspect stable-pose-heavy paths, starting with `ClamFactory`, then
+6. First inspect stable-pose-heavy paths, starting with `ClamFactory`, then
    `MusselFactory`. Look at the geometry fed into
    `trimesh.poses.compute_stable_poses()` and whether a separate opt-in
    simplification path can preserve visual quality.
-4. Inspect `CoralFactory` separately for `obj2trimesh` conversion cost on very
+7. Inspect `CoralFactory` separately for `obj2trimesh` conversion cost on very
    large meshes before changing stable-pose logic.
-5. Do not start with exact stable-pose cache unless a later full-scene or
-   larger targeted sample shows repeated exact candidate keys. Any cache must
-   be opt-in.
-6. If a later larger sample shows `base_factory.spawn_asset` dominating,
+8. If a later larger sample shows `base_factory.spawn_asset` dominating,
    inspect the concrete wrapped base factory before broad wrapper changes.
-7. If a later CSV shows repeated material, texture, or node-group names with high
+9. If a later CSV shows repeated material, texture, or node-group names with high
    creation counts, design a separate opt-in reuse experiment for the narrowest
    repeated template only.
-8. Keep `BookStackFactory` and `LargePlantContainerFactory` as second-priority
+10. Keep `BookStackFactory` and `LargePlantContainerFactory` as second-priority
    populate targets after the NatureShelfTrinkets evidence is clearer.
-9. Do not run concurrent benchmarks in this phase.
-10. Do not reduce clutter count or scene complexity unless a later quality gate
+11. Do not run concurrent benchmarks in this phase.
+12. Do not reduce clutter count or scene complexity unless a later quality gate
    explicitly allows it.
-11. Do not change solver behavior, proposal order, accept/reject behavior, or
+13. Do not change solver behavior, proposal order, accept/reject behavior, or
    random number flow.
 
 ## Latest LargeShelf Child Reuse Short Sample

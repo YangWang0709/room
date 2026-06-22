@@ -1,5 +1,102 @@
 # Profile Results
 
+## NatureShelfTrinkets Fast Shell Stable Pose - 2026-06-22
+
+Profile type: opt-in microbenchmark experiment for
+`NatureShelfTrinketsFactory` shell trinket stable-pose simplification. Default
+behavior is unchanged. The experiment is enabled only with:
+
+```bash
+INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
+```
+
+The first version applies only to:
+
+```text
+ClamFactory
+MusselFactory
+ScallopFactory
+```
+
+It does not apply to `CoralFactory`, creature factories, pinecones, conch,
+auger, volute, mollusk, rock, or boulder trinkets. It does not change
+`base_factory.spawn_asset()`, object / mesh / material creation, solver
+behavior, batch remove, LargeShelf reuse, room count, clutter count, or
+concurrency. It skips `obj2trimesh()` and
+`trimesh.poses.compute_stable_poses()` only for the three shell factories and
+uses the existing scale and bbox bottom-alignment path. It does not add new
+random yaw or intentionally change random-number consumption.
+
+The previous exact stable-pose cache idea remains unattractive for now because
+the 100-sample complexity benchmark had `75` candidate keys and `0` repeats.
+
+Unfiltered A/B note: the 100-sample unfiltered baseline completed with
+`100` rows and `0` failures. The matching unfiltered candidate was started,
+but stalled on sample 14, a non-fast `CoralFactory` row, and was terminated
+after the Python signal timeout did not interrupt the underlying computation.
+That partial unfiltered candidate is not used as speed evidence.
+
+Shell-only A/B used:
+
+```bash
+--base-factory-filter ClamFactory,MusselFactory,ScallopFactory
+```
+
+The filter uses seed rejection and does not override
+`NatureShelfTrinketsFactory` base-factory selection.
+
+CSVs:
+
+```text
+outputs/bench_nature_shelf_trinkets_pose_ab/baseline_shell/infinigen_nature_shelf_trinkets_timing.csv
+outputs/bench_nature_shelf_trinkets_pose_ab/candidate_fast_shell/infinigen_nature_shelf_trinkets_timing.csv
+```
+
+Summary:
+
+| metric | baseline | candidate |
+| --- | ---: | ---: |
+| CSV data rows | 100 | 100 |
+| successful samples | 100 | 100 |
+| failures | 0 | 0 |
+| total duration | `268.269s` | `10.937s` |
+| total speedup |  | `24.5x` |
+| `stable_pose_duration` | `217.894s` | `0.000s` |
+| `obj2trimesh_duration` | `31.233s` | `0.000s` |
+| fast rows used | 0 | 100 |
+| skipped compute rows | 0 | 100 |
+
+Datablock and object counts:
+
+| metric | baseline | candidate | delta |
+| --- | ---: | ---: | ---: |
+| materials | 0 | 0 | 0 |
+| textures | 0 | 0 | 0 |
+| node groups | 0 | 0 | 0 |
+| meshes | 100 | 100 | 0 |
+| objects | 100 | 100 | 0 |
+
+Per base factory:
+
+| base factory | baseline total | candidate total | speedup |
+| --- | ---: | ---: | ---: |
+| `ClamFactory` | `128.370s` | `4.173s` | `30.8x` |
+| `MusselFactory` | `76.398s` | `3.594s` | `21.3x` |
+| `ScallopFactory` | `63.502s` | `3.171s` | `20.0x` |
+
+Small visual check blend:
+
+```text
+outputs/bench_nature_shelf_trinkets_pose_ab/visual_check_fast_shell/nature_shelf_trinkets_bench.blend
+```
+
+It contains 12 fast-mode shell samples arranged in a grid. This file is not
+committed. It must be inspected manually in Blender or Isaac for floating,
+inversion, bad bottom alignment, shelf intersection, or unacceptable visual
+orientation before a full 10-room Isaac quality test. If the visual sample
+looks acceptable, the next gate should be a full Isaac static visual quality
+run with this fast flag enabled alongside the current accepted speed flags.
+
 ## NatureShelfTrinkets Stable Pose Complexity - 2026-06-22
 
 Profile type: isolated 100-sample

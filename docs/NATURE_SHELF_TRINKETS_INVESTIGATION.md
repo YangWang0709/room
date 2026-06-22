@@ -388,6 +388,112 @@ populate sample shows repeated meshes. Stable-pose simplification or a
 mesh-complexity guard is a stronger next investigation, but only as a separate
 opt-in experiment with a visual-quality gate.
 
+## Opt-In Fast Shell Stable Pose Experiment
+
+Added an opt-in experiment behind:
+
+```bash
+INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
+```
+
+Default behavior is unchanged when the variable is unset. The first fast mode
+is intentionally narrow and applies only to low-risk shell-like wrapped base
+factories:
+
+```text
+ClamFactory
+MusselFactory
+ScallopFactory
+```
+
+Fast mode does not change `base_factory.spawn_asset()`, object count, mesh
+creation, materials, textures, node groups, solver behavior, or room / clutter
+counts. It skips `obj2trimesh()` and
+`trimesh.poses.compute_stable_poses()` for those three factories and leaves
+the generated asset in its base-factory orientation. The existing later scale
+and bbox bottom-alignment code still places the trinket into the placeholder.
+No extra random yaw is sampled, so the experiment does not intentionally
+change random-number consumption.
+
+Fast mode does not apply to:
+
+```text
+CoralFactory
+HerbivoreFactory
+CarnivoreFactory
+PineconeFactory
+ConchFactory
+AugerFactory
+VoluteFactory
+MolluskFactory
+BlenderRockFactory
+BoulderFactory
+```
+
+Coral is deliberately excluded because it has large `obj2trimesh` conversion
+cost and more complex shape / support risk.
+
+New timing fields:
+
+```text
+fast_stable_pose_enabled
+fast_stable_pose_used
+stable_pose_mode
+fast_stable_pose_duration
+skipped_compute_stable_poses
+```
+
+An unfiltered 100-sample baseline completed with `100` rows and `0` failures.
+The matching unfiltered candidate was started with fast mode enabled, but it
+stalled on sample 14, a non-fast `CoralFactory` row, and was terminated after
+the Python signal timeout did not interrupt the underlying computation. That
+partial run is not used as speed evidence for fast shell pose.
+
+To isolate the intended fast-mode scope, a filtered shell-only A/B was run
+with:
+
+```bash
+--base-factory-filter ClamFactory,MusselFactory,ScallopFactory
+```
+
+The filter uses seed rejection and does not override
+`NatureShelfTrinketsFactory` base-factory selection.
+
+Shell-only A/B result:
+
+| metric | baseline | candidate |
+| --- | ---: | ---: |
+| CSV data rows | 100 | 100 |
+| failures | 0 | 0 |
+| total duration | `268.269s` | `10.937s` |
+| `stable_pose_duration` | `217.894s` | `0.000s` |
+| `obj2trimesh_duration` | `31.233s` | `0.000s` |
+| fast rows used | 0 | 100 |
+| skipped compute rows | 0 | 100 |
+| meshes created | 100 | 100 |
+| objects created | 100 | 100 |
+| materials created | 0 | 0 |
+
+Per base factory shell speedup:
+
+| base factory | baseline total | candidate total | speedup |
+| --- | ---: | ---: | ---: |
+| `ClamFactory` | `128.370s` | `4.173s` | `30.8x` |
+| `MusselFactory` | `76.398s` | `3.594s` | `21.3x` |
+| `ScallopFactory` | `63.502s` | `3.171s` | `20.0x` |
+
+A small fast-mode visual check blend was generated for manual inspection:
+
+```text
+outputs/bench_nature_shelf_trinkets_pose_ab/visual_check_fast_shell/nature_shelf_trinkets_bench.blend
+```
+
+It contains 12 fast-mode Clam / Mussel / Scallop samples arranged in a grid.
+This output is intentionally not committed. It must be opened manually in
+Blender or Isaac before accepting the experiment. Inspect for obvious
+floating, inverted placement, bad bottom alignment, shelf-surface
+intersection, or unacceptable loss of orientation quality.
+
 ## Current Judgment
 
 The recent complete 10-room proxy log points to populate clutter as the new

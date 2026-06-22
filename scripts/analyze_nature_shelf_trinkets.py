@@ -27,6 +27,7 @@ SUBSTAGE_FIELDS = [
     "apply_modifiers_duration",
     "obj2trimesh_duration",
     "stable_pose_duration",
+    "fast_stable_pose_duration",
     "apply_rotation_transform_duration",
     "scale_and_position_duration",
     "apply_final_location_transform_duration",
@@ -42,6 +43,7 @@ BASE_FACTORY_STAGE_FIELDS = [
     "base_factory_spawn_duration",
     "obj2trimesh_duration",
     "stable_pose_duration",
+    "fast_stable_pose_duration",
     "apply_modifiers_duration",
 ]
 
@@ -56,6 +58,10 @@ BBOX_EXTENT_FIELDS = [
     "bbox_extent_z",
 ]
 CACHE_KEY_FIELD = "stable_pose_cache_candidate_key"
+FAST_COUNT_FIELDS = [
+    "fast_stable_pose_used",
+    "skipped_compute_stable_poses",
+]
 
 
 def as_float(row: dict, field: str) -> float:
@@ -70,6 +76,10 @@ def as_int(row: dict, field: str) -> int:
     if value in ("", None):
         return 0
     return int(float(value))
+
+
+def as_bool(row: dict, field: str) -> bool:
+    return str(row.get(field, "")).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def split_names(value: str) -> list[str]:
@@ -110,6 +120,8 @@ def empty_base_stats() -> dict:
         stats[f"{field}_max"] = 0.0
     for field in COUNT_FIELDS:
         stats[field] = 0
+    for field in FAST_COUNT_FIELDS:
+        stats[field] = 0
     for field in MESH_FIELDS:
         stats[f"{field}_total"] = 0.0
         stats[f"{field}_max"] = 0
@@ -129,6 +141,8 @@ def build_base_factory_stats(rows: list[dict]) -> dict[str, dict]:
             stats[f"{field}_max"] = max(stats[f"{field}_max"], value)
         for field in COUNT_FIELDS:
             stats[field] += as_int(row, field)
+        for field in FAST_COUNT_FIELDS:
+            stats[field] += int(as_bool(row, field))
         if any(as_int(row, field) > 0 for field in MESH_FIELDS):
             stats["mesh_complexity_count"] += 1
             for field in MESH_FIELDS:
@@ -152,6 +166,7 @@ def print_base_factory_top(by_base: dict[str, dict], limit: int = 20) -> None:
         "spawn_total,spawn_avg,spawn_max,"
         "obj2trimesh_total,obj2trimesh_avg,obj2trimesh_max,"
         "stable_total,stable_avg,stable_max,"
+        "fast_total,fast_avg,fast_max,fast_used,skipped_compute,"
         "modifiers_total,modifiers_avg,modifiers_max,"
         "materials,textures,node_groups,meshes,objects"
     )
@@ -175,6 +190,11 @@ def print_base_factory_top(by_base: dict[str, dict], limit: int = 20) -> None:
             f"{stats['stable_pose_duration_total']:.6f},"
             f"{average(stats, 'stable_pose_duration_total'):.6f},"
             f"{stats['stable_pose_duration_max']:.6f},"
+            f"{stats['fast_stable_pose_duration_total']:.6f},"
+            f"{average(stats, 'fast_stable_pose_duration_total'):.6f},"
+            f"{stats['fast_stable_pose_duration_max']:.6f},"
+            f"{stats['fast_stable_pose_used']},"
+            f"{stats['skipped_compute_stable_poses']},"
             f"{stats['apply_modifiers_duration_total']:.6f},"
             f"{average(stats, 'apply_modifiers_duration_total'):.6f},"
             f"{stats['apply_modifiers_duration_max']:.6f},"
@@ -464,9 +484,200 @@ def print_failed_instances(failed: list[dict]) -> None:
     print()
 
 
+def successful_rows(rows: list[dict]) -> list[dict]:
+    return [row for row in rows if str(row.get("success", "")).lower() == "true"]
+
+
+def failed_rows(rows: list[dict]) -> list[dict]:
+    return [row for row in rows if str(row.get("success", "")).lower() != "true"]
+
+
+def stable_pose_mode(row: dict) -> str:
+    mode = row.get("stable_pose_mode", "")
+    if mode:
+        return mode
+    if as_bool(row, "fast_stable_pose_used"):
+        return "fast_bbox_bottom_align"
+    return "original"
+
+
+def summarize_totals(rows: list[dict]) -> dict:
+    successful = successful_rows(rows)
+    return {
+        "csv_rows": len(rows),
+        "successful": len(successful),
+        "failed": len(rows) - len(successful),
+        "total_duration": sum(as_float(row, DURATION_FIELD) for row in successful),
+        "stable_pose_duration": sum(
+            as_float(row, "stable_pose_duration") for row in successful
+        ),
+        "obj2trimesh_duration": sum(
+            as_float(row, "obj2trimesh_duration") for row in successful
+        ),
+        "fast_stable_pose_duration": sum(
+            as_float(row, "fast_stable_pose_duration") for row in successful
+        ),
+        "fast_used": sum(as_bool(row, "fast_stable_pose_used") for row in successful),
+        "skipped_compute": sum(
+            as_bool(row, "skipped_compute_stable_poses") for row in successful
+        ),
+        "materials": sum(as_int(row, "created_material_count") for row in successful),
+        "textures": sum(as_int(row, "created_texture_count") for row in successful),
+        "node_groups": sum(
+            as_int(row, "created_node_group_count") for row in successful
+        ),
+        "meshes": sum(as_int(row, "created_mesh_count") for row in successful),
+        "objects": sum(as_int(row, "created_object_count") for row in successful),
+    }
+
+
+def print_fast_mode_summary(successful: list[dict]) -> None:
+    print("Fast stable pose mode summary")
+    print("-" * 38)
+    fast_enabled_count = sum(as_bool(row, "fast_stable_pose_enabled") for row in successful)
+    fast_used_count = sum(as_bool(row, "fast_stable_pose_used") for row in successful)
+    skipped_count = sum(as_bool(row, "skipped_compute_stable_poses") for row in successful)
+    print(f"fast_stable_pose_enabled rows: {fast_enabled_count}")
+    print(f"fast_stable_pose_used rows:    {fast_used_count}")
+    print(f"skipped_compute_stable_poses:  {skipped_count}")
+    print(
+        "mode,count,total,avg,stable_pose_total,obj2trimesh_total,"
+        "fast_pose_total"
+    )
+    by_mode = defaultdict(list)
+    for row in successful:
+        by_mode[stable_pose_mode(row)].append(row)
+    for mode, rows in sorted(by_mode.items()):
+        total = sum(as_float(row, DURATION_FIELD) for row in rows)
+        print(
+            f"{mode},"
+            f"{len(rows)},"
+            f"{total:.6f},"
+            f"{total / len(rows) if rows else 0.0:.6f},"
+            f"{sum(as_float(row, 'stable_pose_duration') for row in rows):.6f},"
+            f"{sum(as_float(row, 'obj2trimesh_duration') for row in rows):.6f},"
+            f"{sum(as_float(row, 'fast_stable_pose_duration') for row in rows):.6f}"
+        )
+    print()
+
+
+def aggregate_by_base(rows: list[dict]) -> dict[str, dict]:
+    by_base = defaultdict(lambda: defaultdict(float))
+    for row in successful_rows(rows):
+        base_factory = row.get("base_factory_class") or "(unknown)"
+        stats = by_base[base_factory]
+        stats["count"] += 1
+        stats["total_duration"] += as_float(row, DURATION_FIELD)
+        stats["stable_pose_duration"] += as_float(row, "stable_pose_duration")
+        stats["obj2trimesh_duration"] += as_float(row, "obj2trimesh_duration")
+        stats["fast_stable_pose_duration"] += as_float(
+            row, "fast_stable_pose_duration"
+        )
+        stats["fast_used"] += int(as_bool(row, "fast_stable_pose_used"))
+        stats["skipped_compute"] += int(as_bool(row, "skipped_compute_stable_poses"))
+        for field in COUNT_FIELDS:
+            stats[field] += as_int(row, field)
+    return by_base
+
+
+def speedup_text(baseline: float, candidate: float) -> str:
+    if candidate <= 0:
+        return "inf" if baseline > 0 else "0.000"
+    return f"{baseline / candidate:.3f}"
+
+
+def print_comparison_summary(baseline_rows: list[dict], candidate_rows: list[dict]):
+    baseline = summarize_totals(baseline_rows)
+    candidate = summarize_totals(candidate_rows)
+
+    print("Baseline vs candidate comparison")
+    print("=" * 38)
+    print("metric,baseline,candidate,delta,speedup")
+    for field in (
+        "total_duration",
+        "stable_pose_duration",
+        "obj2trimesh_duration",
+        "fast_stable_pose_duration",
+    ):
+        print(
+            f"{field},"
+            f"{baseline[field]:.6f},"
+            f"{candidate[field]:.6f},"
+            f"{candidate[field] - baseline[field]:.6f},"
+            f"{speedup_text(baseline[field], candidate[field])}"
+        )
+    for field in ("csv_rows", "successful", "failed", "fast_used", "skipped_compute"):
+        print(
+            f"{field},"
+            f"{baseline[field]},"
+            f"{candidate[field]},"
+            f"{candidate[field] - baseline[field]},"
+            ""
+        )
+    print()
+
+    print("Datablock/object count comparison")
+    print("-" * 38)
+    print("metric,baseline,candidate,delta")
+    for field in ("materials", "textures", "node_groups", "meshes", "objects"):
+        print(
+            f"{field},"
+            f"{baseline[field]},"
+            f"{candidate[field]},"
+            f"{candidate[field] - baseline[field]}"
+        )
+    print()
+
+    print("Per base_factory speedup summary")
+    print("-" * 38)
+    print(
+        "base_factory,count_base,count_cand,total_base,total_cand,total_speedup,"
+        "stable_base,stable_cand,obj2_base,obj2_cand,fast_used,skipped_compute,"
+        "materials_delta,meshes_delta,objects_delta"
+    )
+    baseline_by_base = aggregate_by_base(baseline_rows)
+    candidate_by_base = aggregate_by_base(candidate_rows)
+    for base_factory in sorted(
+        set(baseline_by_base) | set(candidate_by_base),
+        key=lambda name: baseline_by_base[name]["total_duration"],
+        reverse=True,
+    ):
+        base_stats = baseline_by_base[base_factory]
+        cand_stats = candidate_by_base[base_factory]
+        print(
+            f"{base_factory},"
+            f"{int(base_stats['count'])},"
+            f"{int(cand_stats['count'])},"
+            f"{base_stats['total_duration']:.6f},"
+            f"{cand_stats['total_duration']:.6f},"
+            f"{speedup_text(base_stats['total_duration'], cand_stats['total_duration'])},"
+            f"{base_stats['stable_pose_duration']:.6f},"
+            f"{cand_stats['stable_pose_duration']:.6f},"
+            f"{base_stats['obj2trimesh_duration']:.6f},"
+            f"{cand_stats['obj2trimesh_duration']:.6f},"
+            f"{int(cand_stats['fast_used'])},"
+            f"{int(cand_stats['skipped_compute'])},"
+            f"{int(cand_stats['created_material_count'] - base_stats['created_material_count'])},"
+            f"{int(cand_stats['created_mesh_count'] - base_stats['created_mesh_count'])},"
+            f"{int(cand_stats['created_object_count'] - base_stats['created_object_count'])}"
+        )
+    print()
+
+    if candidate["failed"]:
+        print("Candidate had failures; do not proceed to visual quality gate yet.")
+    elif candidate["fast_used"] == 0:
+        print("Candidate had no fast rows; check the fast-mode environment variable.")
+    else:
+        print(
+            "No candidate failures were recorded. If the speedup is useful, "
+            "the next gate is manual Blender/Isaac visual inspection for "
+            "floating, inverted, or intersecting shell trinkets."
+        )
+
+
 def summarize_rows(rows: list[dict]) -> None:
-    successful = [row for row in rows if str(row.get("success", "")).lower() == "true"]
-    failed = [row for row in rows if str(row.get("success", "")).lower() != "true"]
+    successful = successful_rows(rows)
+    failed = failed_rows(rows)
     durations = [as_float(row, DURATION_FIELD) for row in successful]
     total_duration = sum(durations)
     max_duration = max(durations, default=0.0)
@@ -483,6 +694,7 @@ def summarize_rows(rows: list[dict]) -> None:
     print()
 
     print_failed_instances(failed)
+    print_fast_mode_summary(successful)
 
     print("Created datablock summary")
     print("-" * 38)
@@ -650,12 +862,25 @@ def main() -> None:
         default=DEFAULT_CSV,
         help=f"Timing CSV path. Defaults to {DEFAULT_CSV}",
     )
+    parser.add_argument(
+        "compare_csv_path",
+        nargs="?",
+        type=Path,
+        default=None,
+        help="Optional candidate CSV path for baseline vs candidate comparison.",
+    )
     args = parser.parse_args()
 
     if not args.csv_path.exists():
         raise SystemExit(f"CSV not found: {args.csv_path}")
+    if args.compare_csv_path is not None and not args.compare_csv_path.exists():
+        raise SystemExit(f"CSV not found: {args.compare_csv_path}")
 
-    summarize_rows(read_rows(args.csv_path))
+    rows = read_rows(args.csv_path)
+    summarize_rows(rows)
+    if args.compare_csv_path is not None:
+        print()
+        print_comparison_summary(rows, read_rows(args.compare_csv_path))
 
 
 if __name__ == "__main__":

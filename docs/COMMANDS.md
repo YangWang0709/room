@@ -241,6 +241,99 @@ Use this timing to decide whether the next behavior-preserving experiment
 should inspect `create_asset`, placeholder deletion, placeholder finalization,
 or `GarbageCollect` context behavior.
 
+## Run NatureShelfTrinkets Targeted Benchmark
+
+Collect isolated `NatureShelfTrinketsFactory.create_asset()` timing without
+running a full indoor scene:
+
+```bash
+INFINIGEN_PROFILE_NATURE_SHELF_TRINKETS=1 \
+python scripts/bench_nature_shelf_trinkets_factory.py \
+  --samples 100 \
+  --seed 0 \
+  --output_folder outputs/bench_nature_shelf_trinkets_100
+```
+
+Analyze:
+
+```bash
+python scripts/analyze_nature_shelf_trinkets.py \
+  outputs/bench_nature_shelf_trinkets_100/infinigen_nature_shelf_trinkets_timing.csv
+```
+
+## Run NatureShelfTrinkets Fast Shell Stable Pose A/B
+
+The opt-in fast shell stable-pose experiment is enabled only with:
+
+```bash
+INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
+```
+
+The current experiment affects only:
+
+```text
+ClamFactory
+MusselFactory
+ScallopFactory
+```
+
+Baseline shell-only benchmark:
+
+```bash
+INFINIGEN_PROFILE_NATURE_SHELF_TRINKETS=1 \
+python scripts/bench_nature_shelf_trinkets_factory.py \
+  --samples 100 \
+  --seed 0 \
+  --base-factory-filter ClamFactory,MusselFactory,ScallopFactory \
+  --output_folder outputs/bench_nature_shelf_trinkets_pose_ab/baseline_shell
+```
+
+Candidate shell-only benchmark:
+
+```bash
+INFINIGEN_PROFILE_NATURE_SHELF_TRINKETS=1 \
+INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1 \
+python scripts/bench_nature_shelf_trinkets_factory.py \
+  --samples 100 \
+  --seed 0 \
+  --base-factory-filter ClamFactory,MusselFactory,ScallopFactory \
+  --output_folder outputs/bench_nature_shelf_trinkets_pose_ab/candidate_fast_shell
+```
+
+Compare the two CSVs:
+
+```bash
+python scripts/analyze_nature_shelf_trinkets.py \
+  outputs/bench_nature_shelf_trinkets_pose_ab/baseline_shell/infinigen_nature_shelf_trinkets_timing.csv \
+  outputs/bench_nature_shelf_trinkets_pose_ab/candidate_fast_shell/infinigen_nature_shelf_trinkets_timing.csv
+```
+
+Generate a small fast-mode visual check blend:
+
+```bash
+INFINIGEN_PROFILE_NATURE_SHELF_TRINKETS=1 \
+INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1 \
+python scripts/bench_nature_shelf_trinkets_factory.py \
+  --samples 12 \
+  --seed 0 \
+  --base-factory-filter ClamFactory,MusselFactory,ScallopFactory \
+  --keep-blend true \
+  --output_folder outputs/bench_nature_shelf_trinkets_pose_ab/visual_check_fast_shell
+```
+
+Open the generated blend manually and check for floating, inverted shells,
+bad bottom alignment, support-surface intersection, or unacceptable visual
+orientation. Do not enable the fast flag in a full run until this visual gate
+passes.
+
+The current recommended full-scene speed configuration remains:
+
+```text
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
+INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+populate_doors.door_chance=0
+```
+
 ## Run GarbageCollect Target Timing
 
 Enable target-level `garbage_collect` / `GarbageCollect` timing:

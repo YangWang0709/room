@@ -21,6 +21,7 @@ if str(REPO_ROOT) not in sys.path:
 CSV_NAME = "infinigen_nature_shelf_trinkets_timing.csv"
 PROFILE_ENV_VAR = "INFINIGEN_PROFILE_NATURE_SHELF_TRINKETS"
 CSV_ENV_VAR = "INFINIGEN_NATURE_SHELF_TRINKETS_TIMING_CSV"
+FAST_STABLE_POSE_ENV_VAR = "INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE"
 GC_TARGET_NAMES = ["objects", "meshes", "textures", "node_groups", "materials"]
 
 
@@ -129,6 +130,24 @@ def delete_object_tree(root, bpy_module, butil_module) -> None:
             butil_module.delete(obj)
 
 
+def place_visual_sample(asset, placeholder, sample_index: int) -> None:
+    columns = 6
+    spacing = 0.35
+    offset = (
+        (sample_index % columns) * spacing,
+        (sample_index // columns) * spacing,
+        0.0,
+    )
+    for root in (asset, placeholder):
+        if root is None:
+            continue
+        root.location.x += offset[0]
+        root.location.y += offset[1]
+    if placeholder is not None:
+        placeholder.display_type = "WIRE"
+        placeholder.hide_render = True
+
+
 def benchmark(args: argparse.Namespace) -> int:
     # Import bpy-dependent modules only after argparse so py_compile remains simple
     # and the script can show argument help without Blender side effects.
@@ -174,8 +193,7 @@ def benchmark(args: argparse.Namespace) -> int:
     failures = 0
     skipped = 0
     total_start = time.perf_counter()
-    last_kept_asset = None
-    last_kept_placeholder = None
+    kept_any = False
 
     print("NatureShelfTrinketsFactory targeted benchmark")
     print(f"samples: {args.samples}")
@@ -186,6 +204,7 @@ def benchmark(args: argparse.Namespace) -> int:
         "base_factory_filter: "
         f"{','.join(sorted(base_factory_filter)) if base_factory_filter else '(none)'}"
     )
+    print(f"fast_stable_pose_env: {os.environ.get(FAST_STABLE_POSE_ENV_VAR, '')}")
     print(f"keep_blend: {args.keep_blend}")
     print(f"sample_timeout_seconds: {args.sample_timeout_seconds}")
 
@@ -211,7 +230,6 @@ def benchmark(args: argparse.Namespace) -> int:
         placeholder = None
         asset = None
         sample_start = time.perf_counter()
-        is_last_sample = sample_index == args.samples - 1
 
         try:
             with butil.GarbageCollect(
@@ -236,9 +254,9 @@ def benchmark(args: argparse.Namespace) -> int:
                     FixedSeed(int_hash((factory.factory_seed, inst_seed))),
                 ):
                     asset = factory.create_asset(inst_seed, placeholder=placeholder)
-                if args.keep_blend and is_last_sample:
-                    last_kept_asset = asset
-                    last_kept_placeholder = placeholder
+                if args.keep_blend:
+                    place_visual_sample(asset, placeholder, sample_index)
+                    kept_any = True
                 else:
                     delete_object_tree(asset, bpy, butil)
                     delete_object_tree(placeholder, bpy, butil)
@@ -261,13 +279,10 @@ def benchmark(args: argparse.Namespace) -> int:
         finally:
             sample_index += 1
 
-    if args.keep_blend and last_kept_asset is not None:
+    if args.keep_blend and kept_any:
         blend_path = output_folder / "nature_shelf_trinkets_bench.blend"
         bpy.ops.wm.save_as_mainfile(filepath=str(blend_path))
         print(f"blend_path: {blend_path}")
-    elif last_kept_asset is not None or last_kept_placeholder is not None:
-        delete_object_tree(last_kept_asset, bpy, butil)
-        delete_object_tree(last_kept_placeholder, bpy, butil)
 
     butil.garbage_collect(gc_targets, keep_in_use=True)
     print(f"total_duration: {time.perf_counter() - total_start:.3f}s")

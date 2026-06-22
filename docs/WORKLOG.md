@@ -1,5 +1,155 @@
 # Worklog
 
+## 2026-06-22 - Opt-in fast stable pose for shell trinkets
+
+### Round Goal
+
+Add a first opt-in `NatureShelfTrinketsFactory` fast stable-pose experiment for
+low-risk shell trinkets only. Default behavior must remain unchanged. No
+solver behavior, random-flow control, room count, clutter count, batch-remove
+behavior, LargeShelf reuse behavior, concurrency, or C++ code was changed.
+
+### Changes
+
+Added:
+
+```bash
+INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
+```
+
+When unset, `NatureShelfTrinketsFactory` uses the original
+`obj2trimesh()` plus `trimesh.poses.compute_stable_poses()` path. When set,
+only these wrapped base factories use the fast path:
+
+```text
+ClamFactory
+MusselFactory
+ScallopFactory
+```
+
+Fast mode is deliberately not applied to:
+
+```text
+CoralFactory
+HerbivoreFactory
+CarnivoreFactory
+PineconeFactory
+ConchFactory
+AugerFactory
+VoluteFactory
+MolluskFactory
+BlenderRockFactory
+BoulderFactory
+```
+
+For the three shell factories, fast mode skips `obj2trimesh()` and
+`compute_stable_poses()`, preserves `base_factory.spawn_asset()`, and leaves
+the existing scale / bbox bottom-alignment placement path in place. It does
+not create or remove objects, meshes, materials, textures, or node groups. It
+does not sample any new random yaw, so there is no intentional random-number
+consumption change.
+
+Extended `INFINIGEN_PROFILE_NATURE_SHELF_TRINKETS=1` CSV rows with:
+
+```text
+fast_stable_pose_enabled
+fast_stable_pose_used
+stable_pose_mode
+fast_stable_pose_duration
+skipped_compute_stable_poses
+```
+
+Updated `scripts/analyze_nature_shelf_trinkets.py` to report original vs fast
+mode counts and duration, skipped compute counts, per-base factory speedups,
+failures, and datablock / object count deltas. It can now compare two CSVs:
+
+```bash
+python scripts/analyze_nature_shelf_trinkets.py baseline.csv candidate.csv
+```
+
+Updated `scripts/bench_nature_shelf_trinkets_factory.py` so
+`--keep-blend true` preserves generated samples in a small grid for manual
+visual inspection.
+
+### Benchmark Result
+
+An unfiltered 100-sample baseline completed with `100` rows and `0` failures.
+The matching unfiltered candidate was started with fast mode enabled, but it
+stalled on sample 14, a non-fast `CoralFactory` row, and was terminated after
+the Python signal timeout did not interrupt the underlying computation. Treat
+that candidate as incomplete and not as fast-mode speed evidence.
+
+A shell-only A/B was then run with:
+
+```bash
+--base-factory-filter ClamFactory,MusselFactory,ScallopFactory
+```
+
+The filter uses seed rejection and does not override the
+`NatureShelfTrinketsFactory` base-factory choice.
+
+Shell-only CSVs:
+
+```text
+outputs/bench_nature_shelf_trinkets_pose_ab/baseline_shell/infinigen_nature_shelf_trinkets_timing.csv
+outputs/bench_nature_shelf_trinkets_pose_ab/candidate_fast_shell/infinigen_nature_shelf_trinkets_timing.csv
+```
+
+Shell-only result:
+
+| metric | baseline | candidate |
+| --- | ---: | ---: |
+| CSV data rows | 100 | 100 |
+| successful samples | 100 | 100 |
+| failures | 0 | 0 |
+| total duration | `268.269s` | `10.937s` |
+| `stable_pose_duration` | `217.894s` | `0.000s` |
+| `obj2trimesh_duration` | `31.233s` | `0.000s` |
+| fast rows used | 0 | 100 |
+| skipped compute rows | 0 | 100 |
+| meshes created | 100 | 100 |
+| objects created | 100 | 100 |
+| materials created | 0 | 0 |
+
+Per base factory:
+
+| base factory | baseline total | candidate total | speedup |
+| --- | ---: | ---: | ---: |
+| `ClamFactory` | `128.370s` | `4.173s` | `30.8x` |
+| `MusselFactory` | `76.398s` | `3.594s` | `21.3x` |
+| `ScallopFactory` | `63.502s` | `3.171s` | `20.0x` |
+
+### Visual Check Artifact
+
+Generated a small fast-mode visual check blend:
+
+```text
+outputs/bench_nature_shelf_trinkets_pose_ab/visual_check_fast_shell/nature_shelf_trinkets_bench.blend
+```
+
+It contains 12 fast-mode Clam / Mussel / Scallop samples arranged in a grid
+with wire placeholders. This file is not committed. It still needs manual
+Blender or Isaac inspection for floating, inverted shells, bad bottom
+alignment, support-surface intersection, and unacceptable visual orientation.
+
+### Judgment
+
+The shell-only A/B shows a very large timing win and no benchmark failures or
+datablock / object count anomalies within the fast-mode scope. It is worth
+entering a manual visual gate next. If the small blend looks acceptable, the
+next full-scene quality gate should run with:
+
+```text
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
+INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
+populate_doors.door_chance=0
+```
+
+Do not include Coral in this fast mode yet. Do not pursue exact stable-pose
+cache before a later sample shows repeated exact candidate keys. Do not reduce
+clutter count or add concurrency.
+
 ## 2026-06-22 - NatureShelfTrinkets stable pose complexity
 
 ### Round Goal
