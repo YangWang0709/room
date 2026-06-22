@@ -269,12 +269,16 @@ The opt-in fast shell stable-pose experiment is enabled only with:
 INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
 ```
 
-The current experiment affects only:
+The current experiment affects:
 
 ```text
 ClamFactory
 MusselFactory
 ScallopFactory
+ConchFactory
+AugerFactory
+VoluteFactory
+MolluskFactory
 ```
 
 Baseline shell-only benchmark:
@@ -284,8 +288,8 @@ INFINIGEN_PROFILE_NATURE_SHELF_TRINKETS=1 \
 python scripts/bench_nature_shelf_trinkets_factory.py \
   --samples 100 \
   --seed 0 \
-  --base-factory-filter ClamFactory,MusselFactory,ScallopFactory \
-  --output_folder outputs/bench_nature_shelf_trinkets_pose_ab/baseline_shell
+  --base-factory-filter ClamFactory,MusselFactory,ScallopFactory,ConchFactory,AugerFactory,VoluteFactory,MolluskFactory \
+  --output_folder outputs/bench_nature_fast_pose_expanded_shell/baseline
 ```
 
 Candidate shell-only benchmark:
@@ -296,16 +300,16 @@ INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1 \
 python scripts/bench_nature_shelf_trinkets_factory.py \
   --samples 100 \
   --seed 0 \
-  --base-factory-filter ClamFactory,MusselFactory,ScallopFactory \
-  --output_folder outputs/bench_nature_shelf_trinkets_pose_ab/candidate_fast_shell
+  --base-factory-filter ClamFactory,MusselFactory,ScallopFactory,ConchFactory,AugerFactory,VoluteFactory,MolluskFactory \
+  --output_folder outputs/bench_nature_fast_pose_expanded_shell/candidate_fast
 ```
 
 Compare the two CSVs:
 
 ```bash
 python scripts/analyze_nature_shelf_trinkets.py \
-  outputs/bench_nature_shelf_trinkets_pose_ab/baseline_shell/infinigen_nature_shelf_trinkets_timing.csv \
-  outputs/bench_nature_shelf_trinkets_pose_ab/candidate_fast_shell/infinigen_nature_shelf_trinkets_timing.csv
+  outputs/bench_nature_fast_pose_expanded_shell/baseline/infinigen_nature_shelf_trinkets_timing.csv \
+  outputs/bench_nature_fast_pose_expanded_shell/candidate_fast/infinigen_nature_shelf_trinkets_timing.csv
 ```
 
 Generate a small fast-mode visual check blend:
@@ -314,17 +318,106 @@ Generate a small fast-mode visual check blend:
 INFINIGEN_PROFILE_NATURE_SHELF_TRINKETS=1 \
 INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1 \
 python scripts/bench_nature_shelf_trinkets_factory.py \
-  --samples 12 \
-  --seed 0 \
-  --base-factory-filter ClamFactory,MusselFactory,ScallopFactory \
+  --samples 16 \
+  --seed 1 \
+  --base-factory-filter ClamFactory,MusselFactory,ScallopFactory,ConchFactory,AugerFactory,VoluteFactory,MolluskFactory \
   --keep-blend true \
-  --output_folder outputs/bench_nature_shelf_trinkets_pose_ab/visual_check_fast_shell
+  --output_folder outputs/bench_nature_fast_pose_expanded_shell/visual_check_fast
 ```
 
 Open the generated blend manually and check for floating, inverted shells,
 bad bottom alignment, support-surface intersection, or unacceptable visual
 orientation. Do not enable the fast flag in a full run until this visual gate
 passes.
+
+The expanded shell-like A/B measured `153.955s -> 8.200s` with `0` failures.
+Treat this as microbenchmark speed evidence only; it is not a full-scene
+quality gate.
+
+## Run BookStack Populate Timing
+
+Enable BookStack / BookColumn timing:
+
+```bash
+INFINIGEN_PROFILE_BOOKSTACK=1
+```
+
+Run the targeted BookStack benchmark:
+
+```bash
+python scripts/bench_bookstack_factory.py \
+  --samples 30 \
+  --seed 0 \
+  --output_folder outputs/bench_bookstack
+```
+
+Analyze:
+
+```bash
+python scripts/analyze_bookstack_timing.py \
+  outputs/bench_bookstack/infinigen_bookstack_timing.csv
+```
+
+The benchmark is an isolated source-level timing probe. It is not a complete
+indoor scene walltime result and does not optimize or reduce book clutter.
+
+## Run Plant Asset Populate Timing
+
+Enable plant asset timing:
+
+```bash
+INFINIGEN_PROFILE_PLANT_ASSETS=1
+```
+
+Run the targeted LargePlantContainer benchmark:
+
+```bash
+python scripts/bench_plant_assets_factory.py \
+  --samples 20 \
+  --seed 0 \
+  --output_folder outputs/bench_plant_assets
+```
+
+Analyze:
+
+```bash
+python scripts/analyze_plant_assets_timing.py \
+  outputs/bench_plant_assets/infinigen_plant_assets_timing.csv
+```
+
+This is only a microbenchmark for plant container internals. It does not
+simplify plants or reduce scene complexity.
+
+## Run Datablock Growth Attribution
+
+Enable final-populate datablock growth attribution:
+
+```bash
+INFINIGEN_PROFILE_DATABLOCK_GROWTH=1
+```
+
+When final populate is reached, the CSV is written to:
+
+```text
+<output_folder>/infinigen_datablock_growth_timing.csv
+```
+
+Fallback:
+
+```text
+/tmp/infinigen_datablock_growth_timing.csv
+```
+
+Analyze:
+
+```bash
+python scripts/analyze_datablock_growth.py \
+  outputs/<run>/coarse/infinigen_datablock_growth_timing.csv
+```
+
+Use this to identify which factories create the most materials, textures,
+node groups, meshes, and images. Do not treat this instrumentation as a reuse
+optimization.
 
 The current recommended full-scene speed configuration remains:
 

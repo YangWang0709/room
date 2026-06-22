@@ -1,5 +1,114 @@
 # Next Steps
 
+## Current Populate Multi-Track Status
+
+The current accepted main speed configuration remains:
+
+```text
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
+INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+restrict_solving.solve_max_rooms=10
+populate_doors.door_chance=0
+```
+
+P0/P1/P2/P3 are now separate populate-stage lines:
+
+- P0: opt-in `NatureShelfTrinketsFactory` fast stable-pose experiment.
+- P1: `BookStackFactory` / `BookColumnFactory` source investigation and
+  timing.
+- P2: `LargePlantContainerFactory` / plant asset source investigation and
+  timing.
+- P3: integrated final-populate datablock growth attribution.
+
+Only P0 is a speed experiment. P1/P2/P3 are investigation and timing only.
+None of the new switches are enabled by default. Do not reduce clutter count,
+do not run concurrent optimization, and do not run a full 10-room quality
+validation until the relevant microbench and visual evidence is clear.
+
+P0 now supports the expanded shell-like allow-list behind:
+
+```bash
+INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
+```
+
+Supported:
+
+```text
+ClamFactory
+MusselFactory
+ScallopFactory
+ConchFactory
+AugerFactory
+VoluteFactory
+MolluskFactory
+```
+
+Still excluded:
+
+```text
+CoralFactory
+HerbivoreFactory
+CarnivoreFactory
+PineconeFactory
+BlenderRockFactory
+BoulderFactory
+```
+
+Expanded shell-like 100-sample A/B completed with `0` failures and total
+duration `153.955s -> 8.200s` (`18.8x`). Mesh and object creation counts were
+unchanged. Before any full 10-room Isaac quality validation, manually inspect:
+
+```text
+outputs/bench_nature_fast_pose_expanded_shell/visual_check_fast/nature_shelf_trinkets_bench.blend
+```
+
+Look for floating, inverted shells, bad bottom alignment, support-surface
+intersection, or unacceptable orientation loss.
+
+P1 BookStack timing is available with:
+
+```bash
+INFINIGEN_PROFILE_BOOKSTACK=1
+python scripts/bench_bookstack_factory.py --samples 30 --seed 0 \
+  --output_folder outputs/bench_bookstack
+python scripts/analyze_bookstack_timing.py \
+  outputs/bench_bookstack/infinigen_bookstack_timing.csv
+```
+
+The first 30-sample run had `0` failures. Create-asset timing showed repeated
+BookFactory geometry/material/nodegroup creation, while stdout showed
+`findfont` warnings from `BookFactory` initialization. If BookStack remains a
+priority, the next step is init-time font/Text material attribution before any
+opt-in material or font cache.
+
+P2 plant timing is available with:
+
+```bash
+INFINIGEN_PROFILE_PLANT_ASSETS=1
+python scripts/bench_plant_assets_factory.py --samples 20 --seed 0 \
+  --output_folder outputs/bench_plant_assets
+python scripts/analyze_plant_assets_timing.py \
+  outputs/bench_plant_assets/infinigen_plant_assets_timing.csv
+```
+
+The first 20-sample `LargePlantContainerFactory` run had `0` failures. The
+largest measured stage was `plant_spawn_duration` (`62.942s` of `81.426s`),
+so inspect concrete `MonocotFactory` subfactories before any plant-wide reuse
+or simplification.
+
+P3 datablock growth attribution is ready for a future integrated sample:
+
+```bash
+INFINIGEN_PROFILE_DATABLOCK_GROWTH=1
+python scripts/analyze_datablock_growth.py \
+  outputs/<run>/coarse/infinigen_datablock_growth_timing.csv
+```
+
+Do not hard-run a full 10-room 4-hour job just for P3. If integrated evidence
+is required, use the bounded 1800s current recommended configuration, and if
+it does not reach final `populate_assets`, record that and rely on targeted
+benchmarks until the next planned full quality run.
+
 ## Latest Populate Clutter Focus
 
 The current Isaac-inspected speed configuration is:
@@ -66,18 +175,21 @@ An opt-in fast shell stable-pose experiment now exists behind:
 INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
 ```
 
-It only affects `ClamFactory`, `MusselFactory`, and `ScallopFactory`. It does
-not affect `CoralFactory` because Coral has separate `obj2trimesh` cost and
-higher shape / support risk. The shell-only 100-sample A/B showed total time
-dropping from `268.269s` to `10.937s`, with `0` failures and unchanged mesh /
-object / material counts. The unfiltered candidate run was not completed
-because it stalled on a non-fast `CoralFactory` sample, so use the shell-only
-A/B only as evidence for the fast scope itself.
+The first version affected only `ClamFactory`, `MusselFactory`, and
+`ScallopFactory`; the current expanded version also affects `ConchFactory`,
+`AugerFactory`, `VoluteFactory`, and `MolluskFactory`. It still does not affect
+`CoralFactory` because Coral has separate `obj2trimesh` cost and higher shape /
+support risk. The expanded shell-like 100-sample A/B showed total time
+dropping from `153.955s` to `8.200s`, with `0` failures and unchanged mesh /
+object / material counts. The earlier unfiltered candidate run was not
+completed because it stalled on a non-fast `CoralFactory` sample, so use the
+filtered A/B only as evidence for the fast scope itself.
 
 A small manual visual check blend was generated at:
 
 ```text
 outputs/bench_nature_shelf_trinkets_pose_ab/visual_check_fast_shell/nature_shelf_trinkets_bench.blend
+outputs/bench_nature_fast_pose_expanded_shell/visual_check_fast/nature_shelf_trinkets_bench.blend
 ```
 
 This output is not committed. Open it manually in Blender or Isaac and inspect

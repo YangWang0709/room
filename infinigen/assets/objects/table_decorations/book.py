@@ -1,7 +1,10 @@
 # Copyright (C) 2023, Princeton University.
 # This source code is licensed under the BSD 3-Clause license found in the LICENSE file in the root directory of this source tree.
 
+import logging
 import math
+import time
+from pathlib import Path
 
 import bmesh
 
@@ -21,7 +24,110 @@ from infinigen.core import surface
 from infinigen.core.placement.factory import AssetFactory
 from infinigen.core.util import blender as butil
 from infinigen.core.util.math import FixedSeed
+from infinigen.core.util import profile_utils
 from infinigen.core.util.random import log_uniform
+
+logger = logging.getLogger(__name__)
+
+BOOKSTACK_TIMING_ENV_VAR = "INFINIGEN_PROFILE_BOOKSTACK"
+BOOKSTACK_TIMING_CSV_ENV_VAR = "INFINIGEN_BOOKSTACK_TIMING_CSV"
+BOOKSTACK_TIMING_CSV_NAME = "infinigen_bookstack_timing.csv"
+DEFAULT_BOOKSTACK_TIMING_CSV = Path("/tmp") / BOOKSTACK_TIMING_CSV_NAME
+
+BOOKSTACK_TIMING_FIELDNAMES = [
+    "factory_class",
+    "factory_seed",
+    "inst_seed",
+    "placeholder_name",
+    "create_asset_total_duration",
+    "geometry_duration",
+    "material_duration",
+    "font_text_duration",
+    "book_create_duration",
+    "placement_duration",
+    "join_duration",
+    "n_books",
+    "base_factory_count",
+    "material_count_before",
+    "material_count_after",
+    "texture_count_before",
+    "texture_count_after",
+    "node_group_count_before",
+    "node_group_count_after",
+    "mesh_count_before",
+    "mesh_count_after",
+    "object_count_before",
+    "object_count_after",
+    "image_count_before",
+    "image_count_after",
+    "created_material_count",
+    "created_texture_count",
+    "created_node_group_count",
+    "created_mesh_count",
+    "created_object_count",
+    "created_image_count",
+    "success",
+    "error_type",
+]
+
+_BOOKSTACK_TIMING_WRITE_FAILED = False
+
+
+def _profile_bookstack_enabled() -> bool:
+    return profile_utils.env_truthy(BOOKSTACK_TIMING_ENV_VAR)
+
+
+def _bookstack_timing_csv_path() -> Path:
+    return profile_utils.solver_output_csv_path(
+        BOOKSTACK_TIMING_CSV_NAME,
+        DEFAULT_BOOKSTACK_TIMING_CSV,
+        explicit_env_var=BOOKSTACK_TIMING_CSV_ENV_VAR,
+    )
+
+
+def _write_bookstack_timing_row(row: dict):
+    global _BOOKSTACK_TIMING_WRITE_FAILED
+
+    if _BOOKSTACK_TIMING_WRITE_FAILED:
+        return
+
+    path = _bookstack_timing_csv_path()
+    try:
+        profile_utils.write_csv_row(path, BOOKSTACK_TIMING_FIELDNAMES, row)
+    except OSError:
+        _BOOKSTACK_TIMING_WRITE_FAILED = True
+        logger.exception("Failed to write BookStack timing CSV at %s", path)
+
+
+def _record_bookstack_duration(row: dict, field: str, start_time: float):
+    row[field] = row.get(field, 0.0) + time.perf_counter() - start_time
+
+
+def _empty_bookstack_timing_row(factory, params, before_sets: dict[str, set[str]]):
+    row = {
+        "factory_class": factory.__class__.__name__,
+        "factory_seed": getattr(factory, "factory_seed", ""),
+        "inst_seed": params.get("i", ""),
+        "placeholder_name": getattr(params.get("placeholder"), "name", ""),
+        "create_asset_total_duration": 0.0,
+        "geometry_duration": 0.0,
+        "material_duration": 0.0,
+        "font_text_duration": 0.0,
+        "book_create_duration": 0.0,
+        "placement_duration": 0.0,
+        "join_duration": 0.0,
+        "n_books": getattr(factory, "n_books", 1),
+        "base_factory_count": len(getattr(factory, "base_factories", [])),
+        "success": False,
+        "error_type": "",
+    }
+    profile_utils.add_datablock_before_counts(row, before_sets)
+    return row
+
+
+def _finish_bookstack_timing_row(row: dict, before_sets: dict[str, set[str]]):
+    profile_utils.add_datablock_after_counts(row, before_sets)
+    _write_bookstack_timing_row(row)
 
 
 class BookFactory(AssetFactory):
@@ -53,8 +159,10 @@ class BookFactory(AssetFactory):
         self.texture_shared = uniform() < 0.2
 
     def create_asset(self, **params) -> bpy.types.Object:
-        self.surface = self.surface_material_gen()
+        if _profile_bookstack_enabled():
+            return self._create_asset_timed(**params)
 
+        self.surface = self.surface_material_gen()
         width = int(log_uniform(0.08, 0.15) * self.rel_scale / self.unit) * self.unit
         height = int(width * self.skewness / self.unit) * self.unit
         depth = uniform(0.01, 0.02) * self.rel_scale
@@ -63,6 +171,40 @@ class BookFactory(AssetFactory):
         obj = fn(width, height, depth)
 
         return obj
+
+    def _create_asset_timed(self, **params) -> bpy.types.Object:
+        before_sets = profile_utils.bpy_datablock_name_sets()
+        row = _empty_bookstack_timing_row(self, params, before_sets)
+        total_start_time = time.perf_counter()
+
+        try:
+            step_start_time = time.perf_counter()
+            try:
+                self.surface = self.surface_material_gen()
+            finally:
+                _record_bookstack_duration(row, "material_duration", step_start_time)
+
+            step_start_time = time.perf_counter()
+            try:
+                width = (
+                    int(log_uniform(0.08, 0.15) * self.rel_scale / self.unit)
+                    * self.unit
+                )
+                height = int(width * self.skewness / self.unit) * self.unit
+                depth = uniform(0.01, 0.02) * self.rel_scale
+                fn = self.make_paperback if self.is_paperback else self.make_hardcover
+                obj = fn(width, height, depth)
+            finally:
+                _record_bookstack_duration(row, "geometry_duration", step_start_time)
+
+            row["success"] = True
+            return obj
+        except BaseException as exc:
+            row["error_type"] = exc.__class__.__name__
+            raise
+        finally:
+            row["create_asset_total_duration"] = time.perf_counter() - total_start_time
+            _finish_bookstack_timing_row(row, before_sets)
 
     def finalize_assets(self, assets):
         if self.scratch:
@@ -172,6 +314,9 @@ class BookColumnFactory(AssetFactory):
         )
 
     def create_asset(self, **params) -> bpy.types.Object:
+        if _profile_bookstack_enabled():
+            return self._create_asset_timed(**params)
+
         books = []
         for i in range(self.n_books):
             factory = np.random.choice(self.base_factories)
@@ -207,6 +352,72 @@ class BookColumnFactory(AssetFactory):
         obj.location[0] = -np.min(read_co(obj)[:, 0])
         butil.apply_transform(obj, True)
         return obj
+
+    def _create_asset_timed(self, **params) -> bpy.types.Object:
+        before_sets = profile_utils.bpy_datablock_name_sets()
+        row = _empty_bookstack_timing_row(self, params, before_sets)
+        total_start_time = time.perf_counter()
+
+        try:
+            books = []
+            for i in range(self.n_books):
+                factory = np.random.choice(self.base_factories)
+                step_start_time = time.perf_counter()
+                try:
+                    obj = factory.create_asset(i=i)
+                finally:
+                    _record_bookstack_duration(
+                        row, "book_create_duration", step_start_time
+                    )
+
+                step_start_time = time.perf_counter()
+                try:
+                    x, y, z = read_co(obj).T
+                    obj.location = [-np.max(x), -np.min(y), -np.min(z)]
+                    butil.apply_transform(obj, True)
+                    if uniform() < 0.5:
+                        obj.rotation_euler = (
+                            np.pi / 2 - uniform(0, self.max_angle),
+                            0,
+                            np.pi / 2,
+                        )
+                    else:
+                        obj.location[-1] = -np.max(z)
+                        butil.apply_transform(obj, True)
+                        obj.rotation_euler = (
+                            np.pi / 2 + uniform(0, self.max_angle),
+                            0,
+                            np.pi / 2,
+                        )
+                    butil.apply_transform(obj)
+                    if i > 0:
+                        obj.location[0] = 10
+                        butil.apply_transform(obj, True)
+                        dist = longest_ray(books[-1], obj, (-1, 0, 0))
+                        dist_ = longest_ray(obj, books[-1], (1, 0, 0))
+                        offset = np.minimum(np.min(dist), np.min(dist_))
+                        obj.location[0] = -offset
+                        butil.apply_transform(obj, True)
+                    books.append(obj)
+                finally:
+                    _record_bookstack_duration(row, "placement_duration", step_start_time)
+
+            step_start_time = time.perf_counter()
+            try:
+                obj = join_objects(books)
+                obj.location[0] = -np.min(read_co(obj)[:, 0])
+                butil.apply_transform(obj, True)
+            finally:
+                _record_bookstack_duration(row, "join_duration", step_start_time)
+            row["geometry_duration"] = row["placement_duration"] + row["join_duration"]
+            row["success"] = True
+            return obj
+        except BaseException as exc:
+            row["error_type"] = exc.__class__.__name__
+            raise
+        finally:
+            row["create_asset_total_duration"] = time.perf_counter() - total_start_time
+            _finish_bookstack_timing_row(row, before_sets)
 
 
 def rotate(theta, x, y):
@@ -250,6 +461,9 @@ class BookStackFactory(AssetFactory):
         )
 
     def create_asset(self, **params) -> bpy.types.Object:
+        if _profile_bookstack_enabled():
+            return self._create_asset_timed(**params)
+
         books = []
         offset = 0
         for i in range(self.n_books):
@@ -262,3 +476,47 @@ class BookStackFactory(AssetFactory):
             offset = np.max(read_co(obj)[:, -1])
             books.append(obj)
         return join_objects(books)
+
+    def _create_asset_timed(self, **params) -> bpy.types.Object:
+        before_sets = profile_utils.bpy_datablock_name_sets()
+        row = _empty_bookstack_timing_row(self, params, before_sets)
+        total_start_time = time.perf_counter()
+
+        try:
+            books = []
+            offset = 0
+            for i in range(self.n_books):
+                factory = np.random.choice(self.base_factories)
+                step_start_time = time.perf_counter()
+                try:
+                    obj = factory.create_asset(i=i)
+                finally:
+                    _record_bookstack_duration(
+                        row, "book_create_duration", step_start_time
+                    )
+
+                step_start_time = time.perf_counter()
+                try:
+                    c = center(obj)[:-1]
+                    obj.location = -c[0], -c[1], offset - np.min(read_co(obj)[:, -1])
+                    obj.rotation_euler[-1] = uniform(-self.max_angle, self.max_angle)
+                    butil.apply_transform(obj, True)
+                    offset = np.max(read_co(obj)[:, -1])
+                    books.append(obj)
+                finally:
+                    _record_bookstack_duration(row, "placement_duration", step_start_time)
+
+            step_start_time = time.perf_counter()
+            try:
+                obj = join_objects(books)
+            finally:
+                _record_bookstack_duration(row, "join_duration", step_start_time)
+            row["geometry_duration"] = row["placement_duration"] + row["join_duration"]
+            row["success"] = True
+            return obj
+        except BaseException as exc:
+            row["error_type"] = exc.__class__.__name__
+            raise
+        finally:
+            row["create_asset_total_duration"] = time.perf_counter() - total_start_time
+            _finish_bookstack_timing_row(row, before_sets)

@@ -1,5 +1,177 @@
 # Worklog
 
+## 2026-06-22 - Populate multi-track profiling and expanded shell fast pose
+
+### Round Goal
+
+Advance four independent populate-stage lines without mixing their switches.
+P0 extends the opt-in NatureShelf shell fast-pose experiment. P1/P2/P3 add
+source investigation and timing only. No solver behavior, proposal /
+accept / reject logic, room count, clutter count, default behavior,
+concurrency, or C++ path was changed.
+
+### P0 NatureShelf Expanded Shell Fast Pose
+
+Extended the opt-in fast stable-pose allow-list behind:
+
+```bash
+INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
+```
+
+The allow-list now includes:
+
+```text
+ClamFactory
+MusselFactory
+ScallopFactory
+ConchFactory
+AugerFactory
+VoluteFactory
+MolluskFactory
+```
+
+Still excluded:
+
+```text
+CoralFactory
+HerbivoreFactory
+CarnivoreFactory
+PineconeFactory
+BlenderRockFactory
+BoulderFactory
+```
+
+Expanded shell A/B used seed `0`, `100` samples, and:
+
+```text
+--base-factory-filter ClamFactory,MusselFactory,ScallopFactory,ConchFactory,AugerFactory,VoluteFactory,MolluskFactory
+```
+
+CSVs:
+
+```text
+outputs/bench_nature_fast_pose_expanded_shell/baseline/infinigen_nature_shelf_trinkets_timing.csv
+outputs/bench_nature_fast_pose_expanded_shell/candidate_fast/infinigen_nature_shelf_trinkets_timing.csv
+```
+
+Result:
+
+| metric | baseline | candidate |
+| --- | ---: | ---: |
+| rows | 100 | 100 |
+| failures | 0 | 0 |
+| total duration | `153.955s` | `8.200s` |
+| speedup |  | `18.8x` |
+| stable pose | `120.248s` | `0.000s` |
+| obj2trimesh | `19.937s` | `0.000s` |
+| fast rows | 0 | 100 |
+| mesh/object/material delta |  | `0 / 0 / 0` |
+
+Generated small visual check blend:
+
+```text
+outputs/bench_nature_fast_pose_expanded_shell/visual_check_fast/nature_shelf_trinkets_bench.blend
+```
+
+It is not committed. Manual Blender/Isaac inspection is still required before
+any full 10-room quality validation with the expanded fast flag.
+
+### P1 BookStack Timing
+
+Added:
+
+```bash
+INFINIGEN_PROFILE_BOOKSTACK=1
+```
+
+and:
+
+```text
+scripts/analyze_bookstack_timing.py
+scripts/bench_bookstack_factory.py
+docs/BOOKSTACK_POPULATE_INVESTIGATION.md
+```
+
+First 30-sample targeted run:
+
+```text
+outputs/bench_bookstack/infinigen_bookstack_timing.csv
+```
+
+Result: `30/30` benchmark samples, `0` failures, `307` CSV rows, measured CSV
+total `4.827s`. Stack rows created `277` materials and `277` node groups
+inclusively; nested `BookFactory` rows record the per-book side of the same
+work. The benchmark stdout showed `findfont` warnings, but create-asset timing
+did not record image growth because cover `Text` materials are built in
+`BookFactory.__init__()`. No BookStack optimization was added.
+
+### P2 Plant Timing
+
+Added:
+
+```bash
+INFINIGEN_PROFILE_PLANT_ASSETS=1
+```
+
+and:
+
+```text
+scripts/analyze_plant_assets_timing.py
+scripts/bench_plant_assets_factory.py
+docs/PLANT_POPULATE_INVESTIGATION.md
+```
+
+First 20-sample `LargePlantContainerFactory` targeted run:
+
+```text
+outputs/bench_plant_assets/infinigen_plant_assets_timing.csv
+```
+
+Result: `20/20` samples, `0` failures, total `81.426s`, avg `4.071s`, max
+`11.451s`. The dominant measured substage was `plant_spawn_duration`
+(`62.942s`). Created datablocks: `624` meshes, `20` materials, `122` node
+groups, and `544` objects. No plant optimization was added.
+
+### P3 Datablock Growth Attribution
+
+Added:
+
+```bash
+INFINIGEN_PROFILE_DATABLOCK_GROWTH=1
+```
+
+Integrated final-populate CSV:
+
+```text
+<output_folder>/infinigen_datablock_growth_timing.csv
+```
+
+Fallback:
+
+```text
+/tmp/infinigen_datablock_growth_timing.csv
+```
+
+Analyzer:
+
+```text
+scripts/analyze_datablock_growth.py
+```
+
+This records per-factory material, texture, node-group, mesh, object, and
+image growth, plus created-name samples and prefix tops. No integrated
+10-room sample was run in this round because recent bounded 1800s runs did not
+reach final `populate_assets`; this line is instrumentation-ready for the next
+bounded or full quality run. No global reuse optimization was added.
+
+### Judgment
+
+P0 is the only line in this round that produced a speedup. It should not move
+to a full 10-room Isaac static quality validation until the expanded shell
+visual check blend passes manual inspection. P1/P2/P3 are timing /
+investigation only and should feed the next profiling decision without
+reducing clutter complexity or enabling default optimizations.
+
 ## 2026-06-22 - Opt-in fast stable pose for shell trinkets
 
 ### Round Goal

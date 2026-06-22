@@ -1,5 +1,188 @@
 # Profile Results
 
+## Populate Multi-Track Profiling - 2026-06-22
+
+Profile type: four independent populate-stage lines. P0 is an opt-in speed
+experiment; P1/P2/P3 are timing and attribution only. No optimization is
+enabled by default, no solver/proposal/accept/reject logic changed, no room
+or clutter count was reduced, no concurrency was added, and no C++ path was
+connected.
+
+### P0 Expanded NatureShelf Fast Stable Pose
+
+The opt-in fast stable-pose experiment remains behind:
+
+```bash
+INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
+```
+
+The allow-list now includes:
+
+```text
+ClamFactory
+MusselFactory
+ScallopFactory
+ConchFactory
+AugerFactory
+VoluteFactory
+MolluskFactory
+```
+
+It still excludes Coral, creature, pinecone, rock, and boulder paths. Coral is
+kept out because it has separate `obj2trimesh` cost and higher shape / support
+risk.
+
+Expanded shell-like A/B:
+
+```text
+outputs/bench_nature_fast_pose_expanded_shell/baseline/infinigen_nature_shelf_trinkets_timing.csv
+outputs/bench_nature_fast_pose_expanded_shell/candidate_fast/infinigen_nature_shelf_trinkets_timing.csv
+```
+
+| metric | baseline | candidate |
+| --- | ---: | ---: |
+| rows | 100 | 100 |
+| failures | 0 | 0 |
+| total duration | `153.955s` | `8.200s` |
+| speedup |  | `18.8x` |
+| `stable_pose_duration` | `120.248s` | `0.000s` |
+| `obj2trimesh_duration` | `19.937s` | `0.000s` |
+| fast rows | 0 | 100 |
+| meshes / objects delta |  | `0 / 0` |
+
+Per-base speedups:
+
+| base factory | speedup |
+| --- | ---: |
+| `ClamFactory` | `38.1x` |
+| `MusselFactory` | `21.7x` |
+| `ScallopFactory` | `18.2x` |
+| `ConchFactory` | `9.4x` |
+| `AugerFactory` | `9.7x` |
+| `MolluskFactory` | `10.1x` |
+| `VoluteFactory` | `12.9x` |
+
+Small visual check blend:
+
+```text
+outputs/bench_nature_fast_pose_expanded_shell/visual_check_fast/nature_shelf_trinkets_bench.blend
+```
+
+It is not committed and still needs manual Blender/Isaac inspection for
+floating, inversion, bad bottom alignment, support-surface intersection, or
+unacceptable orientation loss before any full 10-room quality validation.
+
+### P1 BookStack Timing
+
+Added optional timing:
+
+```bash
+INFINIGEN_PROFILE_BOOKSTACK=1
+```
+
+and:
+
+```text
+scripts/analyze_bookstack_timing.py
+scripts/bench_bookstack_factory.py
+docs/BOOKSTACK_POPULATE_INVESTIGATION.md
+```
+
+First targeted 30-sample `BookStackFactory` benchmark:
+
+| metric | value |
+| --- | ---: |
+| benchmark failures | 0 |
+| CSV rows | 307 |
+| CSV failures | 0 |
+| measured CSV total | `4.827s` |
+| `BookStackFactory` rows total | `2.490s` |
+| nested `BookFactory` rows total | `2.337s` |
+| stack max row | `0.149s` |
+
+The stdout showed repeated `findfont` warnings. The timing showed
+create-asset-time material and node-group creation, but no create-asset-time
+image growth. Source inspection explains this: cover `Text` materials and
+images are built during `BookFactory.__init__()`, while stack populate
+`create_asset()` mainly repeats book geometry and paper material creation.
+This line is investigation only; no BookStack reuse was implemented.
+
+### P2 Plant Timing
+
+Added optional timing:
+
+```bash
+INFINIGEN_PROFILE_PLANT_ASSETS=1
+```
+
+and:
+
+```text
+scripts/analyze_plant_assets_timing.py
+scripts/bench_plant_assets_factory.py
+docs/PLANT_POPULATE_INVESTIGATION.md
+```
+
+First targeted 20-sample `LargePlantContainerFactory` benchmark:
+
+| metric | value |
+| --- | ---: |
+| failures | 0 |
+| total measured duration | `81.426s` |
+| average duration | `4.071s` |
+| max duration | `11.451s` |
+| created meshes | 624 |
+| created materials | 20 |
+| created node groups | 122 |
+| created objects | 544 |
+
+Substage totals:
+
+| substage | total |
+| --- | ---: |
+| `plant_spawn_duration` | `62.942s` |
+| `dirt_material_duration` | `9.006s` |
+| `dirt_geometry_duration` | `7.436s` |
+| `pot_create_duration` | `1.723s` |
+
+This points to concrete `MonocotFactory` / plant geometry as the first plant
+subtarget. Material or node-group reuse may be worth a later opt-in
+investigation, but leaf/stem visual risk is high. No plant optimization was
+implemented.
+
+### P3 Datablock Growth Attribution
+
+Added optional integrated populate attribution:
+
+```bash
+INFINIGEN_PROFILE_DATABLOCK_GROWTH=1
+```
+
+CSV:
+
+```text
+<output_folder>/infinigen_datablock_growth_timing.csv
+```
+
+Fallback:
+
+```text
+/tmp/infinigen_datablock_growth_timing.csv
+```
+
+Analyzer:
+
+```text
+scripts/analyze_datablock_growth.py
+```
+
+This records factory-level material, texture, node-group, mesh, object, and
+image growth plus name samples and prefix tops around final populate asset
+generation. No global material/texture/nodegroup reuse was implemented. No
+integrated 10-room sample was run in this round because recent 1800s attempts
+did not reach final `populate_assets`; P3 is ready for the next bounded
+integrated sample when needed.
+
 ## NatureShelfTrinkets Fast Shell Stable Pose - 2026-06-22
 
 Profile type: opt-in microbenchmark experiment for

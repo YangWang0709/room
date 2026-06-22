@@ -396,14 +396,19 @@ Added an opt-in experiment behind:
 INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
 ```
 
-Default behavior is unchanged when the variable is unset. The first fast mode
-is intentionally narrow and applies only to low-risk shell-like wrapped base
-factories:
+Default behavior is unchanged when the variable is unset. The first accepted
+microbenchmark covered only `ClamFactory`, `MusselFactory`, and
+`ScallopFactory`. The current expanded fast-pose experiment remains narrow but
+now applies to these shell-like wrapped base factories:
 
 ```text
 ClamFactory
 MusselFactory
 ScallopFactory
+ConchFactory
+AugerFactory
+VoluteFactory
+MolluskFactory
 ```
 
 Fast mode does not change `base_factory.spawn_asset()`, object count, mesh
@@ -422,10 +427,6 @@ CoralFactory
 HerbivoreFactory
 CarnivoreFactory
 PineconeFactory
-ConchFactory
-AugerFactory
-VoluteFactory
-MolluskFactory
 BlenderRockFactory
 BoulderFactory
 ```
@@ -482,14 +483,50 @@ Per base factory shell speedup:
 | `MusselFactory` | `76.398s` | `3.594s` | `21.3x` |
 | `ScallopFactory` | `63.502s` | `3.171s` | `20.0x` |
 
+The expanded shell-like A/B used:
+
+```bash
+--base-factory-filter ClamFactory,MusselFactory,ScallopFactory,ConchFactory,AugerFactory,VoluteFactory,MolluskFactory
+```
+
+Expanded shell result:
+
+| metric | baseline | candidate |
+| --- | ---: | ---: |
+| CSV data rows | 100 | 100 |
+| failures | 0 | 0 |
+| total duration | `153.955s` | `8.200s` |
+| total speedup |  | `18.8x` |
+| `stable_pose_duration` | `120.248s` | `0.000s` |
+| `obj2trimesh_duration` | `19.937s` | `0.000s` |
+| fast rows used | 0 | 100 |
+| skipped compute rows | 0 | 100 |
+| meshes created | 100 | 100 |
+| objects created | 100 | 100 |
+| materials created | 0 | 0 |
+
+Expanded per-base speedup:
+
+| base factory | baseline total | candidate total | speedup |
+| --- | ---: | ---: | ---: |
+| `ClamFactory` | `59.276s` | `1.554s` | `38.1x` |
+| `MusselFactory` | `35.428s` | `1.632s` | `21.7x` |
+| `ScallopFactory` | `19.167s` | `1.055s` | `18.2x` |
+| `ConchFactory` | `12.393s` | `1.317s` | `9.4x` |
+| `AugerFactory` | `10.930s` | `1.124s` | `9.7x` |
+| `MolluskFactory` | `9.971s` | `0.990s` | `10.1x` |
+| `VoluteFactory` | `6.791s` | `0.528s` | `12.9x` |
+
 A small fast-mode visual check blend was generated for manual inspection:
 
 ```text
 outputs/bench_nature_shelf_trinkets_pose_ab/visual_check_fast_shell/nature_shelf_trinkets_bench.blend
+outputs/bench_nature_fast_pose_expanded_shell/visual_check_fast/nature_shelf_trinkets_bench.blend
 ```
 
-It contains 12 fast-mode Clam / Mussel / Scallop samples arranged in a grid.
-This output is intentionally not committed. It must be opened manually in
+The expanded visual file contains 16 fast-mode samples arranged in a grid,
+including the new shell-like families selected by seed rejection. These
+outputs are intentionally not committed. They must be opened manually in
 Blender or Isaac before accepting the experiment. Inspect for obvious
 floating, inverted placement, bad bottom alignment, shelf-surface
 intersection, or unacceptable loss of orientation quality.

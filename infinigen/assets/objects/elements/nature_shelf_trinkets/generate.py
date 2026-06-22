@@ -199,7 +199,15 @@ def _is_creature_base_factory(base_factory) -> bool:
 def _fast_stable_pose_allowed(base_factory) -> bool:
     return isinstance(
         base_factory,
-        (mollusk.ClamFactory, mollusk.MusselFactory, mollusk.ScallopFactory),
+        (
+            mollusk.ClamFactory,
+            mollusk.MusselFactory,
+            mollusk.ScallopFactory,
+            mollusk.ConchFactory,
+            mollusk.AugerFactory,
+            mollusk.VoluteFactory,
+            mollusk.MolluskFactory,
+        ),
     )
 
 
