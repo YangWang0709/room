@@ -4,6 +4,13 @@
 # Authors: Stamatis Alexandropulos
 
 
+import csv
+import logging
+import os
+import sys
+import time
+from pathlib import Path
+
 import bpy
 import mathutils
 import numpy as np
@@ -15,6 +22,185 @@ from infinigen.assets.utils.object import join_objects
 from infinigen.core.placement.factory import AssetFactory
 from infinigen.core.util import blender as butil
 from infinigen.core.util.math import FixedSeed
+
+logger = logging.getLogger(__name__)
+
+NATURE_SHELF_TRINKETS_TIMING_ENV_VAR = "INFINIGEN_PROFILE_NATURE_SHELF_TRINKETS"
+NATURE_SHELF_TRINKETS_TIMING_CSV_NAME = (
+    "infinigen_nature_shelf_trinkets_timing.csv"
+)
+DEFAULT_NATURE_SHELF_TRINKETS_TIMING_CSV = (
+    Path("/tmp") / NATURE_SHELF_TRINKETS_TIMING_CSV_NAME
+)
+
+NATURE_SHELF_TRINKETS_TIMING_FIELDNAMES = [
+    "factory_class",
+    "base_factory_class",
+    "factory_seed",
+    "inst_seed",
+    "base_inst_seed",
+    "placeholder_name",
+    "create_asset_total_duration",
+    "base_factory_spawn_duration",
+    "join_children_duration",
+    "apply_initial_transform_duration",
+    "apply_modifiers_duration",
+    "stable_pose_duration",
+    "apply_rotation_transform_duration",
+    "scale_and_position_duration",
+    "apply_final_location_transform_duration",
+    "material_count_before",
+    "material_count_after",
+    "texture_count_before",
+    "texture_count_after",
+    "node_group_count_before",
+    "node_group_count_after",
+    "mesh_count_before",
+    "mesh_count_after",
+    "object_count_before",
+    "object_count_after",
+    "created_material_count",
+    "created_texture_count",
+    "created_node_group_count",
+    "created_mesh_count",
+    "created_object_count",
+    "asset_children_before_join",
+    "asset_tree_object_count_after_spawn",
+    "final_asset_name",
+    "final_asset_type",
+    "final_asset_mesh_name",
+    "final_asset_child_count",
+    "created_material_names",
+    "created_texture_names",
+    "created_node_group_names",
+    "success",
+    "error_type",
+]
+
+_NATURE_SHELF_TRINKETS_TIMING_WRITE_FAILED = False
+
+
+def _env_truthy(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _profile_nature_shelf_trinkets_enabled() -> bool:
+    return _env_truthy(NATURE_SHELF_TRINKETS_TIMING_ENV_VAR)
+
+
+def _nature_shelf_trinkets_timing_csv_path() -> Path:
+    solver_timing = sys.modules.get("infinigen.core.constraints.example_solver.timing")
+    if solver_timing is not None:
+        current_output_folder = getattr(solver_timing, "current_output_folder", None)
+        if current_output_folder is not None:
+            output_folder = current_output_folder()
+            if output_folder is not None:
+                return Path(output_folder) / NATURE_SHELF_TRINKETS_TIMING_CSV_NAME
+    return DEFAULT_NATURE_SHELF_TRINKETS_TIMING_CSV
+
+
+def _write_nature_shelf_trinkets_timing_row(row: dict):
+    global _NATURE_SHELF_TRINKETS_TIMING_WRITE_FAILED
+
+    if _NATURE_SHELF_TRINKETS_TIMING_WRITE_FAILED:
+        return
+
+    path = _nature_shelf_trinkets_timing_csv_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_header = not path.exists() or path.stat().st_size == 0
+        with path.open("a", newline="") as handle:
+            writer = csv.DictWriter(
+                handle, fieldnames=NATURE_SHELF_TRINKETS_TIMING_FIELDNAMES
+            )
+            if write_header:
+                writer.writeheader()
+            writer.writerow(
+                {
+                    field: row.get(field, "")
+                    for field in NATURE_SHELF_TRINKETS_TIMING_FIELDNAMES
+                }
+            )
+    except OSError:
+        _NATURE_SHELF_TRINKETS_TIMING_WRITE_FAILED = True
+        logger.exception(
+            "Failed to write NatureShelfTrinkets timing CSV at %s", path
+        )
+
+
+def _bpy_datablock_name_sets() -> dict[str, set[str]]:
+    return {
+        "material": set(bpy.data.materials.keys()),
+        "texture": set(bpy.data.textures.keys()),
+        "node_group": set(bpy.data.node_groups.keys()),
+        "mesh": set(bpy.data.meshes.keys()),
+        "object": set(bpy.data.objects.keys()),
+    }
+
+
+def _record_duration(row: dict, field: str, start_time: float):
+    row[field] = row.get(field, 0.0) + time.perf_counter() - start_time
+
+
+def _placeholder_name(placeholder) -> str:
+    return "" if placeholder is None else getattr(placeholder, "name", "")
+
+
+def _object_tree_count(asset):
+    try:
+        return len(list(butil.iter_object_tree(asset)))
+    except Exception:
+        return ""
+
+
+def _empty_timing_row(
+    factory: "NatureShelfTrinketsFactory",
+    inst_seed,
+    placeholder,
+    before_sets: dict[str, set[str]],
+) -> dict:
+    row = {
+        "factory_class": factory.__class__.__name__,
+        "base_factory_class": factory.base_factory.__class__.__name__,
+        "factory_seed": getattr(factory, "factory_seed", ""),
+        "inst_seed": inst_seed,
+        "base_inst_seed": "",
+        "placeholder_name": _placeholder_name(placeholder),
+        "create_asset_total_duration": 0.0,
+        "base_factory_spawn_duration": 0.0,
+        "join_children_duration": 0.0,
+        "apply_initial_transform_duration": 0.0,
+        "apply_modifiers_duration": 0.0,
+        "stable_pose_duration": 0.0,
+        "apply_rotation_transform_duration": 0.0,
+        "scale_and_position_duration": 0.0,
+        "apply_final_location_transform_duration": 0.0,
+        "asset_children_before_join": "",
+        "asset_tree_object_count_after_spawn": "",
+        "final_asset_name": "",
+        "final_asset_type": "",
+        "final_asset_mesh_name": "",
+        "final_asset_child_count": "",
+        "success": False,
+        "error_type": "",
+    }
+    for key, names in before_sets.items():
+        row[f"{key}_count_before"] = len(names)
+    return row
+
+
+def _finish_timing_row(row: dict, before_sets: dict[str, set[str]]):
+    after_sets = _bpy_datablock_name_sets()
+    for key, before_names in before_sets.items():
+        after_names = after_sets[key]
+        row[f"{key}_count_after"] = len(after_names)
+        row[f"created_{key}_count"] = len(after_names - before_names)
+
+    for key in ("material", "texture", "node_group"):
+        created_names = sorted(after_sets[key] - before_sets[key])
+        row[f"created_{key}_names"] = ";".join(created_names)
+
+    _write_nature_shelf_trinkets_timing_row(row)
 
 
 class NatureShelfTrinketsFactory(AssetFactory):
@@ -58,6 +244,9 @@ class NatureShelfTrinketsFactory(AssetFactory):
         return placeholder
 
     def create_asset(self, i, placeholder=None, **params):
+        if _profile_nature_shelf_trinkets_enabled():
+            return self._create_asset_timed(i, placeholder=placeholder, **params)
+
         asset = self.base_factory.spawn_asset(
             np.random.randint(1e7), distance=200, adaptive_resolution=False
         )
@@ -94,3 +283,112 @@ class NatureShelfTrinketsFactory(AssetFactory):
         asset.location = new_location
         butil.apply_transform(asset, loc=True)
         return asset
+
+    def _create_asset_timed(self, i, placeholder=None, **params):
+        before_sets = _bpy_datablock_name_sets()
+        row = _empty_timing_row(self, i, placeholder, before_sets)
+        total_start_time = time.perf_counter()
+        asset = None
+
+        try:
+            base_inst_seed = np.random.randint(1e7)
+            row["base_inst_seed"] = base_inst_seed
+
+            step_start_time = time.perf_counter()
+            try:
+                asset = self.base_factory.spawn_asset(
+                    base_inst_seed, distance=200, adaptive_resolution=False
+                )
+            finally:
+                _record_duration(row, "base_factory_spawn_duration", step_start_time)
+
+            row["asset_tree_object_count_after_spawn"] = _object_tree_count(asset)
+            row["asset_children_before_join"] = len(list(asset.children))
+
+            if list(asset.children):
+                step_start_time = time.perf_counter()
+                try:
+                    asset = join_objects(list(asset.children))
+                finally:
+                    _record_duration(row, "join_children_duration", step_start_time)
+
+            step_start_time = time.perf_counter()
+            try:
+                butil.apply_transform(asset, loc=True)
+            finally:
+                _record_duration(
+                    row, "apply_initial_transform_duration", step_start_time
+                )
+
+            step_start_time = time.perf_counter()
+            try:
+                butil.apply_modifiers(asset)
+            finally:
+                _record_duration(row, "apply_modifiers_duration", step_start_time)
+
+            if isinstance(self.base_factory, creatures.HerbivoreFactory) or isinstance(
+                self.base_factory, creatures.CarnivoreFactory
+            ):
+                pass
+            else:
+                step_start_time = time.perf_counter()
+                try:
+                    if not isinstance(asset, trimesh.Trimesh):
+                        mesh = obj.obj2trimesh(asset)
+                    stable_poses, probs = trimesh.poses.compute_stable_poses(mesh)
+                    stable_pose = stable_poses[np.argmax(probs)]
+                    asset.rotation_euler = mathutils.Matrix(
+                        stable_pose[:3, :3]
+                    ).to_euler()
+                finally:
+                    _record_duration(row, "stable_pose_duration", step_start_time)
+
+            step_start_time = time.perf_counter()
+            try:
+                butil.apply_transform(asset, rot=True)
+            finally:
+                _record_duration(
+                    row, "apply_rotation_transform_duration", step_start_time
+                )
+
+            step_start_time = time.perf_counter()
+            try:
+                dim = asset.dimensions
+                bounding_box = placeholder.dimensions
+                scale = min([bounding_box[i] / dim[i] for i in range(3)])
+                asset.scale = [scale for i in range(3)]
+                bounds = butil.bounds(asset)
+                cur_loc = asset.location
+                new_location = [
+                    cur_loc[i] - (bounds[0][i] + bounds[1][i]) / 2
+                    for i in range(3)
+                ]
+                new_location[2] = cur_loc[2] - (bounds[0][2] + bounding_box[2] / 2)
+                asset.location = new_location
+            finally:
+                _record_duration(row, "scale_and_position_duration", step_start_time)
+
+            step_start_time = time.perf_counter()
+            try:
+                butil.apply_transform(asset, loc=True)
+            finally:
+                _record_duration(
+                    row, "apply_final_location_transform_duration", step_start_time
+                )
+
+            row["final_asset_name"] = getattr(asset, "name", "")
+            row["final_asset_type"] = getattr(asset, "type", "")
+            row["final_asset_mesh_name"] = getattr(
+                getattr(asset, "data", None), "name", ""
+            )
+            row["final_asset_child_count"] = len(list(asset.children))
+            row["success"] = True
+            return asset
+        except BaseException as exc:
+            row["error_type"] = exc.__class__.__name__
+            raise
+        finally:
+            row["create_asset_total_duration"] = (
+                time.perf_counter() - total_start_time
+            )
+            _finish_timing_row(row, before_sets)

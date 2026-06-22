@@ -1,5 +1,121 @@
 # Profile Results
 
+## NatureShelfTrinkets Populate Investigation - 2026-06-22
+
+Profile type: source investigation plus optional per-instance timing
+instrumentation for `NatureShelfTrinketsFactory`. No optimization was added,
+no solver behavior was changed, no random number flow was changed, no
+concurrent execution was introduced, no C++ path was connected, and no clutter
+or scene-complexity reduction was made.
+
+The current Isaac-inspected configuration remains:
+
+```text
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
+INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+restrict_solving.solve_max_rooms=10
+populate_doors.door_chance=0
+```
+
+The latest complete 10-room populate proxy was
+`outputs/gc_batch_remove_equiv/candidate_batch.log`. It used `222`
+`populate_assets` items and the final populate phase took about `3296.8s` /
+`54.9m`.
+
+Proxy top factories:
+
+| factory | total duration | count | mean duration |
+| --- | ---: | ---: | ---: |
+| `NatureShelfTrinketsFactory` | `1921.3s` | 76 | `25.3s` |
+| `LargePlantContainerFactory` | `440.9s` | 8 | `55.1s` |
+| `BookStackFactory` | `429.4s` | 35 | `12.3s` |
+| `BookColumnFactory` | `177.1s` | 10 | `17.7s` |
+| `BottleFactory` | `48.9s` | 12 | `4.1s` |
+
+Seed2 clutter counts from generated state / export-side evidence were:
+
+| factory | count |
+| --- | ---: |
+| `NatureShelfTrinketsFactory` | 58 |
+| `BookStackFactory` | 34 |
+| `LargePlantContainerFactory` | 7 |
+| `BookColumnFactory` | 4 |
+| `BottleFactory` | 7 |
+| `BowlFactory` | 8 |
+
+Rough seed2 priority from proxy averages:
+
+| factory | estimated populate cost |
+| --- | ---: |
+| `NatureShelfTrinketsFactory` | about `24.4m` |
+| `BookStackFactory` | about `7.0m` |
+| `LargePlantContainerFactory` | about `6.4m` |
+
+New optional timing:
+
+```bash
+INFINIGEN_PROFILE_NATURE_SHELF_TRINKETS=1
+```
+
+CSV path:
+
+```text
+<output_folder>/infinigen_nature_shelf_trinkets_timing.csv
+```
+
+Fallback path:
+
+```text
+/tmp/infinigen_nature_shelf_trinkets_timing.csv
+```
+
+Analyzer:
+
+```bash
+python scripts/analyze_nature_shelf_trinkets.py \
+  outputs/<run>/coarse/infinigen_nature_shelf_trinkets_timing.csv
+```
+
+Bounded 1800s sample attempt:
+
+```text
+outputs/profile_nature_shelf_trinkets_seed0_1800_container/coarse/run.log
+```
+
+The run used seed `0`, task `coarse`, `fast_solve.gin`,
+`compose_indoors.terrain_enabled=False`,
+`home_room_constraints.has_fewer_rooms=False`,
+`restrict_solving.solve_max_rooms=10`,
+`populate_doors.door_chance=0`,
+`INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1`,
+`INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1`, and
+`INFINIGEN_PROFILE_NATURE_SHELF_TRINKETS=1`.
+
+It exited with timeout code `124` at 1800s. It did not reach
+`populate_assets`, did not call `NatureShelfTrinketsFactory.create_asset()`,
+and did not write `infinigen_nature_shelf_trinkets_timing.csv`. The run was
+still in `[solve_large]`; the tail was dominated by repeated
+`KitchenIslandFactory` proposals. The last clutter report before timeout
+showed `State Size 111`, `Objects 465`, `Meshes 464`, `Materials 7154`, and
+`Textures 7154`. No traceback, OOM, killed, or segfault marker was found.
+
+The source investigation found that `NatureShelfTrinketsFactory` is a thin
+wrapper around coral, rock, pinecone, mollusk, and creature factories. The
+wrapper itself does not directly create font, text, or image datablocks. Its
+wrapped factories create procedural shader materials, Blender texture
+datablocks, meshes, child objects, and in creature paths many geometry node
+groups. The likely slow substages are wrapped `base_factory.spawn_asset`,
+optional child-object joining, modifier application, and non-creature
+`trimesh.poses.compute_stable_poses`.
+
+Judgment: `NatureShelfTrinketsFactory` is the first populate clutter target.
+`BookStackFactory` and `LargePlantContainerFactory` are second-priority
+populate targets. Material / texture / node-group reuse is worth investigating
+only after the new CSV shows a repeated-template signal, and any reuse must
+remain opt-in until a visual-quality gate accepts it. Do not run concurrent
+optimization, and do not reduce scene complexity unless a later quality gate
+explicitly allows that tradeoff.
+
 ## LargeShelf Child Node Group Reuse Short Sample - 2026-06-21
 
 Profile type: bounded 900s timing A/B for the first opt-in

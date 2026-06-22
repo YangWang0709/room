@@ -1,5 +1,52 @@
 # Next Steps
 
+## Latest Populate Clutter Focus
+
+The current Isaac-inspected speed configuration is:
+
+```text
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
+INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+restrict_solving.solve_max_rooms=10
+populate_doors.door_chance=0
+```
+
+After the solver / GC and `LargeShelfFactory` child node-group work, the next
+bottleneck focus is final `populate_assets` clutter. A complete 10-room proxy
+log showed `populate_assets` at about `3296.8s` / `54.9m` for `222` items.
+The highest-priority populate factory is now `NatureShelfTrinketsFactory`,
+with `BookStackFactory` and `LargePlantContainerFactory` as the next targets.
+
+Use the new NatureShelfTrinkets instrumentation only when collecting evidence:
+
+```bash
+INFINIGEN_PROFILE_NATURE_SHELF_TRINKETS=1 python -m infinigen_examples.generate_indoors ...
+python scripts/analyze_nature_shelf_trinkets.py \
+  outputs/<run>/coarse/infinigen_nature_shelf_trinkets_timing.csv
+```
+
+Recommended next order:
+
+1. The bounded 1800s NatureShelfTrinkets sample timed out inside
+   `[solve_large]`, did not reach final `populate_assets`, and wrote no Nature
+   timing CSV. Do not treat this as a failed instrumentation signal.
+2. For the next timing evidence, either run from an already completed coarse
+   state if a safe final-populate-only path is available, or explicitly approve
+   a longer bounded run such as 3600s. Do not default to a full 10-room run.
+3. Use `scripts/analyze_nature_shelf_trinkets.py` to identify whether runtime
+   is dominated by wrapped base-factory spawn, stable-pose computation,
+   material / texture creation, node-group creation, or many child objects.
+4. If the CSV shows repeated material, texture, or node-group names with high
+   creation counts, design a separate opt-in reuse experiment for the narrowest
+   repeated template only.
+5. Keep `BookStackFactory` and `LargePlantContainerFactory` as second-priority
+   populate targets after the NatureShelfTrinkets evidence is clearer.
+6. Do not run concurrent benchmarks in this phase.
+7. Do not reduce clutter count or scene complexity unless a later quality gate
+   explicitly allows it.
+8. Do not change solver behavior, proposal order, accept/reject behavior, or
+   random number flow.
+
 ## Latest LargeShelf Child Reuse Short Sample
 
 A first-round opt-in `LargeShelfFactory` child node group reuse experiment was

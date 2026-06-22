@@ -1,5 +1,161 @@
 # Worklog
 
+## 2026-06-22 - NatureShelfTrinkets populate investigation
+
+### Round Goal
+
+Investigate `NatureShelfTrinketsFactory` as the first populate clutter target
+without adding an optimization, reducing small object count, changing
+generation logic, changing solver behavior, changing random number flow,
+running concurrent generation, or connecting C++.
+
+The current Isaac-inspected configuration remains:
+
+```text
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
+INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+restrict_solving.solve_max_rooms=10
+populate_doors.door_chance=0
+```
+
+### Findings
+
+The bottleneck focus has moved from solver / GC mechanics toward final
+populate clutter. A recent complete 10-room proxy log showed
+`populate_assets` at about `3296.8s` / `54.9m` for `222` items. The top proxy
+factory was `NatureShelfTrinketsFactory` with about `1921.3s` across `76`
+items. `BookStackFactory` and `LargePlantContainerFactory` are the next
+populate targets after NatureShelfTrinkets.
+
+`NatureShelfTrinketsFactory` is defined in:
+
+```text
+infinigen/assets/objects/elements/nature_shelf_trinkets/generate.py
+```
+
+The final populate path is:
+
+```text
+populate_state_placeholders(final=True)
+  os.generator.spawn_asset(i=inst_seed, loc=placeholder.location, rot=...)
+    AssetFactory.spawn_asset()
+      NatureShelfTrinketsFactory.create_placeholder()
+      NatureShelfTrinketsFactory.create_asset()
+        base_factory.spawn_asset(np.random.randint(1e7), ...)
+        optional join_objects(asset.children)
+        apply_transform / apply_modifiers
+        optional obj2trimesh() + trimesh.poses.compute_stable_poses()
+        scale and reposition into the placeholder dimensions
+```
+
+The wrapper samples one base factory from coral, rock, pinecone, mollusk, and
+creature factories. The wrapper itself does not directly load font, text, or
+image assets. It does call wrapped factories that create procedural shader
+materials, Blender texture datablocks, meshes, and in creature paths many
+geometry node groups / part objects.
+
+### Changes
+
+Added investigation documentation:
+
+```text
+docs/NATURE_SHELF_TRINKETS_INVESTIGATION.md
+```
+
+Added optional timing behind:
+
+```bash
+INFINIGEN_PROFILE_NATURE_SHELF_TRINKETS=1
+```
+
+When unset, default behavior is unchanged. When set, each
+`NatureShelfTrinketsFactory.create_asset()` call writes one CSV row to:
+
+```text
+<output_folder>/infinigen_nature_shelf_trinkets_timing.csv
+```
+
+If the solver output folder cannot be discovered, it falls back to:
+
+```text
+/tmp/infinigen_nature_shelf_trinkets_timing.csv
+```
+
+The row records total duration, wrapped base factory class, placeholder name,
+substage timings, before/after Blender datablock counts, created material /
+texture / node-group / mesh / object counts, created material / texture /
+node-group names, child-object counts, success, and error type.
+
+Added:
+
+```text
+scripts/analyze_nature_shelf_trinkets.py
+```
+
+The script reports total / average / max duration, created datablock summaries,
+substage totals, duration by wrapped base factory, slowest instances, repeated
+material / texture / node-group name signals, and a recommended next
+optimization direction.
+
+### Short Sampling Attempt
+
+A bounded 1800s sample was attempted with:
+
+```text
+seed 0
+task coarse
+fast_solve.gin
+compose_indoors.terrain_enabled=False
+home_room_constraints.has_fewer_rooms=False
+restrict_solving.solve_max_rooms=10
+populate_doors.door_chance=0
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
+INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+INFINIGEN_PROFILE_NATURE_SHELF_TRINKETS=1
+```
+
+The host `python` lacked `bpy`, and the host Blender Python lacked `yaml`.
+The valid attempt therefore ran in the `infinigen` container from a temporary
+copy of the current host checkout at `/tmp/infinigen_profile_run`, writing to
+the mounted output folder:
+
+```text
+outputs/profile_nature_shelf_trinkets_seed0_1800_container/coarse
+```
+
+The run exited with timeout code `124` at 1800s. It did not reach
+`populate_assets` or `NatureShelfTrinketsFactory.create_asset()`, so no
+`infinigen_nature_shelf_trinkets_timing.csv` was produced. The log was still
+inside `[solve_large]`, dominated near the end by repeated
+`KitchenIslandFactory` proposals. The last clutter report before timeout
+showed:
+
+| metric | value |
+| --- | ---: |
+| state size | 111 |
+| trimesh objects | 112 |
+| Blender objects | 465 |
+| meshes | 464 |
+| materials | 7,154 |
+| textures | 7,154 |
+
+No traceback, OOM, killed, or segfault marker was found in this bounded
+attempt. Treat it only as evidence that the 1800s window is too short to
+collect final NatureShelfTrinkets populate rows for this configuration.
+
+### Judgment
+
+`NatureShelfTrinketsFactory` is worth first-class populate instrumentation
+because it dominates the proxy populate timing and wraps several heavy
+procedural asset families. Material / texture / node-group reuse is plausible
+for a later opt-in experiment, but only after timing identifies repeated
+templates and a separate quality gate protects visual complexity, randomness,
+and material diversity.
+
+Do not add concurrency. Do not reduce scene complexity or small-object counts
+unless a later quality gate explicitly allows that tradeoff. Do not change
+solver behavior or random number flow while investigating this populate path.
+
 ## 2026-06-21 - Opt-in LargeShelf child node group reuse
 
 ### Round Goal
