@@ -1,5 +1,73 @@
 # Profile Results
 
+## 9950X3D Parallel Scene Benchmark Setup - 2026-06-22
+
+Profile type: hardware / system benchmark preparation for Ryzen 9 9950X3D
+scene-level multiprocessing. This round adds benchmark tooling only. It does
+not change Infinigen generation logic, the solver, asset factories,
+batch-remove behavior, LargeShelf reuse, NatureShelf fast pose, Plant reuse,
+or the stable `scripts/run_isaac_static_optimized_10room.sh` defaults.
+
+New scripts:
+
+```text
+scripts/run_9950x3d_parallel_scene_bench.sh
+scripts/analyze_9950x3d_parallel_scene_bench.py
+```
+
+The benchmark records CPU / memory / swap / I/O / governor state before
+running cases:
+
+```text
+outputs/bench_9950x3d_parallel_scenes/topology/cpu_topology.txt
+outputs/bench_9950x3d_parallel_scenes/topology/cpu_topology.json
+outputs/bench_9950x3d_parallel_scenes/topology/recommended_cpu_sets.md
+```
+
+CPU sets are derived from `lscpu -e=CPU,CORE,SOCKET,NODE,CACHE` shared
+last-level cache groups first. The fallback to continuous halves is recorded
+only when cache grouping is unavailable. This avoids assuming that CPU `0-15`
+is a particular CCD.
+
+Default bounded matrix:
+
+| case | CPU strategy | jobs |
+| --- | --- | ---: |
+| `jobs1_none` | `none` | 1 |
+| `jobs2_split_llc` | `split_llc` | 2 |
+| `jobs2_physical_cores_only` | `physical_cores_only` | 2 |
+| `jobs4_split_llc` | `split_llc` | 4 |
+| `jobs4_physical_cores_only` | `physical_cores_only` | 4 |
+
+Default timeout is `1800s`, so a timeout is a bounded benchmark outcome rather
+than proof that the configuration is invalid. If all cases time out, compare
+the last progress lines and progress scores in `summary_all_cases.md`, then
+extend `TIMEOUT_SECONDS` for the most promising case. For real runs, record or
+watch CPU temperature and frequency behavior with host tools such as `sensors`;
+thermal throttling, swap, OOM, or storage stalls should disqualify a candidate
+even if its bounded progress looks good.
+
+Default generation switches:
+
+```text
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
+INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
+compose_indoors.terrain_enabled=False
+home_room_constraints.has_fewer_rooms=False
+restrict_solving.solve_max_rooms=10
+populate_doors.door_chance=0
+```
+
+`INFINIGEN_REUSE_PLANT_TEMPLATE_GEOMETRY=1` is not enabled by default because
+the Wheat reuse path has not yet been accepted as a stable full 10-room
+configuration. Use `ENABLE_WHEAT_REUSE=1` only for explicit experiments.
+
+The target metric is `scenes/hour` with zero failures, no fatal markers, no
+swap/OOM signal, and no Isaac visual quality regression. USD export is off by
+default; when enabled, export runs after coarse generation and keeps
+`EXPORT_JOBS=1` by default.
+
 ## Isaac Static Optimized 10-Room Quality Check - 2026-06-22
 
 The following opt-in configuration has passed manual Isaac Sim visual

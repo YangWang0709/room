@@ -1,5 +1,119 @@
 # Commands
 
+## Run 9950X3D Parallel Scene Benchmark
+
+Use this for Ryzen 9 9950X3D scene-level throughput testing. Each seed runs in
+its own independent Python-Blender process. This is not Python threading inside
+one Blender / `bpy` process, and it does not modify Infinigen generation logic,
+the solver, asset factories, proposal order, or the stable
+`scripts/run_isaac_static_optimized_10room.sh` defaults.
+
+Dry-run the default matrix:
+
+```bash
+DRY_RUN=1 \
+BENCH_MODE=matrix \
+SEEDS=10,11,12,13 \
+TIMEOUT_SECONDS=300 \
+bash scripts/run_9950x3d_parallel_scene_bench.sh
+```
+
+Run the bounded 1800s matrix:
+
+```bash
+CLEAN=1 \
+BENCH_MODE=matrix \
+SEEDS=10,11,12,13 \
+TIMEOUT_SECONDS=1800 \
+bash scripts/run_9950x3d_parallel_scene_bench.sh
+```
+
+Default matrix cases:
+
+```text
+JOBS=1 CPU_STRATEGY=none
+JOBS=2 CPU_STRATEGY=split_llc
+JOBS=2 CPU_STRATEGY=physical_cores_only
+JOBS=4 CPU_STRATEGY=split_llc
+JOBS=4 CPU_STRATEGY=physical_cores_only
+```
+
+The script first records topology under:
+
+```text
+outputs/bench_9950x3d_parallel_scenes/topology/cpu_topology.txt
+outputs/bench_9950x3d_parallel_scenes/topology/cpu_topology.json
+outputs/bench_9950x3d_parallel_scenes/topology/recommended_cpu_sets.md
+```
+
+It uses `lscpu -e=CPU,CORE,SOCKET,NODE,CACHE` to group logical CPUs by shared
+last-level cache / likely CCD. It does not assume CPU `0-15` is a specific CCD.
+If cache grouping is unavailable, it records the fallback reason and uses
+continuous halves. Also check CPU governor / frequency state, temperature
+(`sensors` or host monitoring), memory, swap, and I/O while comparing cases;
+thermal throttling or swap pressure invalidates scenes/hour comparisons.
+
+Supported CPU strategies:
+
+```text
+CPU_STRATEGY=none
+CPU_STRATEGY=compact_llc
+CPU_STRATEGY=split_llc
+CPU_STRATEGY=physical_cores_only
+CPU_STRATEGY=smt_pairs
+CPU_STRATEGY=manual CPU_SETS="0-15;16-31"
+```
+
+Single-case example:
+
+```bash
+CLEAN=1 \
+BENCH_MODE=single \
+JOBS=2 \
+CPU_STRATEGY=split_llc \
+SEEDS=10,11,12,13 \
+bash scripts/run_9950x3d_parallel_scene_bench.sh
+```
+
+Analyze an existing output root:
+
+```bash
+python scripts/analyze_9950x3d_parallel_scene_bench.py \
+  outputs/bench_9950x3d_parallel_scenes
+```
+
+The benchmark enables the accepted Isaac static switches:
+
+```text
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
+INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
+```
+
+and uses:
+
+```text
+compose_indoors.terrain_enabled=False
+home_room_constraints.has_fewer_rooms=False
+restrict_solving.solve_max_rooms=10
+populate_doors.door_chance=0
+```
+
+`INFINIGEN_REUSE_PLANT_TEMPLATE_GEOMETRY` is not enabled by default because the
+Wheat reuse path has only passed a targeted benchmark so far. Use
+`ENABLE_WHEAT_REUSE=1` only for explicit experiments.
+
+USD export is off by default. When `EXPORT_USD=1`, export starts only after all
+coarse generation for the case finishes, with `EXPORT_JOBS=1` by default:
+
+```bash
+EXPORT_USD=1 EXPORT_JOBS=1 \
+bash scripts/run_9950x3d_parallel_scene_bench.sh
+```
+
+Start with `JOBS=2`. If it is stable, compare `JOBS=3` and `JOBS=4`. Do not
+jump straight to `JOBS=8`; the script requires `ALLOW_JOBS8=1` for that.
+
 ## Run Optimized Isaac Static 10-Room
 
 Use this as the standard full 10-room static indoor command after the latest

@@ -1,5 +1,55 @@
 # Next Steps
 
+## 9950X3D Parallel Scene Benchmark
+
+Current priority is a Ryzen 9 9950X3D-specific throughput benchmark for
+multiple indoor 10-room coarse scenes. This is scene-level multiprocessing:
+one seed, one scene, one independent Python-Blender process. Do not add Python
+threads inside a single Blender / `bpy` process, do not change the solver, and
+do not change asset factories or proposal / accept / reject behavior.
+
+Use:
+
+```bash
+DRY_RUN=1 BENCH_MODE=matrix SEEDS=10,11,12,13 TIMEOUT_SECONDS=300 \
+bash scripts/run_9950x3d_parallel_scene_bench.sh
+```
+
+Then run the bounded comparison:
+
+```bash
+CLEAN=1 BENCH_MODE=matrix SEEDS=10,11,12,13 TIMEOUT_SECONDS=1800 \
+bash scripts/run_9950x3d_parallel_scene_bench.sh
+```
+
+The script records CPU topology first and derives CPU sets from
+`lscpu -e=CPU,CORE,SOCKET,NODE,CACHE`. Do not hard-code a CCD assumption such
+as "CPU 0-15 is CCD0"; use the cache grouping output in
+`topology/recommended_cpu_sets.md`. During real runs, watch CPU governor /
+frequency state, temperatures, memory, swap, and I/O; a faster-looking case is
+not acceptable if it reaches thermal throttling, swap, OOM, or storage stalls.
+
+Default matrix:
+
+```text
+JOBS=1 CPU_STRATEGY=none
+JOBS=2 CPU_STRATEGY=split_llc
+JOBS=2 CPU_STRATEGY=physical_cores_only
+JOBS=4 CPU_STRATEGY=split_llc
+JOBS=4 CPU_STRATEGY=physical_cores_only
+```
+
+Start with `JOBS=2`. If failure rate is zero and there is no swap/OOM signal,
+test `JOBS=3` and compare with `JOBS=4`. Do not jump straight to `JOBS=8`.
+USD export remains `EXPORT_JOBS=1` by default and should happen after coarse
+generation, not concurrently with generation, until export is measured as a
+bottleneck.
+
+`INFINIGEN_REUSE_PLANT_TEMPLATE_GEOMETRY=1` is not part of the stable default
+full 10-room configuration yet; enable it only with `ENABLE_WHEAT_REUSE=1` for
+explicit experiments. The optimization target is maximum `scenes/hour` with
+zero failures, no swap/OOM pressure, and no Isaac visual quality regression.
+
 ## Current Isaac Static Recommendation
 
 The latest recommended full 10-room Isaac Sim static indoor configuration is:
@@ -37,11 +87,11 @@ For Isaac Sim, open the host export directory and keep the full export folder
 together. Do not move only one `.usdc` file. If the scene appears black, add a
 Dome Light or Point Light and inspect material or texture resolve warnings.
 
-Next optimization work should stay single-scene and quality-first. Good next
-targets are `LargePlantContainerFactory` / plant spawn cost and integrated
-datablock growth attribution for material, texture, and node-group growth.
-Do not start concurrency optimization yet, and do not reduce room count or
-clutter complexity unless a later quality gate explicitly allows it.
+The stable single-scene command remains the quality-preserving baseline. The
+current throughput work is separate and uses scene-level multiprocessing in
+`scripts/run_9950x3d_parallel_scene_bench.sh`; it does not change this stable
+script's default behavior. Do not reduce room count or clutter complexity
+unless a later quality gate explicitly allows it.
 
 ## Plant Candidate Bottleneck
 

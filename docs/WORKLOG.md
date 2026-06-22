@@ -1,5 +1,110 @@
 # Worklog
 
+## 2026-06-22 - 9950X3D parallel scene benchmark tooling
+
+### Round Goal
+
+Add hardware / system benchmark tooling for Ryzen 9 9950X3D multi-scene
+throughput. This round is script and documentation work only: no solver
+changes, no asset factory changes, no proposal / accept / reject changes, no
+C++, no GPU optimization, no single-Blender Python threads, and no change to
+`scripts/run_isaac_static_optimized_10room.sh` defaults.
+
+### Implementation
+
+Added:
+
+```text
+scripts/run_9950x3d_parallel_scene_bench.sh
+scripts/analyze_9950x3d_parallel_scene_bench.py
+```
+
+The benchmark runs one seed per independent Python-Blender process and uses
+bash job control rather than GNU parallel. It records topology and system
+state before cases:
+
+```text
+topology/cpu_topology.txt
+topology/cpu_topology.json
+topology/recommended_cpu_sets.md
+```
+
+Topology is derived from `lscpu -e=CPU,CORE,SOCKET,NODE,CACHE` shared LLC
+groups, with a recorded fallback to continuous halves only when cache grouping
+is unavailable. This is intended to test CCD-aware placement without hard
+coding that CPU `0-15` maps to a specific CCD. Real runs should also watch CPU
+governor / frequency state, temperature, memory, swap, and I/O; thermal
+throttling or swap/OOM invalidates a throughput recommendation.
+
+Supported CPU strategies:
+
+```text
+none
+compact_llc
+split_llc
+physical_cores_only
+smt_pairs
+manual
+```
+
+Default matrix:
+
+```text
+JOBS=1 CPU_STRATEGY=none
+JOBS=2 CPU_STRATEGY=split_llc
+JOBS=2 CPU_STRATEGY=physical_cores_only
+JOBS=4 CPU_STRATEGY=split_llc
+JOBS=4 CPU_STRATEGY=physical_cores_only
+```
+
+The default timeout is `1800s`; this is a bounded comparison, not a full
+completion requirement. `JOBS=8` is not part of the default matrix and requires
+`ALLOW_JOBS8=1`.
+
+### Defaults And Guardrails
+
+Generation uses the accepted Isaac static switches:
+
+```text
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
+INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
+restrict_solving.solve_max_rooms=10
+populate_doors.door_chance=0
+```
+
+`INFINIGEN_REUSE_PLANT_TEMPLATE_GEOMETRY=1` is intentionally off by default.
+Only `ENABLE_WHEAT_REUSE=1` enables it for explicit experiments because Wheat
+reuse has targeted benchmark evidence but is not yet the stable full 10-room
+default.
+
+Each job forces low-level library thread counts to `1`:
+
+```text
+OMP_NUM_THREADS=1
+OPENBLAS_NUM_THREADS=1
+MKL_NUM_THREADS=1
+NUMEXPR_NUM_THREADS=1
+BLIS_NUM_THREADS=1
+```
+
+USD export is off by default. If `EXPORT_USD=1`, export starts after all coarse
+generation in the case finishes and defaults to `EXPORT_JOBS=1`.
+
+### Next Use
+
+Run a dry-run first:
+
+```bash
+DRY_RUN=1 BENCH_MODE=matrix SEEDS=10,11,12,13 TIMEOUT_SECONDS=300 \
+bash scripts/run_9950x3d_parallel_scene_bench.sh
+```
+
+Then run the bounded 1800s matrix. Compare `scenes/hour`, failure rate,
+timeout count, max RSS, swap/OOM markers, and last progress lines. If `JOBS=2`
+is stable, test `JOBS=3` before treating `JOBS=4` or higher as the throughput
+default.
+
 ## 2026-06-22 - Opt-in Wheat plant geometry reuse experiment
 
 ### Round Goal
