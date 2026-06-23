@@ -1,5 +1,96 @@
 # Worklog
 
+## 2026-06-23 - 9950X3D production scene queue tooling
+
+### Round Goal
+
+Stop CPU parallel strategy tuning for the current line and implement the
+production queue based on the validated 9950X3D `JOBS=4` CCD split. No solver,
+asset factory, proposal / accept / reject logic, or
+`scripts/run_isaac_static_optimized_10room.sh` default behavior was changed.
+
+Current clean candidate:
+
+```text
+JOBS=4
+CPU_SETS="0-3,16-19;4-7,20-23;8-11,24-27;12-15,28-31"
+```
+
+Correct CCD / L3 groups:
+
+```text
+CCD0 / L3: 0-7,16-23
+CCD1 / L3: 8-15,24-31
+```
+
+`0-15;16-31` remains incorrect for CCD grouping.
+
+### Implementation
+
+Added:
+
+```text
+scripts/run_9950x3d_production_scene_queue.sh
+scripts/analyze_9950x3d_production_queue.py
+```
+
+The queue assigns seeds round-robin across fixed workers:
+
+```text
+worker0: seed100 coarse -> seed100 export -> seed104 coarse -> seed104 export
+worker1: seed101 coarse -> seed101 export -> seed105 coarse -> seed105 export
+worker2: seed102 coarse -> seed102 export -> seed106 coarse -> seed106 export
+worker3: seed103 coarse -> seed103 export -> seed107 coarse -> seed107 export
+```
+
+Each worker is a bash subshell with one fixed CPU set. Each coarse and export
+command uses `taskset -c <CPU_SET>`. Export runs serially inside the same
+worker after that seed's coarse output exists, so the script does not layer
+extra global export concurrency on top of coarse generation.
+
+The production queue enables the stable Isaac static speed flags by default:
+
+```text
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
+INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
+compose_indoors.terrain_enabled=False
+home_room_constraints.has_fewer_rooms=False
+restrict_solving.solve_max_rooms=10
+populate_doors.door_chance=0
+```
+
+`INFINIGEN_REUSE_PLANT_TEMPLATE_GEOMETRY` remains default-off and is only set
+when `ENABLE_WHEAT_REUSE=1`.
+
+### Outputs
+
+Default output root:
+
+```text
+outputs/production_9950x3d_isaac_queue
+```
+
+Each seed writes independent coarse, USD, log, timing, env, and status files.
+The analyzer writes:
+
+```text
+summary.csv
+summary.md
+```
+
+Fatal markers include Traceback, segmentation fault, killed/OOM signals, CUDA
+errors, and uncaught exceptions. Blender shutdown `Not freed memory blocks`
+messages are tracked separately as leak warnings and are not counted as true
+fatal markers by themselves.
+
+### Recommendation
+
+Use the production queue for the next real batch after dry-run validation. If
+USD export becomes the measured limiter, benchmark export queueing or
+`EXPORT_JOBS` separately. Do not commit generated `outputs`, logs, CSVs,
+`.blend`, `.usd`, `.usdc`, profiles, zips, or cache directories.
+
 ## 2026-06-23 - Seed21 Concrete kwarg fix and clean CCD4 rerun
 
 ### Round Goal

@@ -1,5 +1,84 @@
 # Next Steps
 
+## 9950X3D Production Scene Queue
+
+Do not continue CPU parallel strategy tuning as the next step. The current
+clean candidate is the validated 9950X3D `JOBS=4` CCD split:
+
+```text
+JOBS=4
+CPU_SETS="0-3,16-19;4-7,20-23;8-11,24-27;12-15,28-31"
+```
+
+The correct observed CCD / L3 groups remain:
+
+```text
+CCD0 / L3: 0-7,16-23
+CCD1 / L3: 8-15,24-31
+```
+
+`0-15;16-31` is not a CCD split and must not be used as the default. Do not
+test `JOBS=5/6/8` in this line unless starting an explicit scaling experiment.
+
+The next operational path is:
+
+```text
+scripts/run_9950x3d_production_scene_queue.sh
+```
+
+Each worker keeps a fixed CPU set and serially runs:
+
+```text
+coarse -> export USD/USDC -> next seed
+```
+
+This remains scene-level multiprocessing. Each seed is an independent
+Python-Blender process, not multiple Python threads inside one Blender process.
+The queue does not change the solver, asset factories, proposal order,
+accept/reject behavior, or the default behavior of
+`scripts/run_isaac_static_optimized_10room.sh`.
+
+The production queue defaults to the stable Isaac static speed flags:
+
+```text
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
+INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
+compose_indoors.terrain_enabled=False
+home_room_constraints.has_fewer_rooms=False
+restrict_solving.solve_max_rooms=10
+populate_doors.door_chance=0
+```
+
+Wheat reuse remains default-off. Only `ENABLE_WHEAT_REUSE=1` should set
+`INFINIGEN_REUSE_PLANT_TEMPLATE_GEOMETRY=1`; it is not accepted as a stable
+full 10-room default yet.
+
+Export runs inside each worker after that worker finishes coarse generation
+for the seed. It does not add separate global export concurrency on top of
+coarse generation. If export becomes the bottleneck, benchmark an export queue
+or `EXPORT_JOBS` separately.
+
+Use the dry-run before real batches:
+
+```bash
+DRY_RUN=1 \
+SEEDS=100,101,102,103,104,105,106,107 \
+JOBS=4 \
+EXPORT_AFTER_GENERATE=1 \
+bash scripts/run_9950x3d_production_scene_queue.sh
+```
+
+Summaries are written to:
+
+```text
+outputs/production_9950x3d_isaac_queue/summary.csv
+outputs/production_9950x3d_isaac_queue/summary.md
+```
+
+Do not commit generated `outputs`, logs, CSVs, `.blend`, `.usd`, `.usdc`,
+profiles, zips, or cache directories.
+
 ## 9950X3D Parallel Scene Benchmark
 
 Current priority is a Ryzen 9 9950X3D-specific throughput benchmark for

@@ -1,5 +1,87 @@
 # Commands
 
+## Run 9950X3D Production Scene Queue
+
+Use this for the current 9950X3D production path after the clean `JOBS=4` CCD
+split coarse benchmark. This is scene-level multiprocessing: each seed runs in
+an independent Python-Blender process. It is not Python threading inside one
+Blender / `bpy` process.
+
+Each worker keeps a fixed CPU set and processes its own queue serially:
+
+```text
+worker: coarse -> export USD/USDC -> next seed
+```
+
+Current default candidate:
+
+```text
+JOBS=4
+CPU_SETS="0-3,16-19;4-7,20-23;8-11,24-27;12-15,28-31"
+```
+
+Correct observed 9950X3D CCD / L3 groups:
+
+```text
+CCD0 / L3: 0-7,16-23
+CCD1 / L3: 8-15,24-31
+```
+
+Do not use `0-15;16-31` as the default CPU split.
+
+Dry-run the default worker assignment and commands:
+
+```bash
+DRY_RUN=1 \
+SEEDS=100,101,102,103,104,105,106,107 \
+JOBS=4 \
+EXPORT_AFTER_GENERATE=1 \
+bash scripts/run_9950x3d_production_scene_queue.sh
+```
+
+Run a production queue batch:
+
+```bash
+SEEDS=100-139 \
+JOBS=4 \
+CPU_SETS="0-3,16-19;4-7,20-23;8-11,24-27;12-15,28-31" \
+EXPORT_AFTER_GENERATE=1 \
+bash scripts/run_9950x3d_production_scene_queue.sh
+```
+
+The queue defaults to the stable Isaac static speed flags:
+
+```text
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
+INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
+compose_indoors.terrain_enabled=False
+home_room_constraints.has_fewer_rooms=False
+restrict_solving.solve_max_rooms=10
+populate_doors.door_chance=0
+```
+
+Wheat template reuse is default-off. It is only enabled when explicitly set:
+
+```bash
+ENABLE_WHEAT_REUSE=1 bash scripts/run_9950x3d_production_scene_queue.sh
+```
+
+Export runs serially inside each worker after that worker's coarse scene
+finishes. The queue does not add a separate global export concurrency layer.
+If export becomes the measured bottleneck, benchmark an export queue or
+`EXPORT_JOBS` separately from CPU placement.
+
+Analyze an existing queue output root:
+
+```bash
+python scripts/analyze_9950x3d_production_queue.py \
+  outputs/production_9950x3d_isaac_queue
+```
+
+Generated `outputs`, logs, CSVs, `.blend`, `.usd`, `.usdc`, profiles, zips,
+and cache data are local run artifacts and should not be committed.
+
 ## Run 9950X3D Parallel Scene Benchmark
 
 Use this for Ryzen 9 9950X3D scene-level throughput testing. Each seed runs in

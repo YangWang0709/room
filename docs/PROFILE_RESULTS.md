@@ -1,5 +1,78 @@
 # Profile Results
 
+## 9950X3D Production Scene Queue Tooling - 2026-06-23
+
+Profile type: tooling / production-queue preparation based on the previously
+validated 9950X3D `JOBS=4` CCD split. This entry does not report a new long
+generation benchmark. It records the queue path to use next without changing
+solver behavior, asset factories, proposal / accept / reject logic, or the
+stable Isaac static script defaults.
+
+Current clean coarse candidate:
+
+```text
+JOBS=4
+CPU_SETS="0-3,16-19;4-7,20-23;8-11,24-27;12-15,28-31"
+```
+
+Correct observed CCD / L3 groups:
+
+```text
+CCD0 / L3: 0-7,16-23
+CCD1 / L3: 8-15,24-31
+```
+
+`0-15;16-31` is not CCD grouping.
+
+New queue script:
+
+```text
+scripts/run_9950x3d_production_scene_queue.sh
+```
+
+The queue uses fixed CPU-set workers. Each worker serially runs:
+
+```text
+coarse -> export USD/USDC -> next seed
+```
+
+This is still scene-level multiprocessing with one independent Python-Blender
+process per seed. It is not a single-Blender multithreaded path. Export is run
+inside the worker after that seed's coarse output, so the queue does not add a
+separate global export concurrency layer.
+
+Default stable Isaac static flags:
+
+```text
+INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1
+INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
+INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
+compose_indoors.terrain_enabled=False
+home_room_constraints.has_fewer_rooms=False
+restrict_solving.solve_max_rooms=10
+populate_doors.door_chance=0
+```
+
+Wheat reuse remains default-off. `INFINIGEN_REUSE_PLANT_TEMPLATE_GEOMETRY=1`
+is only set by the queue when `ENABLE_WHEAT_REUSE=1`.
+
+Analysis helper:
+
+```text
+scripts/analyze_9950x3d_production_queue.py
+```
+
+It reads per-seed queue status and timing files, writes `summary.csv` and
+`summary.md`, separates coarse throughput from final USD throughput, and does
+not count Blender shutdown `Not freed memory blocks` messages as true fatal
+markers by themselves.
+
+Next real measurement should use the production queue with monitoring for
+failures, swap/OOM, thermals, and export bottlenecks. If export dominates,
+measure export queueing or `EXPORT_JOBS` separately. Generated outputs,
+logs, CSVs, `.blend`, `.usd`, `.usdc`, profiles, zips, and caches remain local
+artifacts and must not be committed.
+
 ## 9950X3D CCD4 Clean Rerun After Seed21 Fix - 2026-06-23
 
 Profile type: 9950X3D-specific multi-scene CPU parallel benchmark for indoor
