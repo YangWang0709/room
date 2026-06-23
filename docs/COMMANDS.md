@@ -126,6 +126,29 @@ OUTPUT_ROOT=outputs/bench_9950x3d_manual_ccd4_fulltimeout \
 bash scripts/run_9950x3d_parallel_scene_bench.sh
 ```
 
+Current clean JOBS=4 CCD split candidate after the seed 21 material kwarg fix:
+
+```bash
+CLEAN=1 \
+BENCH_MODE=single \
+CPU_STRATEGY=manual \
+CPU_SETS="0-3,16-19;4-7,20-23;8-11,24-27;12-15,28-31" \
+JOBS=4 \
+SEEDS=20,21,22,23 \
+TIMEOUT_SECONDS=14400 \
+OUTPUT_ROOT=outputs/bench_9950x3d_manual_ccd4_clean_after_seed21_fix \
+bash scripts/run_9950x3d_parallel_scene_bench.sh
+```
+
+This clean rerun completed `4/4` coarse scenes with `failed=0`,
+`timeout=0`, and `scenes/hour=1.825`. It did not enable Wheat reuse and did
+not export USD. The current recommended 9950X3D CPU placement is:
+
+```text
+JOBS=4
+CPU_SETS="0-3,16-19;4-7,20-23;8-11,24-27;12-15,28-31"
+```
+
 Manual 2-way physical-core-only comparison:
 
 ```bash
@@ -176,8 +199,10 @@ EXPORT_USD=1 EXPORT_JOBS=1 \
 bash scripts/run_9950x3d_parallel_scene_bench.sh
 ```
 
-Start with `JOBS=2`. If it is stable, compare `JOBS=3` and `JOBS=4`. Do not
-jump straight to `JOBS=8`; the script requires `ALLOW_JOBS8=1` for that.
+The clean full-timeout coarse-only result currently favors `JOBS=4` with the
+manual 4-way CCD split. Do not jump straight to `JOBS=8`; the script requires
+`ALLOW_JOBS8=1` for that. Keep `JOBS=5/6` for a separate scaling experiment,
+not as the next default step.
 
 ## Run Optimized Isaac Static 10-Room
 

@@ -26,24 +26,34 @@ JOBS=3 bounded:
   SEEDS=10,11,12 TIMEOUT_SECONDS=1800
   complete=0 timeout=3 failed=0 fatal=0 progress_score=302082 max_rss_kb=3306032
 
-JOBS=4 CCD split full-timeout:
+JOBS=4 CCD split full-timeout before seed21 fix:
   CPU_SETS=0-3,16-19;4-7,20-23;8-11,24-27;12-15,28-31
   SEEDS=20,21,22,23 TIMEOUT_SECONDS=14400
   complete=3 timeout=0 failed=1 scenes/hour=1.378 max_rss_kb=11260204
+
+JOBS=4 CCD split clean rerun after seed21 fix:
+  CPU_SETS=0-3,16-19;4-7,20-23;8-11,24-27;12-15,28-31
+  SEEDS=20,21,22,23 TIMEOUT_SECONDS=14400
+  complete=4 timeout=0 failed=0 scenes/hour=1.825 max_rss_kb=11183508
 ```
 
-JOBS=4 remains the best throughput candidate by bounded progress and the
-first real full-timeout `scenes/hour` result, but it is not yet a clean
-unattended full-run default because seed 21 failed late in `room_walls` with
-`TypeError: Concrete.generate() got an unexpected keyword argument 'vertical'`.
-The run had no Wheat reuse, no USD export, no timeout, no swap, no OOM, and no
-killed process. Keep `TIMEOUT_SECONDS=14400` for follow-up full-timeout runs;
-it was enough for this sample.
+Seed 21's failure was a room material kwarg compatibility issue:
+`room_walls()` passed `vertical/alternating/shape` to a wall material
+generator that resolved to `ceramic.Concrete`, while `Concrete.generate()` did
+not accept `vertical`. `call_material_generator()` now filters kwargs using
+`inspect.signature()`, and seed 21 passed both standalone validation and the
+clean 4-way rerun.
 
-Next 9950X3D action: isolate the seed 21 failure before increasing parallelism
-or entering fullopt_wheat quality validation. Do not test JOBS=5/6 yet. Keep
-`EXPORT_USD` / `EXPORT_JOBS` as a separate benchmark after coarse-only
-generation is clean.
+Current 9950X3D recommendation: use `JOBS=4` with the 4-way CCD split as the
+multi-scene coarse generation candidate default. The clean rerun had no
+timeout, no failed scenes, no Traceback, no killed/OOM marker, and no swap use.
+The analyzer's `fatal=4` is from small Blender `Not freed memory blocks`
+shutdown messages in otherwise complete logs and is treated as a false-positive
+fatal marker for this benchmark. Keep `TIMEOUT_SECONDS=14400` for comparable
+full-timeout runs. Do not test JOBS=5/6 next unless doing an explicit scaling
+experiment. It is reasonable to move to fullopt_wheat quality validation as a
+separate opt-in line. Keep `EXPORT_USD` / `EXPORT_JOBS` for a separate export
+benchmark.
 
 Latest bounded comparison:
 
@@ -59,10 +69,9 @@ therefore tied at zero. The bounded progress scores were `200849` for 2-way
 CCD, `403039` for 4-way CCD split, and `200878` for 2-way physical-only. Max
 RSS stayed modest: `2818032 KB`, `3015204 KB`, and `3122024 KB`.
 
-Current recommendation: use 4-way CCD split for the next bounded-throughput
-experiment, but test `JOBS=3` before selecting a full-run default. Do not
-enable `EXPORT_USD` yet; first extend timeout/full-timeout enough to get
-complete coarse scenes and real `scenes/hour`.
+Current recommendation: use the 4-way CCD split for 9950X3D multi-scene
+coarse throughput. Do not enable `EXPORT_USD` in this benchmark line; measure
+export separately after coarse-only throughput is stable.
 
 Useful dry-run:
 
@@ -95,11 +104,10 @@ JOBS=4 CPU_STRATEGY=split_llc
 JOBS=4 CPU_STRATEGY=physical_cores_only
 ```
 
-Start follow-up with `JOBS=3`, then run a longer/full-timeout coarse-only
-comparison for the best bounded cases. Do not jump straight to `JOBS=8`. USD
-export remains `EXPORT_JOBS=1` by default and should happen after coarse
-generation, not concurrently with generation, until export is measured as a
-bottleneck.
+The clean full-timeout coarse-only result selects `JOBS=4` for the immediate
+9950X3D candidate default. Do not jump straight to `JOBS=8`. USD export
+remains `EXPORT_JOBS=1` by default and should happen after coarse generation,
+not concurrently with generation, until export is measured as a bottleneck.
 
 `INFINIGEN_REUSE_PLANT_TEMPLATE_GEOMETRY=1` is not part of the stable default
 full 10-room configuration yet; enable it only with `ENABLE_WHEAT_REUSE=1` for

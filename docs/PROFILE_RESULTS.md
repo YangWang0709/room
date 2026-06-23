@@ -1,5 +1,72 @@
 # Profile Results
 
+## 9950X3D CCD4 Clean Rerun After Seed21 Fix - 2026-06-23
+
+Profile type: 9950X3D-specific multi-scene CPU parallel benchmark for indoor
+coarse generation. This rerun did not enable Wheat reuse and did not export
+USD. It did not change solver behavior, proposal / accept / reject logic,
+asset factories, or stable Isaac script defaults.
+
+Correct observed CCD / L3 groups:
+
+```text
+CCD0 / L3: 0-7,16-23
+CCD1 / L3: 8-15,24-31
+```
+
+`0-15;16-31` is SMT-sibling grouping, not CCD grouping.
+
+Seed 21 failure root cause and fix:
+
+```text
+room_walls() passed vertical/alternating/shape to every wall material
+generator. Seed 21 selected ceramic.Concrete for a wall material, but
+Concrete.generate() did not accept vertical.
+```
+
+`infinigen/core/constraints/example_solver/room/decorate.py` now calls room
+material generators through `call_material_generator()`, which filters kwargs
+against `inspect.signature()`. This preserves kwargs for generators that
+support them and avoids passing unsupported kwargs to generators such as
+Concrete. Seed 21 was also run standalone after the patch and wrote
+`scene.blend` without a new Traceback.
+
+Clean rerun:
+
+| case | CPU sets | jobs | seeds | timeout s | complete | timeout | failed | scenes/hour | avg wall s | max wall s | max RSS KB |
+| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| JOBS=4 CCD split clean | `0-3,16-19;4-7,20-23;8-11,24-27;12-15,28-31` | 4 | `20,21,22,23` | 14400 | 4 | 0 | 0 | 1.825 | 6040.320 | 7892.000 | 11183508 |
+
+All four seeds exited `0` and wrote `scene.blend`. There was no Traceback, no
+OOM, no swap use, no killed process, no CUDA error, and no segmentation fault.
+The analyzer reported `fatal=4` only because each completed Blender log
+contains a small `Error: Not freed memory blocks` shutdown message; these are
+treated as false-positive fatal markers for this benchmark because the seeds
+completed successfully.
+
+Current recommendation: `JOBS=4` with the 4-way CCD split is the current
+9950X3D multi-scene coarse generation candidate default:
+
+```text
+CPU_SETS="0-3,16-19;4-7,20-23;8-11,24-27;12-15,28-31"
+JOBS=4
+```
+
+Do not test `JOBS=5/6` as the next step unless a separate scaling experiment
+is explicitly needed. `JOBS=3` no longer blocks the immediate choice because
+the clean `JOBS=4` full-timeout rerun produced real scenes/hour with zero
+actionable failures. It is reasonable to proceed to fullopt_wheat quality
+validation as a separate opt-in line. Keep `EXPORT_USD` and `EXPORT_JOBS` for
+a later export-specific benchmark.
+
+Local report:
+
+```text
+outputs/bench_9950x3d_compare_snapshots/compare_ccd4_clean_after_seed21_fix.md
+```
+
+Generated `outputs` are local experiment data and must not be committed.
+
 ## 9950X3D JOBS=3 And JOBS=4 Full-Timeout Follow-Up - 2026-06-23
 
 Profile type: 9950X3D-specific multi-scene CPU parallel benchmark for indoor

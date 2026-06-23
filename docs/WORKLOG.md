@@ -1,5 +1,68 @@
 # Worklog
 
+## 2026-06-23 - Seed21 Concrete kwarg fix and clean CCD4 rerun
+
+### Round Goal
+
+Fix the seed 21 `Concrete.generate(vertical=...)` failure from the 9950X3D
+`JOBS=4` CCD split full-timeout run, then rerun the same four seeds without
+Wheat reuse and without USD export. No solver behavior, proposal / accept /
+reject logic, asset factories, stable Isaac defaults, or Wheat reuse defaults
+were changed.
+
+Correct CCD / L3 groups:
+
+```text
+CCD0 / L3: 0-7,16-23
+CCD1 / L3: 8-15,24-31
+```
+
+`0-15;16-31` is not CCD grouping.
+
+### Fix
+
+Root cause: `room_walls()` passed `vertical/alternating/shape` to every wall
+material generator. Seed 21 selected `ceramic.Concrete`, but
+`Concrete.generate()` did not accept `vertical`.
+
+Updated `infinigen/core/constraints/example_solver/room/decorate.py` to call
+room material generators through `call_material_generator()`, which filters
+unsupported kwargs with `inspect.signature()`. Seed 21 passed standalone coarse
+validation after the patch and wrote `scene.blend` without a new Traceback.
+
+### Clean Rerun Result
+
+| case | jobs | CPU sets | complete | timeout | failed | scenes/hour | avg wall s | max wall s | max RSS KB |
+| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| CCD4 clean after seed21 fix | 4 | `0-3,16-19;4-7,20-23;8-11,24-27;12-15,28-31` | 4 | 0 | 0 | 1.825 | 6040.320 | 7892.000 | 11183508 |
+
+All four seeds exited `0` and wrote `scene.blend`. There was no Traceback, no
+OOM, no swap use, no killed process, no CUDA error, and no segmentation fault.
+The analyzer still reports `fatal=4` because all complete Blender logs contain
+small `Error: Not freed memory blocks` shutdown messages; these are treated as
+false-positive fatal markers for this benchmark.
+
+### Recommendation
+
+`JOBS=4` with the 4-way CCD split is now the current 9950X3D multi-scene coarse
+generation candidate default:
+
+```text
+CPU_SETS="0-3,16-19;4-7,20-23;8-11,24-27;12-15,28-31"
+JOBS=4
+```
+
+Do not test `JOBS=5/6` next unless running a separate scaling experiment.
+Proceed to fullopt_wheat quality validation as a separate opt-in line if
+desired. Keep USD export parallelism deferred for a separate benchmark. Outputs
+remain local experiment data and must not be committed.
+
+Local report:
+
+```text
+outputs/bench_9950x3d_compare_snapshots/compare_ccd4_clean_after_seed21_fix.md
+```
+
 ## 2026-06-23 - 9950X3D JOBS=3 and JOBS=4 full-timeout follow-up
 
 ### Round Goal
