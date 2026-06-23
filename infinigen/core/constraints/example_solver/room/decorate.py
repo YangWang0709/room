@@ -7,6 +7,7 @@
 # - Karhan Kayan: fix constants
 
 import importlib
+import inspect
 import logging
 import os
 import types
@@ -173,6 +174,27 @@ def resolve_material_generator(obj, context="room_material"):
     )
 
 
+def call_material_generator(material_gen, **kwargs):
+    signature = inspect.signature(material_gen)
+    if any(
+        p.kind == inspect.Parameter.VAR_KEYWORD
+        for p in signature.parameters.values()
+    ):
+        return material_gen(**kwargs)
+
+    supported_kwargs = {
+        name: value
+        for name, value in kwargs.items()
+        if name in signature.parameters
+        and signature.parameters[name].kind
+        in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        )
+    }
+    return material_gen(**supported_kwargs)
+
+
 room_ceiling_fns = defaultdict(
     lambda: material_assignments.ceiling,
     {
@@ -294,7 +316,7 @@ def room_walls(walls: list[bpy.types.Object], constants: RoomConstants, n_walls=
                     unwrap_normal(r, selection=None)
             if wall_fn.__class__.__name__ == "Brick":
                 kwargs = {}
-            surface.assign_material(rooms__, wall_fn(**kwargs))
+            surface.assign_material(rooms__, call_material_generator(wall_fn, **kwargs))
 
     for w in walls:
         logger.debug(
@@ -323,7 +345,9 @@ def room_walls(walls: list[bpy.types.Object], constants: RoomConstants, n_walls=
                 plaster_mat_gen = plaster.Plaster()
                 unwrap_normal(w, selection="alternative")
                 surface.assign_material(
-                    w, plaster_mat_gen(**kwargs), selection="alternative"
+                    w,
+                    call_material_generator(plaster_mat_gen, **kwargs),
+                    selection="alternative",
                 )
             case _:
                 co = read_co(w)
