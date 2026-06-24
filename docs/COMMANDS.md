@@ -39,6 +39,19 @@ EXPORT_AFTER_GENERATE=1 \
 bash scripts/run_9950x3d_production_scene_queue.sh
 ```
 
+Run the seed 1-40 production validation shape:
+
+```bash
+CLEAN=1 \
+SEEDS=1-40 \
+JOBS=4 \
+EXPORT_AFTER_GENERATE=1 \
+EXPORT_FORMAT=usdc \
+EXPORT_RESOLUTION=512 \
+OUTPUT_ROOT=outputs/production_9950x3d_isaac_queue_seed1_40 \
+bash scripts/run_9950x3d_production_scene_queue.sh
+```
+
 Run a production queue batch:
 
 ```bash
@@ -79,8 +92,26 @@ python scripts/analyze_9950x3d_production_queue.py \
   outputs/production_9950x3d_isaac_queue
 ```
 
+Write analyzer summaries:
+
+```bash
+python scripts/analyze_9950x3d_production_queue.py \
+  outputs/production_9950x3d_isaac_queue_seed1_40 \
+  --write-summaries
+```
+
 Generated `outputs`, logs, CSVs, `.blend`, `.usd`, `.usdc`, profiles, zips,
 and cache data are local run artifacts and should not be committed.
+
+For Isaac Sim, open the full USD export folder, not just the `.usdc` file:
+
+```text
+outputs/production_9950x3d_isaac_queue_seed1_40/seed_<N>/usd/export_scene.blend/
+```
+
+If a scene appears black in Isaac, add or check a Dome Light / Point Light and
+inspect material or texture warnings. Keep the exported folder structure
+together so textures and sidecar files remain available.
 
 ## Run 9950X3D Parallel Scene Benchmark
 

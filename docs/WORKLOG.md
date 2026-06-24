@@ -1,5 +1,91 @@
 # Worklog
 
+## 2026-06-24 - 9950X3D production queue seed 1-40
+
+### Round Goal
+
+Run the new 9950X3D production queue on seeds 1-40 with `JOBS=4`, USDC export,
+and the stable Isaac static speed flags. Analyze throughput, failures, and
+remaining hotspots without changing generation behavior.
+
+### Command
+
+```bash
+CLEAN=1 SEEDS=1-40 JOBS=4 EXPORT_AFTER_GENERATE=1 EXPORT_FORMAT=usdc EXPORT_RESOLUTION=512 OUTPUT_ROOT=outputs/production_9950x3d_isaac_queue_seed1_40 bash scripts/run_9950x3d_production_scene_queue.sh
+python scripts/analyze_9950x3d_production_queue.py outputs/production_9950x3d_isaac_queue_seed1_40 --write-summaries
+```
+
+Dry-run assignment matched the intended workers:
+
+```text
+worker0 CPU_SET=0-3,16-19 seeds=1,5,9,13,17,21,25,29,33,37
+worker1 CPU_SET=4-7,20-23 seeds=2,6,10,14,18,22,26,30,34,38
+worker2 CPU_SET=8-11,24-27 seeds=3,7,11,15,19,23,27,31,35,39
+worker3 CPU_SET=12-15,28-31 seeds=4,8,12,16,20,24,28,32,36,40
+```
+
+`ENABLE_WHEAT_REUSE` was not enabled.
+
+### Recovery Note
+
+The queue supervisor was interrupted after seed35, seed36, and seed38 had
+finished generation but before status/export completion. Recovery preserved the
+original generate logs and completed only the missing work: seed35/39 on
+worker2 CPU set, seed36/40 on worker3 CPU set, and seed38 export on worker1
+CPU set.
+
+### Result
+
+```text
+status files: 40/40
+scene.blend outputs: 37/40
+successful USDC exports: 35/40
+generate complete/failed/timeout: 37/1/2
+export complete/failed/timeout/skipped: 35/1/1/3
+total elapsed wall time: 19:29:28
+coarse throughput: 1.898 scenes/hour
+end-to-end USDC throughput: 1.796 scenes/hour
+avg completed generate wall: 1:30:34
+avg completed export wall: 0:07:37
+```
+
+Failed or incomplete seeds:
+
+- seed4: generation timeout, exit 124, final populate near
+  `NatureShelfTrinketsFactory`.
+- seed5: generation failed, exit 1, `LargePlantContainerFactory` / plant
+  cleanup traceback.
+- seed7: generation timeout, exit 124, final populate near
+  `NatureShelfTrinketsFactory`.
+- seed26: generation complete, export timeout, exit 124.
+- seed28: generation complete, export failed, exit 139 / signal 11.
+
+No OOM, `Killed`, CUDA error, or swap pressure was observed. Blender shutdown
+`Not freed memory blocks` appeared as warning noise on otherwise successful
+processes.
+
+### Hotspot Judgment
+
+The production batch confirms a CPU / Python / Blender factory lifecycle
+bottleneck rather than a GPU or memory-capacity bottleneck. The strongest
+targets are:
+
+- `KitchenIslandFactory` proposal/apply/revert loops, especially seed38 and
+  seed39.
+- `NatureShelfTrinketsFactory` final populate, including seed4/7 timeouts and
+  seed39/40 long tails.
+- `LargePlantContainerFactory`, both latency and seed5 failure.
+- `BookStackFactory` / `BookColumnFactory` final populate.
+- Secondary repeated costs in `OfficeChairFactory`, `DeskLampFactory`,
+  `SideTableFactory`, `KitchenCabinetFactory`, `LargeShelfFactory`, and kitchen
+  appliance factories.
+
+Local report:
+
+```text
+outputs/production_9950x3d_isaac_queue_seed1_40/production_seed1_40_report.md
+```
+
 ## 2026-06-23 - 9950X3D production scene queue tooling
 
 ### Round Goal

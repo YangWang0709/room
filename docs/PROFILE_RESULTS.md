@@ -1,5 +1,190 @@
 # Profile Results
 
+## 9950X3D Production Queue Seed 1-40 - 2026-06-24
+
+Profile type: full 40-seed 9950X3D production queue run for indoor coarse
+generation followed by USDC export. This used the production queue script with
+`JOBS=4`, fixed 9950X3D CPU sets, stable Isaac static flags, and no Wheat plant
+template reuse. It did not change solver behavior, asset factories, proposal /
+accept / reject logic, or generation quality.
+
+Run command:
+
+```text
+CLEAN=1 SEEDS=1-40 JOBS=4 EXPORT_AFTER_GENERATE=1 EXPORT_FORMAT=usdc EXPORT_RESOLUTION=512 OUTPUT_ROOT=outputs/production_9950x3d_isaac_queue_seed1_40 bash scripts/run_9950x3d_production_scene_queue.sh
+python scripts/analyze_9950x3d_production_queue.py outputs/production_9950x3d_isaac_queue_seed1_40 --write-summaries
+```
+
+Dry-run worker assignment:
+
+| worker | CPU set | seeds |
+| ---: | --- | --- |
+| 0 | `0-3,16-19` | `1,5,9,13,17,21,25,29,33,37` |
+| 1 | `4-7,20-23` | `2,6,10,14,18,22,26,30,34,38` |
+| 2 | `8-11,24-27` | `3,7,11,15,19,23,27,31,35,39` |
+| 3 | `12-15,28-31` | `4,8,12,16,20,24,28,32,36,40` |
+
+Recovery note: the queue supervisor was interrupted after seed35, seed36, and
+seed38 had generated `scene.blend` but before their status/export work
+completed. The remaining work was recovered without re-running successful
+seeds: seed35/39 on worker2 CPU set, seed36/40 on worker3 CPU set, and seed38
+export on worker1 CPU set. Original generate logs were preserved. The
+`generate_time.txt` files for seed35, seed36, and seed38 are empty because the
+`/usr/bin/time` parent was lost during interruption; status timestamps still
+record their wall times.
+
+Aggregate:
+
+```text
+status files: 40/40
+scene.blend outputs: 37/40
+successful USDC exports: 35/40
+generate complete/failed/timeout: 37/1/2
+export complete/failed/timeout/skipped: 35/1/1/3
+total elapsed wall time: 19:29:28
+coarse throughput: 1.898 scenes/hour
+end-to-end USDC throughput: 1.796 scenes/hour
+avg completed generate wall: 1:30:34
+avg completed export wall: 0:07:37
+avg measured generate max RSS: 8.55 GiB over 34 measured completed generates
+avg completed export max RSS: 15.50 GiB over 35 completed exports
+max measured RSS: 31.17 GiB, seed3 export
+```
+
+Slowest rows:
+
+```text
+slowest generate overall: seed4, 4:00:00 timeout
+slowest successful generate: seed38, 2:56:23
+slowest export overall: seed26, 2:00:01 timeout
+slowest successful export: seed36, 0:11:13
+```
+
+Failed or incomplete seeds:
+
+| seed | generate | export | note |
+| ---: | --- | --- | --- |
+| 4 | timeout, exit 124 | skipped | 4h timeout in final populate, last seen near `NatureShelfTrinketsFactory` 155/184. |
+| 5 | failed, exit 1 | skipped | Traceback in `LargePlantContainerFactory` / plant growth delete path. |
+| 7 | timeout, exit 124 | skipped | 4h timeout in final populate, last seen near `NatureShelfTrinketsFactory` 111/129. |
+| 26 | complete, exit 0 | timeout, exit 124 | Export reached the 2h timeout. |
+| 28 | complete, exit 0 | failed, exit 139 | Export terminated by signal 11. |
+
+Fatal scan found only the seed5 traceback and seed28 signal 11 / exit 139. No
+`Killed`, OOM, CUDA error, or swap pressure was observed; swap stayed at 0.
+`Not freed memory blocks` appeared 38 times and was treated as Blender shutdown
+warning noise when exit status and expected outputs were otherwise successful.
+USD texture copy warnings were very noisy but did not prevent the 35 successful
+USDC exports.
+
+Main hotspot observations:
+
+- `KitchenIslandFactory` proposal loops remain the clearest solver-stage
+  hotspot. Seed38 repeated 11-26s additions, and seed39 repeated additions
+  through a 100-iteration stage with slow attempts up to 31.180s.
+- `NatureShelfTrinketsFactory` final populate is the clearest production
+  long-tail. Seed4 and seed7 timed out there; seed39 and seed40 finished but
+  had repeated 20-120s trinket sections.
+- `LargePlantContainerFactory` remains both a failure and latency target:
+  seed5 failed in plant cleanup, and seed39/40 had multiple 60-130s plant
+  populate sections.
+- `BookStackFactory` and `BookColumnFactory` repeatedly contribute to final
+  populate tails.
+- Secondary repeated costs include `OfficeChairFactory`, `DeskLampFactory`,
+  `SideTableFactory`, `KitchenCabinetFactory`, `LargeShelfFactory`, and kitchen
+  appliance factories.
+
+Local report and analyzer outputs:
+
+```text
+outputs/production_9950x3d_isaac_queue_seed1_40/production_seed1_40_report.md
+outputs/production_9950x3d_isaac_queue_seed1_40/summary.csv
+outputs/production_9950x3d_isaac_queue_seed1_40/summary.md
+```
+
+Recommendation: keep the `JOBS=4` production queue path and stop CPU split
+tuning for this line. Next optimization work should target behavior-preserving
+reductions in heavy failed/unaccepted factory work and final populate tails,
+especially `KitchenIslandFactory`, `NatureShelfTrinketsFactory`,
+`LargePlantContainerFactory`, `BookStackFactory`, and `BookColumnFactory`.
+Treat seed26 export timeout and seed28 signal 11 as a separate export-stability
+thread.
+
+## 9950X3D Production Queue Test4 - 2026-06-23
+
+Profile type: 9950X3D end-to-end small production queue validation for indoor
+coarse generation followed by USDC export. This run used the new production
+queue script with fixed workers and did not change solver behavior, asset
+factories, proposal / accept / reject logic, generation quality, or stable
+Isaac static defaults.
+
+Run command:
+
+```text
+CLEAN=1 SEEDS=100,101,102,103 JOBS=4 EXPORT_AFTER_GENERATE=1 EXPORT_FORMAT=usdc EXPORT_RESOLUTION=512 OUTPUT_ROOT=outputs/production_9950x3d_isaac_queue_test4 bash scripts/run_9950x3d_production_scene_queue.sh
+python scripts/analyze_9950x3d_production_queue.py --write-summaries outputs/production_9950x3d_isaac_queue_test4
+```
+
+The worker commands used `env -u INFINIGEN_REUSE_PLANT_TEMPLATE_GEOMETRY`; no
+`ENABLE_WHEAT_REUSE=1` setting was used.
+
+CPU placement:
+
+| seed | worker | CPU set |
+| --- | ---: | --- |
+| 100 | 0 | `0-3,16-19` |
+| 101 | 1 | `4-7,20-23` |
+| 102 | 2 | `8-11,24-27` |
+| 103 | 3 | `12-15,28-31` |
+
+Result summary:
+
+| seed | generate | gen wall s | export | exp wall s | scene.blend GB | usdc GB | zip GB |
+| --- | --- | ---: | --- | ---: | ---: | ---: | ---: |
+| 100 | complete, exit 0 | 3909.000 | complete, exit 0 | 312.830 | 2.60 | 2.72 | 1.23 |
+| 101 | complete, exit 0 | 3140.000 | complete, exit 0 | 388.020 | 2.89 | 3.36 | 1.56 |
+| 102 | complete, exit 0 | 12886.000 | complete, exit 0 | 494.820 | 3.49 | 3.94 | 1.79 |
+| 103 | complete, exit 0 | 6300.000 | complete, exit 0 | 473.900 | 3.64 | 4.24 | 1.89 |
+
+Aggregate:
+
+```text
+generated scene count: 4/4
+exported USDC count: 4/4
+failed seeds: 0
+total queue wall time: 13381.000 s
+end-to-end USDC throughput: 1.076 scenes/hour
+avg generate wall: 6558.750 s
+avg export wall: 417.392 s
+max RSS: 18575800 KB
+slowest seed: 102
+fastest seed: 101
+```
+
+No true fatal marker was found: no `Traceback`, `Segmentation fault`, `Killed`,
+`killed`, `OOM`, `CUDA error`, or `uncaught Exception`. Each seed had one
+Blender shutdown `Not freed memory blocks` message; these are warning-only
+because all processes exited 0 and produced the expected outputs. USD texture
+copy warnings were present during export but did not prevent USDC or zip output.
+
+Main hotspot observations:
+
+- Seed 102 dominated the queue: coarse finished in 3:34:43 and export ended at
+  18:09:14 +0800.
+- Seed 102 `populate_assets` took 0:50:28.205986 for 184 placeholders, with
+  repeated long sections in `LargePlantContainerFactory`,
+  `NatureShelfTrinketsFactory`, `BookColumnFactory`, and `BookStackFactory`.
+- Seed 102 final `BookStackFactory(8650829)` ran from 17:53:18 until
+  `populate_assets` completed at 17:59:07.
+- Seed 103 `populate_assets` took 0:30:04.785288 for 146 placeholders, with a
+  visible final `BookStackFactory(9536326)` long-tail.
+
+Report and generated artifacts are local under:
+
+```text
+outputs/production_9950x3d_isaac_queue_test4/
+```
+
 ## 9950X3D Production Scene Queue Tooling - 2026-06-23
 
 Profile type: tooling / production-queue preparation based on the previously

@@ -1,5 +1,38 @@
 # Next Steps
 
+## After Seed 1-40 Production Queue
+
+The 2026-06-24 seed 1-40 production queue completed with 37/40 coarse
+`scene.blend` outputs and 35/40 successful USDC exports. Keep the current
+9950X3D `JOBS=4` queue as the production path for this line. Do not spend the
+next round on more CPU split tuning unless starting a separate scaling study.
+
+Immediate priorities:
+
+1. Reproduce and inspect failed seeds:
+   - seed4 and seed7: 4h generation timeouts during final
+     `NatureShelfTrinketsFactory` populate.
+   - seed5: `LargePlantContainerFactory` / plant growth cleanup traceback.
+   - seed26: 2h export timeout.
+   - seed28: export signal 11 / exit 139.
+2. Investigate `KitchenIslandFactory` proposal/apply/revert cost first for
+   solver-stage speed. Seed38 and seed39 both repeated long
+   `KitchenIslandFactory` additions, with seed39 reaching 31.180s for a single
+   proposal.
+3. Investigate final populate tails separately:
+   `NatureShelfTrinketsFactory`, `LargePlantContainerFactory`,
+   `BookStackFactory`, and `BookColumnFactory`.
+4. Keep export stability separate from coarse generation optimization. The
+   seed26 timeout and seed28 signal 11 should be reproduced with the existing
+   coarse outputs before changing generation behavior.
+5. Preserve random number consumption, proposal order, accept/reject decisions,
+   and final outputs. Any optimization candidate still needs same seed/gin/task
+   A/B validation with `scripts/compare_indoor_outputs.py`.
+
+Do not treat `Not freed memory blocks` as fatal when the process exits 0 and
+the expected output exists. Do treat tracebacks, signal 11, OOM, `Killed`, or
+missing outputs as real failures.
+
 ## 9950X3D Production Scene Queue
 
 Do not continue CPU parallel strategy tuning as the next step. The current
