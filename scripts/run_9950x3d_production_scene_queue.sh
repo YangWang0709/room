@@ -18,6 +18,7 @@ ENABLE_WHEAT_REUSE="${ENABLE_WHEAT_REUSE:-0}"
 OMIT_CEILINGS_FOR_DOME_LIGHT="${OMIT_CEILINGS_FOR_DOME_LIGHT:-0}"
 ENFORCE_ONE_BED_PER_BEDROOM="${ENFORCE_ONE_BED_PER_BEDROOM:-0}"
 CHECK_BEDROOM_BED_COUNT="${CHECK_BEDROOM_BED_COUNT:-0}"
+BEDROOM_BED_CHECK_STRICT="${BEDROOM_BED_CHECK_STRICT:-0}"
 ADD_ISAAC_DOME_LIGHT="${ADD_ISAAC_DOME_LIGHT:-0}"
 DOME_LIGHT_INTENSITY="${DOME_LIGHT_INTENSITY:-30000}"
 ADD_ISAAC_FILL_LIGHT="${ADD_ISAAC_FILL_LIGHT:-0}"
@@ -46,6 +47,7 @@ PROFILE_ENV_VARS=(
   OMIT_CEILINGS_FOR_DOME_LIGHT
   ENFORCE_ONE_BED_PER_BEDROOM
   CHECK_BEDROOM_BED_COUNT
+  BEDROOM_BED_CHECK_STRICT
 )
 
 quote_command() {
@@ -203,6 +205,31 @@ usd_file_exists() {
     -print -quit 2>/dev/null | grep -q .
 }
 
+read_bed_check_counts() {
+  local report_csv="$1"
+  "$PYTHON_BIN" - "$report_csv" <<'PY'
+import csv
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+if not path.exists():
+    print("0 0")
+    raise SystemExit(0)
+
+fail = 0
+unknown = 0
+with path.open(newline="") as handle:
+    for row in csv.DictReader(handle):
+        status = (row.get("status") or "").strip().lower()
+        if status == "fail":
+            fail += 1
+        elif status == "unknown":
+            unknown += 1
+print(f"{fail} {unknown}")
+PY
+}
+
 build_generate_cmd() {
   local seed="$1"
   local cpu_set="$2"
@@ -276,6 +303,9 @@ build_bed_check_cmd() {
   for var in "${PROFILE_ENV_VARS[@]}"; do
     CMD+=(-u "$var")
   done
+  if [[ "$BEDROOM_BED_CHECK_STRICT" == "1" ]]; then
+    CMD+=(BEDROOM_BED_CHECK_STRICT=1)
+  fi
   CMD+=(
     "$PYTHON_BIN"
     scripts/check_bedroom_bed_count.py
@@ -339,6 +369,7 @@ write_seed_env() {
     echo "omit_ceilings_for_dome_light=${OMIT_CEILINGS_FOR_DOME_LIGHT}"
     echo "enforce_one_bed_per_bedroom=${ENFORCE_ONE_BED_PER_BEDROOM}"
     echo "check_bedroom_bed_count=${CHECK_BEDROOM_BED_COUNT}"
+    echo "bedroom_bed_check_strict=${BEDROOM_BED_CHECK_STRICT}"
     echo "add_isaac_dome_light=${ADD_ISAAC_DOME_LIGHT}"
     echo "dome_light_intensity=${DOME_LIGHT_INTENSITY}"
     echo "add_isaac_fill_light=${ADD_ISAAC_FILL_LIGHT}"
@@ -364,6 +395,11 @@ write_seed_env() {
       echo "ENFORCE_ONE_BED_PER_BEDROOM=1"
     else
       echo "ENFORCE_ONE_BED_PER_BEDROOM=unset"
+    fi
+    if [[ "$BEDROOM_BED_CHECK_STRICT" == "1" ]]; then
+      echo "BEDROOM_BED_CHECK_STRICT=1"
+    else
+      echo "BEDROOM_BED_CHECK_STRICT=unset"
     fi
     echo "OMP_NUM_THREADS=1"
     echo "OPENBLAS_NUM_THREADS=1"
@@ -401,6 +437,8 @@ write_status_file() {
     echo "bed_check_exit_code=${BED_CHECK_EXIT_CODE:-}"
     echo "bed_check_started_at=${BED_CHECK_STARTED_AT:-}"
     echo "bed_check_ended_at=${BED_CHECK_ENDED_AT:-}"
+    echo "bedroom_double_bed_count=${BEDROOM_DOUBLE_BED_COUNT:-}"
+    echo "quality_status=${QUALITY_STATUS:-}"
     echo "lighting_status=${LIGHTING_STATUS:-}"
     echo "lighting_exit_code=${LIGHTING_EXIT_CODE:-}"
     echo "lighting_started_at=${LIGHTING_STARTED_AT:-}"
@@ -438,6 +476,8 @@ mark_seed_stopped() {
   BED_CHECK_EXIT_CODE=""
   BED_CHECK_STARTED_AT=""
   BED_CHECK_ENDED_AT=""
+  BEDROOM_DOUBLE_BED_COUNT=""
+  QUALITY_STATUS="not_requested"
   LIGHTING_STATUS="not_requested"
   LIGHTING_EXIT_CODE=""
   LIGHTING_STARTED_AT=""
@@ -571,6 +611,15 @@ run_export_seed() {
     return 0
   fi
 
+  if [[ "$BEDROOM_BED_CHECK_STRICT" == "1" && "$QUALITY_STATUS" == "quality_failed" ]]; then
+    EXPORT_STARTED_AT="$(timestamp)"
+    EXPORT_ENDED_AT="$EXPORT_STARTED_AT"
+    EXPORT_EXIT_CODE=""
+    EXPORT_STATUS="skipped"
+    echo "Skipping export because BEDROOM_BED_CHECK_STRICT=1 and quality_status=${QUALITY_STATUS}." >> "$export_log"
+    return 0
+  fi
+
   if [[ ! -f "${coarse_dir}/scene.blend" ]]; then
     EXPORT_STARTED_AT="$(timestamp)"
     EXPORT_ENDED_AT="$EXPORT_STARTED_AT"
@@ -622,12 +671,16 @@ run_bed_check_seed() {
   local coarse_dir="$4"
   local log_dir="$5"
   local bed_check_log="${log_dir}/bed_check.log"
+  local bed_check_report="${log_dir}/bedroom_bed_count_report.csv"
   local exit_code
+  local unknown_count
 
   BED_CHECK_STATUS="not_requested"
   BED_CHECK_EXIT_CODE=""
   BED_CHECK_STARTED_AT=""
   BED_CHECK_ENDED_AT=""
+  BEDROOM_DOUBLE_BED_COUNT=""
+  QUALITY_STATUS="not_requested"
 
   if [[ "$CHECK_BEDROOM_BED_COUNT" != "1" ]]; then
     echo "CHECK_BEDROOM_BED_COUNT=${CHECK_BEDROOM_BED_COUNT}: bed check not requested." > "$bed_check_log"
@@ -654,6 +707,8 @@ run_bed_check_seed() {
     BED_CHECK_ENDED_AT="$BED_CHECK_STARTED_AT"
     BED_CHECK_EXIT_CODE="0"
     BED_CHECK_STATUS="skipped"
+    BEDROOM_DOUBLE_BED_COUNT=""
+    QUALITY_STATUS="skipped"
     echo "DRY_RUN=1: bedroom bed check skipped." >> "$bed_check_log"
     return 0
   fi
@@ -663,6 +718,8 @@ run_bed_check_seed() {
     BED_CHECK_ENDED_AT="$BED_CHECK_STARTED_AT"
     BED_CHECK_EXIT_CODE=""
     BED_CHECK_STATUS="skipped"
+    BEDROOM_DOUBLE_BED_COUNT=""
+    QUALITY_STATUS="skipped"
     echo "Skipping bed check because coarse generation status is ${GENERATE_STATUS}." >> "$bed_check_log"
     return 0
   fi
@@ -681,11 +738,24 @@ run_bed_check_seed() {
     BED_CHECK_STATUS="failed"
   fi
 
+  read -r BEDROOM_DOUBLE_BED_COUNT unknown_count < <(read_bed_check_counts "$bed_check_report")
+  if [[ "${BEDROOM_DOUBLE_BED_COUNT:-0}" != "0" ]]; then
+    QUALITY_STATUS="quality_failed"
+  elif [[ "${unknown_count:-0}" != "0" ]]; then
+    QUALITY_STATUS="unknown"
+  elif [[ "$exit_code" == "0" ]]; then
+    QUALITY_STATUS="pass"
+  else
+    QUALITY_STATUS="unknown"
+  fi
+
   {
     echo
     echo "ended_at=${BED_CHECK_ENDED_AT}"
     echo "exit_code=${BED_CHECK_EXIT_CODE}"
     echo "status=${BED_CHECK_STATUS}"
+    echo "bedroom_double_bed_count=${BEDROOM_DOUBLE_BED_COUNT}"
+    echo "quality_status=${QUALITY_STATUS}"
   } >> "$bed_check_log"
 }
 
@@ -797,6 +867,8 @@ run_seed() {
   BED_CHECK_EXIT_CODE=""
   BED_CHECK_STARTED_AT=""
   BED_CHECK_ENDED_AT=""
+  BEDROOM_DOUBLE_BED_COUNT=""
+  QUALITY_STATUS="not_requested"
   LIGHTING_STATUS="not_requested"
   LIGHTING_EXIT_CODE=""
   LIGHTING_STARTED_AT=""
@@ -936,6 +1008,7 @@ write_run_info() {
     echo "OMIT_CEILINGS_FOR_DOME_LIGHT=${OMIT_CEILINGS_FOR_DOME_LIGHT}"
     echo "ENFORCE_ONE_BED_PER_BEDROOM=${ENFORCE_ONE_BED_PER_BEDROOM}"
     echo "CHECK_BEDROOM_BED_COUNT=${CHECK_BEDROOM_BED_COUNT}"
+    echo "BEDROOM_BED_CHECK_STRICT=${BEDROOM_BED_CHECK_STRICT}"
     echo "ADD_ISAAC_DOME_LIGHT=${ADD_ISAAC_DOME_LIGHT}"
     echo "DOME_LIGHT_INTENSITY=${DOME_LIGHT_INTENSITY}"
     echo "ADD_ISAAC_FILL_LIGHT=${ADD_ISAAC_FILL_LIGHT}"

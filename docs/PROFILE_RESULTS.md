@@ -1,5 +1,76 @@
 # Profile Results
 
+## 9950X3D Isaac Quality Smoke Seed 200 - 2026-06-24
+
+Profile type: single-seed Isaac quality smoke for the opt-in ceiling omission,
+one-bed-per-bedroom constraint, strict bed-count quality gate, and USDC export.
+This run used `JOBS=1` on `CPU_SETS=0-3,16-19` to avoid overlapping with any
+larger production batch. It did not enable Wheat template reuse.
+
+Pre-run checks found no existing `generate_indoors`, `infinigen.tools.export`,
+production queue, or parallel benchmark processes. Static checks and the
+queue dry-run passed before the real run.
+
+Run command:
+
+```text
+CLEAN=1 SEEDS=200 JOBS=1 CPU_SETS="0-3,16-19" EXPORT_AFTER_GENERATE=1 EXPORT_FORMAT=usdc EXPORT_RESOLUTION=512 OMIT_CEILINGS_FOR_DOME_LIGHT=1 ENFORCE_ONE_BED_PER_BEDROOM=1 CHECK_BEDROOM_BED_COUNT=1 BEDROOM_BED_CHECK_STRICT=1 ADD_ISAAC_DOME_LIGHT=0 OUTPUT_ROOT=outputs/production_9950x3d_ceiling_bedcheck_smoke_seed200 bash scripts/run_9950x3d_production_scene_queue.sh
+python scripts/analyze_9950x3d_production_queue.py outputs/production_9950x3d_ceiling_bedcheck_smoke_seed200 --write-summaries
+```
+
+`ADD_ISAAC_DOME_LIGHT=0` was intentional because the current `infinigen` conda
+environment does not provide USD `pxr` Python bindings.
+
+Result summary:
+
+| seed | CPU set | generate | gen wall s | export | exp wall s | bed check | double beds | quality | lighting | fatal |
+| ---: | --- | --- | ---: | --- | ---: | --- | ---: | --- | --- | --- |
+| 200 | `0-3,16-19` | complete, exit 0 | 3838.000 | complete, exit 0 | 459.100 | complete, exit 0 | 0 | pass | not_requested | no |
+
+Aggregate:
+
+```text
+generated scene count: 1/1
+exported USDC count: 1/1
+failed seeds: 0
+total elapsed wall time: 4297.000 s
+coarse throughput: 0.838 scenes/hour
+end-to-end USDC throughput: 0.838 scenes/hour
+generate max RSS: 9946892 KB
+export max RSS: 16868284 KB
+```
+
+Quality checks:
+
+- `generate.log` confirmed `[room_ceilings] skipped because OMIT_CEILINGS_FOR_DOME_LIGHT=1`.
+- Bedroom bed-count report had 2 rows: 2 pass, 0 fail, 0 unknown.
+- `bedroom_double_bed_count=0` and `quality_status=pass`, so strict mode allowed export.
+
+USDC output:
+
+```text
+outputs/production_9950x3d_ceiling_bedcheck_smoke_seed200/seed_200/usd/export_scene.blend/export_scene.usdc
+```
+
+Dome Light postprocess:
+
+- dry-run selected the USDC and would add `/World/IsaacDefaultDomeLight` with intensity `30000.0`.
+- real writing failed only because `pxr` is unavailable in the current conda environment.
+- no Isaac/Omniverse Python installation was found under the common local paths checked.
+
+Local report and analyzer outputs:
+
+```text
+outputs/production_9950x3d_ceiling_bedcheck_smoke_seed200/seed200_quality_smoke_report.md
+outputs/production_9950x3d_ceiling_bedcheck_smoke_seed200/summary.csv
+outputs/production_9950x3d_ceiling_bedcheck_smoke_seed200/summary.md
+```
+
+Recommendation: the quality line passed for seed200. Continue with a small
+`SEEDS=201-203` validation using the same switches, keeping
+`ADD_ISAAC_DOME_LIGHT=0` until a USD/Isaac Python environment is available for
+post-export Dome Light writes.
+
 ## 9950X3D Production Queue Seed 1-40 - 2026-06-24
 
 Profile type: full 40-seed 9950X3D production queue run for indoor coarse

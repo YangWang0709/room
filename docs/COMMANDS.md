@@ -87,6 +87,7 @@ running an Isaac quality batch:
 OMIT_CEILINGS_FOR_DOME_LIGHT=1 \
 ENFORCE_ONE_BED_PER_BEDROOM=1 \
 CHECK_BEDROOM_BED_COUNT=1 \
+BEDROOM_BED_CHECK_STRICT=1 \
 ADD_ISAAC_DOME_LIGHT=1 \
 DOME_LIGHT_INTENSITY=30000 \
 SEEDS=100,101,102,103 \
@@ -94,6 +95,45 @@ JOBS=4 \
 EXPORT_AFTER_GENERATE=1 \
 EXPORT_FORMAT=usdc \
 OUTPUT_ROOT=outputs/production_9950x3d_isaac_quality_test \
+bash scripts/run_9950x3d_production_scene_queue.sh
+```
+
+Current conda does not provide `pxr`, so use `ADD_ISAAC_DOME_LIGHT=0` unless
+running inside a USD/Isaac Python environment. Seed200 quality smoke command:
+
+```bash
+CLEAN=1 \
+SEEDS=200 \
+JOBS=1 \
+CPU_SETS="0-3,16-19" \
+EXPORT_AFTER_GENERATE=1 \
+EXPORT_FORMAT=usdc \
+EXPORT_RESOLUTION=512 \
+OMIT_CEILINGS_FOR_DOME_LIGHT=1 \
+ENFORCE_ONE_BED_PER_BEDROOM=1 \
+CHECK_BEDROOM_BED_COUNT=1 \
+BEDROOM_BED_CHECK_STRICT=1 \
+ADD_ISAAC_DOME_LIGHT=0 \
+OUTPUT_ROOT=outputs/production_9950x3d_ceiling_bedcheck_smoke_seed200 \
+bash scripts/run_9950x3d_production_scene_queue.sh
+```
+
+Recommended next small quality batch:
+
+```bash
+CLEAN=1 \
+SEEDS=201-203 \
+JOBS=1 \
+CPU_SETS="0-3,16-19" \
+EXPORT_AFTER_GENERATE=1 \
+EXPORT_FORMAT=usdc \
+EXPORT_RESOLUTION=512 \
+OMIT_CEILINGS_FOR_DOME_LIGHT=1 \
+ENFORCE_ONE_BED_PER_BEDROOM=1 \
+CHECK_BEDROOM_BED_COUNT=1 \
+BEDROOM_BED_CHECK_STRICT=1 \
+ADD_ISAAC_DOME_LIGHT=0 \
+OUTPUT_ROOT=outputs/production_9950x3d_ceiling_bedcheck_smoke_seed201_203 \
 bash scripts/run_9950x3d_production_scene_queue.sh
 ```
 

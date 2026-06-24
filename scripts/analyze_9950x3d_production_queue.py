@@ -33,6 +33,8 @@ FIELDNAMES = [
     "usd_exists",
     "bed_check_status",
     "bed_check_exit_code",
+    "bedroom_double_bed_count",
+    "quality_status",
     "lighting_status",
     "lighting_exit_code",
     "dome_light_added",
@@ -258,6 +260,8 @@ def collect_rows(root: Path) -> list[dict[str, str]]:
                 "usd_exists": bool_text(has_usd_file(usd_folder)),
                 "bed_check_status": status.get("bed_check_status", "not_requested"),
                 "bed_check_exit_code": status.get("bed_check_exit_code", ""),
+                "bedroom_double_bed_count": status.get("bedroom_double_bed_count", ""),
+                "quality_status": status.get("quality_status", "not_requested"),
                 "lighting_status": status.get("lighting_status", "not_requested"),
                 "lighting_exit_code": status.get("lighting_exit_code", ""),
                 "dome_light_added": status.get("dome_light_added", "no"),
@@ -323,6 +327,8 @@ def recommendation(rows: list[dict[str, str]], elapsed: float | None) -> str:
     fatal_count = sum(1 for row in rows if row.get("fatal_marker") == "yes")
     if fatal_count or generate_statuses.get("failed") or export_statuses.get("failed"):
         return "Inspect failed seeds and fatal markers before increasing the production batch."
+    if any(row.get("quality_status") == "quality_failed" for row in rows):
+        return "Quality gate failed; inspect bedroom bed-count reports before exporting more scenes."
     if bed_check_statuses.get("failed"):
         return "Bedroom bed-count check failures occurred; inspect bed_check.log and reports."
     lighting_statuses = Counter(
@@ -368,6 +374,7 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
         for row in rows
         if row.get("generate_status") in {"failed", "timeout"}
         or row.get("export_status") in {"failed", "timeout"}
+        or row.get("quality_status") == "quality_failed"
         or row.get("bed_check_status") == "failed"
         or row.get("lighting_status") == "failed"
         or row.get("fatal_marker") == "yes"
@@ -456,6 +463,8 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
                 "usd",
                 "bed_check",
                 "bed_exit",
+                "double_beds",
+                "quality",
                 "lighting",
                 "light_exit",
                 "dome",
@@ -480,6 +489,8 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
                     row.get("usd_exists", ""),
                     row.get("bed_check_status", ""),
                     row.get("bed_check_exit_code", ""),
+                    row.get("bedroom_double_bed_count", ""),
+                    row.get("quality_status", ""),
                     row.get("lighting_status", ""),
                     row.get("lighting_exit_code", ""),
                     row.get("dome_light_added", ""),
@@ -519,6 +530,8 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
                     "generate",
                     "export",
                     "bed_check",
+                    "double_beds",
+                    "quality",
                     "lighting",
                     "fatal_detail",
                 ],
@@ -529,6 +542,8 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
                         row.get("generate_status", ""),
                         row.get("export_status", ""),
                         row.get("bed_check_status", ""),
+                        row.get("bedroom_double_bed_count", ""),
+                        row.get("quality_status", ""),
                         row.get("lighting_status", ""),
                         row.get("fatal_marker_detail", "")
                         or (

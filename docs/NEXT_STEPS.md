@@ -16,19 +16,39 @@ New quality switches are default-off:
 OMIT_CEILINGS_FOR_DOME_LIGHT=1
 ENFORCE_ONE_BED_PER_BEDROOM=1
 CHECK_BEDROOM_BED_COUNT=1
+BEDROOM_BED_CHECK_STRICT=1
 ADD_ISAAC_DOME_LIGHT=1
 DOME_LIGHT_INTENSITY=30000
 ADD_ISAAC_FILL_LIGHT=1
 FILL_LIGHT_INTENSITY=1000
 ```
 
+Seed200 smoke status:
+
+```text
+SEEDS=200 JOBS=1 CPU_SETS=0-3,16-19
+generate_status=complete
+export_status=complete
+bed_check_status=complete
+bedroom_double_bed_count=0
+quality_status=pass
+room_ceilings skipped: confirmed in generate.log
+USDC: outputs/production_9950x3d_ceiling_bedcheck_smoke_seed200/seed_200/usd/export_scene.blend/export_scene.usdc
+```
+
+The Dome Light dry-run selected the seed200 USDC correctly, but real writing
+failed because the current `infinigen` conda environment has no `pxr` module.
+No Isaac/Omniverse Python installation was found under the common local paths
+checked. Treat this as an environment issue, not a seed200 generation/export
+failure.
+
 Immediate validation path:
 
 1. Use a Python environment with USD `pxr` bindings for real Dome Light writes.
    The current shell and `infinigen` conda environment do not provide `pxr`.
-2. Run a small opt-in Isaac quality batch with ceilings omitted, one bed per
-   bedroom enforced, bed-count checking enabled, and Dome Light post-processing
-   enabled.
+2. Run a small opt-in Isaac quality batch on `SEEDS=201-203` with ceilings
+   omitted, one bed per bedroom enforced, strict bed-count checking enabled,
+   and `ADD_ISAAC_DOME_LIGHT=0` unless a USD/Isaac Python environment is ready.
 3. Inspect the resulting USD folder in Isaac Sim. Open the full
    `seed_<N>/usd/export_scene.blend/` folder so sidecar files stay available.
 4. Confirm lighting is acceptable before enabling optional fill light; keep

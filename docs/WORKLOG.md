@@ -1,5 +1,89 @@
 # Worklog
 
+## 2026-06-24 - Seed200 Isaac quality smoke
+
+### Round Goal
+
+Run one real smoke seed through the opt-in Isaac quality path before launching
+another small batch. This checked ceiling omission, the one-bed-per-bedroom
+constraint, strict bed-count quality gating, and USDC export without enabling
+Wheat reuse or changing solver/factory speed strategy.
+
+### Command
+
+```bash
+CLEAN=1 \
+SEEDS=200 \
+JOBS=1 \
+CPU_SETS="0-3,16-19" \
+EXPORT_AFTER_GENERATE=1 \
+EXPORT_FORMAT=usdc \
+EXPORT_RESOLUTION=512 \
+OMIT_CEILINGS_FOR_DOME_LIGHT=1 \
+ENFORCE_ONE_BED_PER_BEDROOM=1 \
+CHECK_BEDROOM_BED_COUNT=1 \
+BEDROOM_BED_CHECK_STRICT=1 \
+ADD_ISAAC_DOME_LIGHT=0 \
+OUTPUT_ROOT=outputs/production_9950x3d_ceiling_bedcheck_smoke_seed200 \
+bash scripts/run_9950x3d_production_scene_queue.sh
+```
+
+Pre-run process check found no existing `generate_indoors`,
+`infinigen.tools.export`, production queue, or parallel benchmark processes.
+Static checks, `git diff --check`, and a dry-run of the queue command passed
+before the real run.
+
+### Result
+
+```text
+generate_status=complete, exit 0, wall=3838.000s, max_rss=9946892 KB
+bed_check_status=complete, exit 0
+bedroom_double_bed_count=0
+quality_status=pass
+export_status=complete, exit 0, wall=459.100s, max_rss=16868284 KB
+lighting_status=not_requested
+dome_light_added=no
+fatal_marker=no
+total elapsed wall=4297.000s
+```
+
+`generate.log` confirmed:
+
+```text
+[room_ceilings] skipped because OMIT_CEILINGS_FOR_DOME_LIGHT=1
+```
+
+The bedroom report had two bedroom rows, both `bed_count=1` and `status=pass`.
+The strict quality gate therefore allowed export. The analyzer summary now
+records `bedroom_double_bed_count` and `quality_status`; if a future strict
+run reports double-bed failures, export is skipped and the row is marked as a
+quality gate failure.
+
+USDC output:
+
+```text
+outputs/production_9950x3d_ceiling_bedcheck_smoke_seed200/seed_200/usd/export_scene.blend/export_scene.usdc
+```
+
+The Dome Light dry-run selected that USDC and would add
+`/World/IsaacDefaultDomeLight` at intensity `30000.0`. Real Dome Light writing
+failed only because the current `infinigen` conda environment has no `pxr`
+module, and no Isaac/Omniverse Python installation was found under the common
+local paths checked.
+
+Local report:
+
+```text
+outputs/production_9950x3d_ceiling_bedcheck_smoke_seed200/seed200_quality_smoke_report.md
+```
+
+### Recommendation
+
+Seed200 passed the quality smoke. The next validation should be a small
+`SEEDS=201-203` run with the same quality switches and `ADD_ISAAC_DOME_LIGHT=0`
+until a USD/Isaac Python environment is available for post-export Dome Light
+writes.
+
 ## 2026-06-24 - Isaac quality switches for ceilings, lighting, and bedroom beds
 
 ### Round Goal
