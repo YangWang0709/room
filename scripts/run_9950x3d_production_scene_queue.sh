@@ -15,6 +15,13 @@ EXPORT_AFTER_GENERATE="${EXPORT_AFTER_GENERATE:-1}"
 EXPORT_FORMAT="${EXPORT_FORMAT:-usdc}"
 EXPORT_RESOLUTION="${EXPORT_RESOLUTION:-512}"
 ENABLE_WHEAT_REUSE="${ENABLE_WHEAT_REUSE:-0}"
+OMIT_CEILINGS_FOR_DOME_LIGHT="${OMIT_CEILINGS_FOR_DOME_LIGHT:-0}"
+ENFORCE_ONE_BED_PER_BEDROOM="${ENFORCE_ONE_BED_PER_BEDROOM:-0}"
+CHECK_BEDROOM_BED_COUNT="${CHECK_BEDROOM_BED_COUNT:-0}"
+ADD_ISAAC_DOME_LIGHT="${ADD_ISAAC_DOME_LIGHT:-0}"
+DOME_LIGHT_INTENSITY="${DOME_LIGHT_INTENSITY:-30000}"
+ADD_ISAAC_FILL_LIGHT="${ADD_ISAAC_FILL_LIGHT:-0}"
+FILL_LIGHT_INTENSITY="${FILL_LIGHT_INTENSITY:-1000}"
 RESUME="${RESUME:-1}"
 CLEAN="${CLEAN:-0}"
 DRY_RUN="${DRY_RUN:-0}"
@@ -36,6 +43,9 @@ PROFILE_ENV_VARS=(
   INFINIGEN_PROFILE_PLANT_ASSETS
   INFINIGEN_PROFILE_BOOKSTACK
   INFINIGEN_REUSE_PLANT_TEMPLATE_GEOMETRY
+  OMIT_CEILINGS_FOR_DOME_LIGHT
+  ENFORCE_ONE_BED_PER_BEDROOM
+  CHECK_BEDROOM_BED_COUNT
 )
 
 quote_command() {
@@ -215,6 +225,12 @@ build_generate_cmd() {
   if [[ "$ENABLE_WHEAT_REUSE" == "1" ]]; then
     CMD+=(INFINIGEN_REUSE_PLANT_TEMPLATE_GEOMETRY=1)
   fi
+  if [[ "$OMIT_CEILINGS_FOR_DOME_LIGHT" == "1" ]]; then
+    CMD+=(OMIT_CEILINGS_FOR_DOME_LIGHT=1)
+  fi
+  if [[ "$ENFORCE_ONE_BED_PER_BEDROOM" == "1" ]]; then
+    CMD+=(ENFORCE_ONE_BED_PER_BEDROOM=1)
+  fi
   CMD+=(
     "$PYTHON_BIN"
     -m infinigen_examples.generate_indoors
@@ -227,6 +243,44 @@ build_generate_cmd() {
     home_room_constraints.has_fewer_rooms=False
     restrict_solving.solve_max_rooms=10
     populate_doors.door_chance=0
+  )
+}
+
+build_lighting_cmd() {
+  local cpu_set="$1"
+  local usd_dir="$2"
+  CMD=(taskset -c "$cpu_set" env)
+  local var
+  for var in "${PROFILE_ENV_VARS[@]}"; do
+    CMD+=(-u "$var")
+  done
+  CMD+=(
+    "$PYTHON_BIN"
+    scripts/add_isaac_lighting_to_usd.py
+    --usd-dir "$usd_dir"
+  )
+  if [[ "$ADD_ISAAC_DOME_LIGHT" == "1" ]]; then
+    CMD+=(--add-dome-light --dome-intensity "$DOME_LIGHT_INTENSITY")
+  fi
+  if [[ "$ADD_ISAAC_FILL_LIGHT" == "1" ]]; then
+    CMD+=(--add-fill-light --fill-intensity "$FILL_LIGHT_INTENSITY")
+  fi
+}
+
+build_bed_check_cmd() {
+  local cpu_set="$1"
+  local coarse_dir="$2"
+  local log_dir="$3"
+  CMD=(taskset -c "$cpu_set" env)
+  local var
+  for var in "${PROFILE_ENV_VARS[@]}"; do
+    CMD+=(-u "$var")
+  done
+  CMD+=(
+    "$PYTHON_BIN"
+    scripts/check_bedroom_bed_count.py
+    "$coarse_dir"
+    --output-dir "$log_dir"
   )
 }
 
@@ -264,6 +318,8 @@ write_seed_env() {
   local env_file="$6"
   local generate_command="$7"
   local export_command="${8:-}"
+  local lighting_command="${9:-}"
+  local bed_check_command="${10:-}"
 
   {
     echo "seed=${seed}"
@@ -280,6 +336,13 @@ write_seed_env() {
     echo "export_format=${EXPORT_FORMAT}"
     echo "export_resolution=${EXPORT_RESOLUTION}"
     echo "enable_wheat_reuse=${ENABLE_WHEAT_REUSE}"
+    echo "omit_ceilings_for_dome_light=${OMIT_CEILINGS_FOR_DOME_LIGHT}"
+    echo "enforce_one_bed_per_bedroom=${ENFORCE_ONE_BED_PER_BEDROOM}"
+    echo "check_bedroom_bed_count=${CHECK_BEDROOM_BED_COUNT}"
+    echo "add_isaac_dome_light=${ADD_ISAAC_DOME_LIGHT}"
+    echo "dome_light_intensity=${DOME_LIGHT_INTENSITY}"
+    echo "add_isaac_fill_light=${ADD_ISAAC_FILL_LIGHT}"
+    echo "fill_light_intensity=${FILL_LIGHT_INTENSITY}"
     echo "resume=${RESUME}"
     echo "clean=${CLEAN}"
     echo "dry_run=${DRY_RUN}"
@@ -292,14 +355,30 @@ write_seed_env() {
     else
       echo "INFINIGEN_REUSE_PLANT_TEMPLATE_GEOMETRY=unset"
     fi
+    if [[ "$OMIT_CEILINGS_FOR_DOME_LIGHT" == "1" ]]; then
+      echo "OMIT_CEILINGS_FOR_DOME_LIGHT=1"
+    else
+      echo "OMIT_CEILINGS_FOR_DOME_LIGHT=unset"
+    fi
+    if [[ "$ENFORCE_ONE_BED_PER_BEDROOM" == "1" ]]; then
+      echo "ENFORCE_ONE_BED_PER_BEDROOM=1"
+    else
+      echo "ENFORCE_ONE_BED_PER_BEDROOM=unset"
+    fi
     echo "OMP_NUM_THREADS=1"
     echo "OPENBLAS_NUM_THREADS=1"
     echo "MKL_NUM_THREADS=1"
     echo "NUMEXPR_NUM_THREADS=1"
     echo "BLIS_NUM_THREADS=1"
     echo "generate_command=${generate_command}"
+    if [[ -n "$bed_check_command" ]]; then
+      echo "bed_check_command=${bed_check_command}"
+    fi
     if [[ -n "$export_command" ]]; then
       echo "export_command=${export_command}"
+    fi
+    if [[ -n "$lighting_command" ]]; then
+      echo "lighting_command=${lighting_command}"
     fi
   } > "$env_file"
 }
@@ -318,6 +397,15 @@ write_status_file() {
     echo "export_exit_code=${EXPORT_EXIT_CODE:-}"
     echo "export_started_at=${EXPORT_STARTED_AT:-}"
     echo "export_ended_at=${EXPORT_ENDED_AT:-}"
+    echo "bed_check_status=${BED_CHECK_STATUS:-}"
+    echo "bed_check_exit_code=${BED_CHECK_EXIT_CODE:-}"
+    echo "bed_check_started_at=${BED_CHECK_STARTED_AT:-}"
+    echo "bed_check_ended_at=${BED_CHECK_ENDED_AT:-}"
+    echo "lighting_status=${LIGHTING_STATUS:-}"
+    echo "lighting_exit_code=${LIGHTING_EXIT_CODE:-}"
+    echo "lighting_started_at=${LIGHTING_STARTED_AT:-}"
+    echo "lighting_ended_at=${LIGHTING_ENDED_AT:-}"
+    echo "dome_light_added=${DOME_LIGHT_ADDED:-}"
     echo "output_folder=${STATUS_OUTPUT_FOLDER:-}"
     echo "usd_folder=${STATUS_USD_FOLDER:-}"
   } > "$status_file"
@@ -346,6 +434,15 @@ mark_seed_stopped() {
   EXPORT_EXIT_CODE=""
   EXPORT_STARTED_AT=""
   EXPORT_ENDED_AT=""
+  BED_CHECK_STATUS="not_requested"
+  BED_CHECK_EXIT_CODE=""
+  BED_CHECK_STARTED_AT=""
+  BED_CHECK_ENDED_AT=""
+  LIGHTING_STATUS="not_requested"
+  LIGHTING_EXIT_CODE=""
+  LIGHTING_STARTED_AT=""
+  LIGHTING_ENDED_AT=""
+  DOME_LIGHT_ADDED="no"
   echo "KEEP_GOING=0: skipped because another worker requested stop." > "${log_dir}/status.txt"
   write_status_file "${log_dir}/status.txt"
 }
@@ -518,6 +615,159 @@ run_export_seed() {
   } >> "$export_log"
 }
 
+run_bed_check_seed() {
+  local worker_id="$1"
+  local cpu_set="$2"
+  local seed="$3"
+  local coarse_dir="$4"
+  local log_dir="$5"
+  local bed_check_log="${log_dir}/bed_check.log"
+  local exit_code
+
+  BED_CHECK_STATUS="not_requested"
+  BED_CHECK_EXIT_CODE=""
+  BED_CHECK_STARTED_AT=""
+  BED_CHECK_ENDED_AT=""
+
+  if [[ "$CHECK_BEDROOM_BED_COUNT" != "1" ]]; then
+    echo "CHECK_BEDROOM_BED_COUNT=${CHECK_BEDROOM_BED_COUNT}: bed check not requested." > "$bed_check_log"
+    return 0
+  fi
+
+  build_bed_check_cmd "$cpu_set" "$coarse_dir" "$log_dir"
+  local bed_check_command
+  bed_check_command="$(quote_command "${CMD[@]}")"
+
+  {
+    echo "worker_id=${worker_id}"
+    echo "cpu_set=${cpu_set}"
+    echo "seed=${seed}"
+    echo "coarse_dir=${coarse_dir}"
+    echo "started_at=$(timestamp)"
+    echo "bed check command:"
+    echo "$bed_check_command"
+    echo
+  } > "$bed_check_log"
+
+  if [[ "$DRY_RUN" == "1" ]]; then
+    BED_CHECK_STARTED_AT="$(timestamp)"
+    BED_CHECK_ENDED_AT="$BED_CHECK_STARTED_AT"
+    BED_CHECK_EXIT_CODE="0"
+    BED_CHECK_STATUS="skipped"
+    echo "DRY_RUN=1: bedroom bed check skipped." >> "$bed_check_log"
+    return 0
+  fi
+
+  if [[ "$GENERATE_STATUS" != "complete" && "$GENERATE_STATUS" != "skipped" ]]; then
+    BED_CHECK_STARTED_AT="$(timestamp)"
+    BED_CHECK_ENDED_AT="$BED_CHECK_STARTED_AT"
+    BED_CHECK_EXIT_CODE=""
+    BED_CHECK_STATUS="skipped"
+    echo "Skipping bed check because coarse generation status is ${GENERATE_STATUS}." >> "$bed_check_log"
+    return 0
+  fi
+
+  BED_CHECK_STARTED_AT="$(timestamp)"
+  set +e
+  "${CMD[@]}" >> "$bed_check_log" 2>&1
+  exit_code=$?
+  set -e
+  BED_CHECK_ENDED_AT="$(timestamp)"
+  BED_CHECK_EXIT_CODE="$exit_code"
+
+  if [[ "$exit_code" == "0" ]]; then
+    BED_CHECK_STATUS="complete"
+  else
+    BED_CHECK_STATUS="failed"
+  fi
+
+  {
+    echo
+    echo "ended_at=${BED_CHECK_ENDED_AT}"
+    echo "exit_code=${BED_CHECK_EXIT_CODE}"
+    echo "status=${BED_CHECK_STATUS}"
+  } >> "$bed_check_log"
+}
+
+run_lighting_seed() {
+  local worker_id="$1"
+  local cpu_set="$2"
+  local seed="$3"
+  local usd_dir="$4"
+  local log_dir="$5"
+  local lighting_log="${log_dir}/lighting.log"
+  local exit_code
+
+  LIGHTING_STATUS="not_requested"
+  LIGHTING_EXIT_CODE=""
+  LIGHTING_STARTED_AT=""
+  LIGHTING_ENDED_AT=""
+  DOME_LIGHT_ADDED="no"
+
+  if [[ "$ADD_ISAAC_DOME_LIGHT" != "1" && "$ADD_ISAAC_FILL_LIGHT" != "1" ]]; then
+    echo "Isaac lighting post-process not requested." > "$lighting_log"
+    return 0
+  fi
+
+  build_lighting_cmd "$cpu_set" "$usd_dir"
+  local lighting_command
+  lighting_command="$(quote_command "${CMD[@]}")"
+
+  {
+    echo "worker_id=${worker_id}"
+    echo "cpu_set=${cpu_set}"
+    echo "seed=${seed}"
+    echo "usd_dir=${usd_dir}"
+    echo "started_at=$(timestamp)"
+    echo "lighting command:"
+    echo "$lighting_command"
+    echo
+  } > "$lighting_log"
+
+  if [[ "$DRY_RUN" == "1" ]]; then
+    LIGHTING_STARTED_AT="$(timestamp)"
+    LIGHTING_ENDED_AT="$LIGHTING_STARTED_AT"
+    LIGHTING_EXIT_CODE="0"
+    LIGHTING_STATUS="skipped"
+    echo "DRY_RUN=1: lighting skipped." >> "$lighting_log"
+    return 0
+  fi
+
+  if ! usd_file_exists "$usd_dir"; then
+    LIGHTING_STARTED_AT="$(timestamp)"
+    LIGHTING_ENDED_AT="$LIGHTING_STARTED_AT"
+    LIGHTING_EXIT_CODE=""
+    LIGHTING_STATUS="skipped"
+    echo "Skipping lighting because no USD file exists in ${usd_dir}." >> "$lighting_log"
+    return 0
+  fi
+
+  LIGHTING_STARTED_AT="$(timestamp)"
+  set +e
+  "${CMD[@]}" >> "$lighting_log" 2>&1
+  exit_code=$?
+  set -e
+  LIGHTING_ENDED_AT="$(timestamp)"
+  LIGHTING_EXIT_CODE="$exit_code"
+
+  if [[ "$exit_code" == "0" ]]; then
+    LIGHTING_STATUS="complete"
+    if [[ "$ADD_ISAAC_DOME_LIGHT" == "1" ]]; then
+      DOME_LIGHT_ADDED="yes"
+    fi
+  else
+    LIGHTING_STATUS="failed"
+  fi
+
+  {
+    echo
+    echo "ended_at=${LIGHTING_ENDED_AT}"
+    echo "exit_code=${LIGHTING_EXIT_CODE}"
+    echo "status=${LIGHTING_STATUS}"
+    echo "dome_light_added=${DOME_LIGHT_ADDED}"
+  } >> "$lighting_log"
+}
+
 run_seed() {
   local worker_id="$1"
   local cpu_set="$2"
@@ -543,17 +793,39 @@ run_seed() {
   EXPORT_EXIT_CODE=""
   EXPORT_STARTED_AT=""
   EXPORT_ENDED_AT=""
+  BED_CHECK_STATUS="not_requested"
+  BED_CHECK_EXIT_CODE=""
+  BED_CHECK_STARTED_AT=""
+  BED_CHECK_ENDED_AT=""
+  LIGHTING_STATUS="not_requested"
+  LIGHTING_EXIT_CODE=""
+  LIGHTING_STARTED_AT=""
+  LIGHTING_ENDED_AT=""
+  DOME_LIGHT_ADDED="no"
 
-  local generate_cmd_text export_cmd_text
+  local generate_cmd_text export_cmd_text lighting_cmd_text bed_check_cmd_text
   build_generate_cmd "$seed" "$cpu_set" "$coarse_dir"
   generate_cmd_text="$(quote_command "${CMD[@]}")"
   build_export_cmd "$cpu_set" "$coarse_dir" "$usd_dir"
   export_cmd_text="$(quote_command "${CMD[@]}")"
+  bed_check_cmd_text=""
+  if [[ "$CHECK_BEDROOM_BED_COUNT" == "1" ]]; then
+    build_bed_check_cmd "$cpu_set" "$coarse_dir" "$log_dir"
+    bed_check_cmd_text="$(quote_command "${CMD[@]}")"
+  fi
+  lighting_cmd_text=""
+  if [[ "$ADD_ISAAC_DOME_LIGHT" == "1" || "$ADD_ISAAC_FILL_LIGHT" == "1" ]]; then
+    build_lighting_cmd "$cpu_set" "$usd_dir"
+    lighting_cmd_text="$(quote_command "${CMD[@]}")"
+  fi
   write_seed_env "$seed" "$worker_id" "$cpu_set" "$coarse_dir" "$usd_dir" \
-    "$env_file" "$generate_cmd_text" "$export_cmd_text"
+    "$env_file" "$generate_cmd_text" "$export_cmd_text" "$lighting_cmd_text" \
+    "$bed_check_cmd_text"
 
   run_generate_seed "$worker_id" "$cpu_set" "$seed" "$coarse_dir" "$log_dir"
+  run_bed_check_seed "$worker_id" "$cpu_set" "$seed" "$coarse_dir" "$log_dir"
   run_export_seed "$worker_id" "$cpu_set" "$seed" "$coarse_dir" "$usd_dir" "$log_dir"
+  run_lighting_seed "$worker_id" "$cpu_set" "$seed" "$usd_dir" "$log_dir"
   write_status_file "$status_file"
 
   if [[ "$KEEP_GOING" != "1" ]]; then
@@ -586,7 +858,7 @@ worker_main() {
       mark_seed_stopped "$worker_id" "$cpu_set" "$seed"
       continue
     fi
-    echo "worker${worker_id}: seed ${seed} coarse -> export -> next" >> "$worker_log"
+    echo "worker${worker_id}: seed ${seed} coarse -> bed_check -> export -> lighting -> next" >> "$worker_log"
     run_seed "$worker_id" "$cpu_set" "$seed" >> "$worker_log" 2>&1
   done
   echo "ended_at=$(timestamp)" >> "$worker_log"
@@ -661,6 +933,13 @@ write_run_info() {
     echo "EXPORT_FORMAT=${EXPORT_FORMAT}"
     echo "EXPORT_RESOLUTION=${EXPORT_RESOLUTION}"
     echo "ENABLE_WHEAT_REUSE=${ENABLE_WHEAT_REUSE}"
+    echo "OMIT_CEILINGS_FOR_DOME_LIGHT=${OMIT_CEILINGS_FOR_DOME_LIGHT}"
+    echo "ENFORCE_ONE_BED_PER_BEDROOM=${ENFORCE_ONE_BED_PER_BEDROOM}"
+    echo "CHECK_BEDROOM_BED_COUNT=${CHECK_BEDROOM_BED_COUNT}"
+    echo "ADD_ISAAC_DOME_LIGHT=${ADD_ISAAC_DOME_LIGHT}"
+    echo "DOME_LIGHT_INTENSITY=${DOME_LIGHT_INTENSITY}"
+    echo "ADD_ISAAC_FILL_LIGHT=${ADD_ISAAC_FILL_LIGHT}"
+    echo "FILL_LIGHT_INTENSITY=${FILL_LIGHT_INTENSITY}"
     echo "RESUME=${RESUME}"
     echo "CLEAN=${CLEAN}"
     echo "DRY_RUN=${DRY_RUN}"
@@ -698,12 +977,26 @@ print_dry_run_plan() {
       build_generate_cmd "$seed" "$cpu_set" "$coarse_dir"
       echo "seed${seed} coarse:"
       quote_command "${CMD[@]}"
+      if [[ "$CHECK_BEDROOM_BED_COUNT" == "1" ]]; then
+        build_bed_check_cmd "$cpu_set" "$coarse_dir" "$(seed_log_dir "$seed")"
+        echo "seed${seed} bed check:"
+        quote_command "${CMD[@]}"
+      else
+        echo "seed${seed} bed check: not requested"
+      fi
       if [[ "$EXPORT_AFTER_GENERATE" == "1" ]]; then
         build_export_cmd "$cpu_set" "$coarse_dir" "$usd_dir"
         echo "seed${seed} export:"
         quote_command "${CMD[@]}"
       else
         echo "seed${seed} export: not requested"
+      fi
+      if [[ "$ADD_ISAAC_DOME_LIGHT" == "1" || "$ADD_ISAAC_FILL_LIGHT" == "1" ]]; then
+        build_lighting_cmd "$cpu_set" "$usd_dir"
+        echo "seed${seed} lighting:"
+        quote_command "${CMD[@]}"
+      else
+        echo "seed${seed} lighting: not requested"
       fi
       echo
     done

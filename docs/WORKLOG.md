@@ -1,5 +1,109 @@
 # Worklog
 
+## 2026-06-24 - Isaac quality switches for ceilings, lighting, and bedroom beds
+
+### Round Goal
+
+Address two Isaac Sim review issues without changing production defaults:
+
+- dark interiors caused by closed ceilings blocking Dome Light.
+- bedrooms that can legally contain two `BedFactory` objects.
+
+This round did not tune CPU parallelism, change the `JOBS=4` production CPU
+split, reduce room count, reduce clutter, or enable Wheat reuse by default.
+
+### Source Findings
+
+Ceilings are split from room meshes in
+`infinigen/core/constraints/example_solver/room/decorate.py` via
+`split_rooms()`, then materialized in the `room_ceilings` stage called from
+`infinigen_examples/generate_indoors.py`. Floors and walls are separate split
+collections and separate stages, so deleting only ceiling objects inside
+`room_ceilings()` leaves floor, wall, door, room count, and clutter generation
+paths intact.
+
+Bedroom furniture constraints live in
+`infinigen_examples/constraints/home.py`. The previous bedroom constraint used
+`beds.related_to(r).count().in_range(1, 2)`, so two beds were valid solver
+output. `BedFactory` appears in `solve_state.json` through semantic tags such
+as `Semantics(bed)` and `FromGenerator(BedFactory)`, and room membership is
+available from relation `target_name` values such as `bedroom_0/0`.
+
+### Implementation
+
+Added default-off switches:
+
+```text
+OMIT_CEILINGS_FOR_DOME_LIGHT=1
+ENFORCE_ONE_BED_PER_BEDROOM=1
+CHECK_BEDROOM_BED_COUNT=1
+ADD_ISAAC_DOME_LIGHT=1
+DOME_LIGHT_INTENSITY=30000
+ADD_ISAAC_FILL_LIGHT=1
+FILL_LIGHT_INTENSITY=1000
+```
+
+Changes:
+
+- `OMIT_CEILINGS_FOR_DOME_LIGHT=1` makes `room_ceilings()` print
+  `[room_ceilings] skipped because OMIT_CEILINGS_FOR_DOME_LIGHT=1`, delete the
+  generated ceiling objects, and return.
+- `ENFORCE_ONE_BED_PER_BEDROOM=1` changes the bedroom bed constraint from
+  `1..2` to exactly `1` bed per bedroom.
+- `scripts/add_isaac_lighting_to_usd.py` adds or updates
+  `/World/IsaacDefaultDomeLight` with configurable intensity and optional
+  `/World/IsaacDefaultFillLight`. It dry-runs without modifying outputs and
+  requires `pxr` only for listing or writing lights.
+- `scripts/check_bedroom_bed_count.py` checks a coarse directory or production
+  output root, writes CSV/Markdown reports, and returns non-zero when any
+  bedroom has more than one bed unless `--allow-fail` is set.
+- `scripts/run_9950x3d_production_scene_queue.sh` now supports default-off
+  quality steps in worker order:
+  `coarse -> bed_check -> export -> lighting -> next seed`.
+- `scripts/analyze_9950x3d_production_queue.py` includes `bed_check_status`,
+  `bed_check_exit_code`, `lighting_status`, `lighting_exit_code`, and
+  `dome_light_added` in summaries.
+
+### Validation
+
+Passed:
+
+```bash
+python -m py_compile infinigen/core/constraints/example_solver/room/decorate.py infinigen_examples/constraints/home.py scripts/add_isaac_lighting_to_usd.py scripts/check_bedroom_bed_count.py scripts/analyze_9950x3d_production_queue.py
+bash -n scripts/run_9950x3d_production_scene_queue.sh
+git diff --check
+```
+
+Dry-runs confirmed default-off behavior and opt-in command propagation. With
+all quality switches off, generate commands do not set ceiling or bed env
+flags, and bed check / lighting statuses are `not_requested`. With switches on,
+generate receives `OMIT_CEILINGS_FOR_DOME_LIGHT=1` and
+`ENFORCE_ONE_BED_PER_BEDROOM=1`, and the queue prints bed-check and lighting
+commands.
+
+Bed checker validation:
+
+```text
+seed21 bedroom_0/0: bed_count=2, status=fail
+seed1-40 scan: rows=77, pass=44, fail=30, unknown=3
+```
+
+The 3 unknown rows are the generation-incomplete seeds without
+`solve_state.json` or `scene.blend`.
+
+Lighting validation:
+
+```text
+dry-run selected:
+outputs/production_9950x3d_isaac_queue_seed1_40/seed_21/usd/export_scene.blend/export_scene.usdc
+```
+
+The current shell and `infinigen` conda environment do not have `pxr`
+installed, so real USD light writing needs a Python environment with USD
+bindings, such as an Isaac/Omniverse USD Python environment. The script reports
+that dependency clearly and the queue records lighting failures separately from
+generate/export.
+
 ## 2026-06-24 - 9950X3D production queue seed 1-40
 
 ### Round Goal

@@ -57,6 +57,10 @@ from infinigen.core.util.random import random_general as rg
 logger = logging.getLogger(__name__)
 
 
+def _env_flag_enabled(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def split_rooms(rooms_meshed: list[bpy.types.Object]):
     extract_tags = {
         "wall": {t.Subpart.Wall, t.Subpart.Visible},
@@ -395,6 +399,13 @@ def room_walls(walls: list[bpy.types.Object], constants: RoomConstants, n_walls=
 
 
 def room_ceilings(ceilings):
+    if _env_flag_enabled("OMIT_CEILINGS_FOR_DOME_LIGHT"):
+        print("[room_ceilings] skipped because OMIT_CEILINGS_FOR_DOME_LIGHT=1")
+        existing_ceilings = [o for o in ceilings if o.name in bpy.data.objects]
+        if existing_ceilings:
+            butil.delete(existing_ceilings)
+        return
+
     logger.debug(f"{room_ceilings.__name__} adding materials to {len(ceilings)=}")
 
     ceiling_fns = []

@@ -4,6 +4,7 @@
 
 # Authors: Alexander Raistrick
 
+import os
 from collections import OrderedDict
 
 import gin
@@ -30,6 +31,10 @@ from infinigen.core.tags import Semantics, Subpart
 
 from . import util as cu
 from .semantics import home_asset_usage
+
+
+def _env_flag_enabled(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def sample_home_constraint_params():
@@ -850,10 +855,11 @@ def home_furniture_constraints():
     # region BEDROOMS
     bedrooms = rooms[Semantics.Bedroom].excludes(cu.room_types)
     beds = wallfurn[Semantics.Bed]
+    bed_count = (1, 1) if _env_flag_enabled("ENFORCE_ONE_BED_PER_BEDROOM") else (1, 2)
 
     constraints["bedroom"] = bedrooms.all(
         lambda r: (
-            beds.related_to(r).count().in_range(1, 2)
+            beds.related_to(r).count().in_range(*bed_count)
             * sidetables.related_to(beds.related_to(r)).count().in_range(0, 2)
             * rugs.related_to(r).count().in_range(0, 1)
             * desks.related_to(r).count().in_range(0, 1)

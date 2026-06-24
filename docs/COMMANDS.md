@@ -10,7 +10,7 @@ Blender / `bpy` process.
 Each worker keeps a fixed CPU set and processes its own queue serially:
 
 ```text
-worker: coarse -> export USD/USDC -> next seed
+worker: coarse -> optional bed check -> export USD/USDC -> optional lighting -> next seed
 ```
 
 Current default candidate:
@@ -80,6 +80,31 @@ Wheat template reuse is default-off. It is only enabled when explicitly set:
 ENABLE_WHEAT_REUSE=1 bash scripts/run_9950x3d_production_scene_queue.sh
 ```
 
+Isaac quality switches are also default-off. Use them only when explicitly
+running an Isaac quality batch:
+
+```bash
+OMIT_CEILINGS_FOR_DOME_LIGHT=1 \
+ENFORCE_ONE_BED_PER_BEDROOM=1 \
+CHECK_BEDROOM_BED_COUNT=1 \
+ADD_ISAAC_DOME_LIGHT=1 \
+DOME_LIGHT_INTENSITY=30000 \
+SEEDS=100,101,102,103 \
+JOBS=4 \
+EXPORT_AFTER_GENERATE=1 \
+EXPORT_FORMAT=usdc \
+OUTPUT_ROOT=outputs/production_9950x3d_isaac_quality_test \
+bash scripts/run_9950x3d_production_scene_queue.sh
+```
+
+Optional fill light is separate and should stay off unless Dome Light alone is
+still too dark:
+
+```bash
+ADD_ISAAC_FILL_LIGHT=1 FILL_LIGHT_INTENSITY=1000 \
+bash scripts/run_9950x3d_production_scene_queue.sh
+```
+
 Export runs serially inside each worker after that worker's coarse scene
 finishes. The queue does not add a separate global export concurrency layer.
 If export becomes the measured bottleneck, benchmark an export queue or
@@ -112,6 +137,48 @@ outputs/production_9950x3d_isaac_queue_seed1_40/seed_<N>/usd/export_scene.blend/
 If a scene appears black in Isaac, add or check a Dome Light / Point Light and
 inspect material or texture warnings. Keep the exported folder structure
 together so textures and sidecar files remain available.
+
+Add or inspect Isaac USD lighting after export:
+
+```bash
+python scripts/add_isaac_lighting_to_usd.py \
+  --usd-dir outputs/production_9950x3d_isaac_queue_seed1_40/seed_21/usd \
+  --add-dome-light \
+  --dome-intensity 30000 \
+  --dry-run
+```
+
+Real USD light writing requires Python USD bindings:
+
+```bash
+python scripts/add_isaac_lighting_to_usd.py \
+  --usd-dir outputs/production_9950x3d_isaac_queue_seed1_40/seed_21/usd \
+  --add-dome-light \
+  --dome-intensity 30000
+```
+
+List existing lights:
+
+```bash
+python scripts/add_isaac_lighting_to_usd.py \
+  --usd-dir outputs/production_9950x3d_isaac_queue_seed1_40/seed_21/usd \
+  --list-lights
+```
+
+Check bedroom bed counts for one coarse scene:
+
+```bash
+python scripts/check_bedroom_bed_count.py \
+  outputs/production_9950x3d_isaac_queue_seed1_40/seed_21/coarse
+```
+
+Check a full production root and write reports:
+
+```bash
+python scripts/check_bedroom_bed_count.py \
+  outputs/production_9950x3d_isaac_queue_seed1_40 \
+  --allow-fail
+```
 
 ## Run 9950X3D Parallel Scene Benchmark
 

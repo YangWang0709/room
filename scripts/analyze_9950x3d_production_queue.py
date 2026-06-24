@@ -31,6 +31,11 @@ FIELDNAMES = [
     "export_user_time",
     "export_system_time",
     "usd_exists",
+    "bed_check_status",
+    "bed_check_exit_code",
+    "lighting_status",
+    "lighting_exit_code",
+    "dome_light_added",
     "fatal_marker",
     "fatal_marker_detail",
     "blender_shutdown_leak_warning",
@@ -251,6 +256,11 @@ def collect_rows(root: Path) -> list[dict[str, str]]:
                 "export_user_time": export_time["user_time"],
                 "export_system_time": export_time["system_time"],
                 "usd_exists": bool_text(has_usd_file(usd_folder)),
+                "bed_check_status": status.get("bed_check_status", "not_requested"),
+                "bed_check_exit_code": status.get("bed_check_exit_code", ""),
+                "lighting_status": status.get("lighting_status", "not_requested"),
+                "lighting_exit_code": status.get("lighting_exit_code", ""),
+                "dome_light_added": status.get("dome_light_added", "no"),
                 "fatal_marker": fatal_marker,
                 "fatal_marker_detail": fatal_detail,
                 "blender_shutdown_leak_warning": leak_warning,
@@ -307,9 +317,19 @@ def recommendation(rows: list[dict[str, str]], elapsed: float | None) -> str:
         return "No queue rows found. Run the production queue script first."
     generate_statuses = Counter(row.get("generate_status", "") for row in rows)
     export_statuses = Counter(row.get("export_status", "") for row in rows)
+    bed_check_statuses = Counter(
+        row.get("bed_check_status", "not_requested") for row in rows
+    )
     fatal_count = sum(1 for row in rows if row.get("fatal_marker") == "yes")
     if fatal_count or generate_statuses.get("failed") or export_statuses.get("failed"):
         return "Inspect failed seeds and fatal markers before increasing the production batch."
+    if bed_check_statuses.get("failed"):
+        return "Bedroom bed-count check failures occurred; inspect bed_check.log and reports."
+    lighting_statuses = Counter(
+        row.get("lighting_status", "not_requested") for row in rows
+    )
+    if lighting_statuses.get("failed"):
+        return "Lighting post-process failures occurred; inspect lighting.log before using the USD batch."
     if generate_statuses.get("timeout") or export_statuses.get("timeout"):
         return "Timeouts occurred; inspect slow seeds before changing JOBS or CPU placement."
     if all(row.get("generate_status") == "skipped" for row in rows):
@@ -327,6 +347,12 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
     elapsed = total_elapsed(rows)
     generate_statuses = Counter(row.get("generate_status", "") for row in rows)
     export_statuses = Counter(row.get("export_status", "") for row in rows)
+    bed_check_statuses = Counter(
+        row.get("bed_check_status", "not_requested") for row in rows
+    )
+    lighting_statuses = Counter(
+        row.get("lighting_status", "not_requested") for row in rows
+    )
     generated = generate_statuses.get("complete", 0)
     exported = export_statuses.get("complete", 0)
     coarse_scenes_hour = None
@@ -342,6 +368,8 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
         for row in rows
         if row.get("generate_status") in {"failed", "timeout"}
         or row.get("export_status") in {"failed", "timeout"}
+        or row.get("bed_check_status") == "failed"
+        or row.get("lighting_status") == "failed"
         or row.get("fatal_marker") == "yes"
     ]
     slowest = max(rows, key=lambda row: row_wall(row, "generate") or -1, default={})
@@ -390,6 +418,22 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
                     export_statuses.get("skipped", 0),
                     export_statuses.get("not_requested", 0),
                 ],
+                [
+                    "bed_check",
+                    bed_check_statuses.get("complete", 0),
+                    bed_check_statuses.get("failed", 0),
+                    bed_check_statuses.get("timeout", 0),
+                    bed_check_statuses.get("skipped", 0),
+                    bed_check_statuses.get("not_requested", 0),
+                ],
+                [
+                    "lighting",
+                    lighting_statuses.get("complete", 0),
+                    lighting_statuses.get("failed", 0),
+                    lighting_statuses.get("timeout", 0),
+                    lighting_statuses.get("skipped", 0),
+                    lighting_statuses.get("not_requested", 0),
+                ],
             ],
         ),
         "",
@@ -410,6 +454,11 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
                 "exp_wall_s",
                 "exp_rss_kb",
                 "usd",
+                "bed_check",
+                "bed_exit",
+                "lighting",
+                "light_exit",
+                "dome",
                 "fatal",
                 "leak_warn",
                 "last_progress",
@@ -429,6 +478,11 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
                     row.get("export_wall_time", ""),
                     row.get("export_max_rss", ""),
                     row.get("usd_exists", ""),
+                    row.get("bed_check_status", ""),
+                    row.get("bed_check_exit_code", ""),
+                    row.get("lighting_status", ""),
+                    row.get("lighting_exit_code", ""),
+                    row.get("dome_light_added", ""),
                     row.get("fatal_marker", ""),
                     row.get("blender_shutdown_leak_warning", ""),
                     row.get("last_progress_line", ""),
@@ -459,14 +513,34 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
     if failed_rows:
         lines.append(
             markdown_table(
-                ["seed", "worker", "generate", "export", "fatal_detail"],
+                [
+                    "seed",
+                    "worker",
+                    "generate",
+                    "export",
+                    "bed_check",
+                    "lighting",
+                    "fatal_detail",
+                ],
                 [
                     [
                         row.get("seed", ""),
                         row.get("worker_id", ""),
                         row.get("generate_status", ""),
                         row.get("export_status", ""),
-                        row.get("fatal_marker_detail", ""),
+                        row.get("bed_check_status", ""),
+                        row.get("lighting_status", ""),
+                        row.get("fatal_marker_detail", "")
+                        or (
+                            "bed check failed"
+                            if row.get("bed_check_status") == "failed"
+                            else ""
+                        )
+                        or (
+                            "lighting failed"
+                            if row.get("lighting_status") == "failed"
+                            else ""
+                        ),
                     ]
                     for row in failed_rows
                 ],

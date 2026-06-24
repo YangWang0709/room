@@ -1,5 +1,49 @@
 # Next Steps
 
+## After Isaac Quality Switches
+
+Current priority is Isaac quality validation, not more CPU parallel tuning.
+Keep the production CPU default at:
+
+```text
+JOBS=4
+CPU_SETS="0-3,16-19;4-7,20-23;8-11,24-27;12-15,28-31"
+```
+
+New quality switches are default-off:
+
+```text
+OMIT_CEILINGS_FOR_DOME_LIGHT=1
+ENFORCE_ONE_BED_PER_BEDROOM=1
+CHECK_BEDROOM_BED_COUNT=1
+ADD_ISAAC_DOME_LIGHT=1
+DOME_LIGHT_INTENSITY=30000
+ADD_ISAAC_FILL_LIGHT=1
+FILL_LIGHT_INTENSITY=1000
+```
+
+Immediate validation path:
+
+1. Use a Python environment with USD `pxr` bindings for real Dome Light writes.
+   The current shell and `infinigen` conda environment do not provide `pxr`.
+2. Run a small opt-in Isaac quality batch with ceilings omitted, one bed per
+   bedroom enforced, bed-count checking enabled, and Dome Light post-processing
+   enabled.
+3. Inspect the resulting USD folder in Isaac Sim. Open the full
+   `seed_<N>/usd/export_scene.blend/` folder so sidecar files stay available.
+4. Confirm lighting is acceptable before enabling optional fill light; keep
+   `ADD_ISAAC_FILL_LIGHT=0` unless the Dome Light alone is still too dark.
+5. Run `scripts/check_bedroom_bed_count.py` on the batch root and require zero
+   `fail` rows before sending scenes for review.
+6. If a bedroom still has more than one bed with
+   `ENFORCE_ONE_BED_PER_BEDROOM=1`, debug the solver relation state before
+   adding any post-export deletion path.
+
+The seed 1-40 retrospective bed check found 77 bedroom rows: 44 pass, 30 fail,
+and 3 unknown from incomplete generation seeds. This confirms that the
+previous `in_range(1, 2)` bedroom constraint allowed the Isaac double-bed
+issue by design.
+
 ## After Seed 1-40 Production Queue
 
 The 2026-06-24 seed 1-40 production queue completed with 37/40 coarse
