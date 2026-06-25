@@ -16,9 +16,12 @@ EXPORT_FORMAT="${EXPORT_FORMAT:-usdc}"
 EXPORT_RESOLUTION="${EXPORT_RESOLUTION:-512}"
 ENABLE_WHEAT_REUSE="${ENABLE_WHEAT_REUSE:-0}"
 OMIT_CEILINGS_FOR_DOME_LIGHT="${OMIT_CEILINGS_FOR_DOME_LIGHT:-0}"
+OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT="${OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT:-0}"
+OMIT_ROOM_PILLARS_FOR_DOME_LIGHT="${OMIT_ROOM_PILLARS_FOR_DOME_LIGHT:-0}"
 ENFORCE_ONE_BED_PER_BEDROOM="${ENFORCE_ONE_BED_PER_BEDROOM:-0}"
 CHECK_BEDROOM_BED_COUNT="${CHECK_BEDROOM_BED_COUNT:-0}"
 BEDROOM_BED_CHECK_STRICT="${BEDROOM_BED_CHECK_STRICT:-0}"
+CHECK_ROOM_LIGHT_BLOCKERS="${CHECK_ROOM_LIGHT_BLOCKERS:-0}"
 ADD_ISAAC_DOME_LIGHT="${ADD_ISAAC_DOME_LIGHT:-0}"
 DOME_LIGHT_INTENSITY="${DOME_LIGHT_INTENSITY:-30000}"
 ADD_ISAAC_FILL_LIGHT="${ADD_ISAAC_FILL_LIGHT:-0}"
@@ -45,9 +48,12 @@ PROFILE_ENV_VARS=(
   INFINIGEN_PROFILE_BOOKSTACK
   INFINIGEN_REUSE_PLANT_TEMPLATE_GEOMETRY
   OMIT_CEILINGS_FOR_DOME_LIGHT
+  OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT
+  OMIT_ROOM_PILLARS_FOR_DOME_LIGHT
   ENFORCE_ONE_BED_PER_BEDROOM
   CHECK_BEDROOM_BED_COUNT
   BEDROOM_BED_CHECK_STRICT
+  CHECK_ROOM_LIGHT_BLOCKERS
 )
 
 quote_command() {
@@ -230,6 +236,40 @@ print(f"{fail} {unknown}")
 PY
 }
 
+read_light_blocker_counts() {
+  local report_csv="$1"
+  "$PYTHON_BIN" - "$report_csv" <<'PY'
+import csv
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+if not path.exists():
+    print("0 0 0 0")
+    raise SystemExit(0)
+
+suspected = 0
+exterior = 0
+pillar = 0
+ceiling = 0
+with path.open(newline="") as handle:
+    for row in csv.DictReader(handle):
+        name = (row.get("object_name") or "").strip()
+        category = (row.get("suspected_category") or "").strip().lower()
+        if not name:
+            continue
+        if category:
+            suspected += 1
+        if category == "exterior":
+            exterior += 1
+        elif category == "pillar":
+            pillar += 1
+        elif category == "ceiling":
+            ceiling += 1
+print(f"{suspected} {exterior} {pillar} {ceiling}")
+PY
+}
+
 build_generate_cmd() {
   local seed="$1"
   local cpu_set="$2"
@@ -255,6 +295,12 @@ build_generate_cmd() {
   if [[ "$OMIT_CEILINGS_FOR_DOME_LIGHT" == "1" ]]; then
     CMD+=(OMIT_CEILINGS_FOR_DOME_LIGHT=1)
   fi
+  if [[ "$OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT" == "1" ]]; then
+    CMD+=(OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT=1)
+  fi
+  if [[ "$OMIT_ROOM_PILLARS_FOR_DOME_LIGHT" == "1" ]]; then
+    CMD+=(OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=1)
+  fi
   if [[ "$ENFORCE_ONE_BED_PER_BEDROOM" == "1" ]]; then
     CMD+=(ENFORCE_ONE_BED_PER_BEDROOM=1)
   fi
@@ -270,6 +316,23 @@ build_generate_cmd() {
     home_room_constraints.has_fewer_rooms=False
     restrict_solving.solve_max_rooms=10
     populate_doors.door_chance=0
+  )
+}
+
+build_light_blocker_check_cmd() {
+  local cpu_set="$1"
+  local coarse_dir="$2"
+  local log_dir="$3"
+  CMD=(taskset -c "$cpu_set" env)
+  local var
+  for var in "${PROFILE_ENV_VARS[@]}"; do
+    CMD+=(-u "$var")
+  done
+  CMD+=(
+    "$PYTHON_BIN"
+    scripts/check_room_light_blockers.py
+    "$coarse_dir"
+    --output-dir "$log_dir"
   )
 }
 
@@ -350,6 +413,7 @@ write_seed_env() {
   local export_command="${8:-}"
   local lighting_command="${9:-}"
   local bed_check_command="${10:-}"
+  local light_blocker_check_command="${11:-}"
 
   {
     echo "seed=${seed}"
@@ -367,9 +431,12 @@ write_seed_env() {
     echo "export_resolution=${EXPORT_RESOLUTION}"
     echo "enable_wheat_reuse=${ENABLE_WHEAT_REUSE}"
     echo "omit_ceilings_for_dome_light=${OMIT_CEILINGS_FOR_DOME_LIGHT}"
+    echo "omit_room_exterior_for_dome_light=${OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT}"
+    echo "omit_room_pillars_for_dome_light=${OMIT_ROOM_PILLARS_FOR_DOME_LIGHT}"
     echo "enforce_one_bed_per_bedroom=${ENFORCE_ONE_BED_PER_BEDROOM}"
     echo "check_bedroom_bed_count=${CHECK_BEDROOM_BED_COUNT}"
     echo "bedroom_bed_check_strict=${BEDROOM_BED_CHECK_STRICT}"
+    echo "check_room_light_blockers=${CHECK_ROOM_LIGHT_BLOCKERS}"
     echo "add_isaac_dome_light=${ADD_ISAAC_DOME_LIGHT}"
     echo "dome_light_intensity=${DOME_LIGHT_INTENSITY}"
     echo "add_isaac_fill_light=${ADD_ISAAC_FILL_LIGHT}"
@@ -391,6 +458,16 @@ write_seed_env() {
     else
       echo "OMIT_CEILINGS_FOR_DOME_LIGHT=unset"
     fi
+    if [[ "$OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT" == "1" ]]; then
+      echo "OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT=1"
+    else
+      echo "OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT=unset"
+    fi
+    if [[ "$OMIT_ROOM_PILLARS_FOR_DOME_LIGHT" == "1" ]]; then
+      echo "OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=1"
+    else
+      echo "OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=unset"
+    fi
     if [[ "$ENFORCE_ONE_BED_PER_BEDROOM" == "1" ]]; then
       echo "ENFORCE_ONE_BED_PER_BEDROOM=1"
     else
@@ -407,6 +484,9 @@ write_seed_env() {
     echo "NUMEXPR_NUM_THREADS=1"
     echo "BLIS_NUM_THREADS=1"
     echo "generate_command=${generate_command}"
+    if [[ -n "$light_blocker_check_command" ]]; then
+      echo "light_blocker_check_command=${light_blocker_check_command}"
+    fi
     if [[ -n "$bed_check_command" ]]; then
       echo "bed_check_command=${bed_check_command}"
     fi
@@ -425,10 +505,21 @@ write_status_file() {
     echo "seed=${STATUS_SEED:-}"
     echo "worker_id=${STATUS_WORKER_ID:-}"
     echo "cpu_set=${STATUS_CPU_SET:-}"
+    echo "omit_room_exterior_for_dome_light=${OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT}"
+    echo "omit_room_pillars_for_dome_light=${OMIT_ROOM_PILLARS_FOR_DOME_LIGHT}"
+    echo "check_room_light_blockers=${CHECK_ROOM_LIGHT_BLOCKERS}"
     echo "generate_status=${GENERATE_STATUS:-}"
     echo "generate_exit_code=${GENERATE_EXIT_CODE:-}"
     echo "generate_started_at=${GENERATE_STARTED_AT:-}"
     echo "generate_ended_at=${GENERATE_ENDED_AT:-}"
+    echo "light_blocker_check_status=${LIGHT_BLOCKER_CHECK_STATUS:-}"
+    echo "light_blocker_check_exit_code=${LIGHT_BLOCKER_CHECK_EXIT_CODE:-}"
+    echo "light_blocker_check_started_at=${LIGHT_BLOCKER_CHECK_STARTED_AT:-}"
+    echo "light_blocker_check_ended_at=${LIGHT_BLOCKER_CHECK_ENDED_AT:-}"
+    echo "suspected_light_blocker_count=${SUSPECTED_LIGHT_BLOCKER_COUNT:-}"
+    echo "exterior_object_count=${EXTERIOR_OBJECT_COUNT:-}"
+    echo "pillar_object_count=${PILLAR_OBJECT_COUNT:-}"
+    echo "ceiling_object_count=${CEILING_OBJECT_COUNT:-}"
     echo "export_status=${EXPORT_STATUS:-}"
     echo "export_exit_code=${EXPORT_EXIT_CODE:-}"
     echo "export_started_at=${EXPORT_STARTED_AT:-}"
@@ -468,6 +559,14 @@ mark_seed_stopped() {
   GENERATE_EXIT_CODE=""
   GENERATE_STARTED_AT="$now"
   GENERATE_ENDED_AT="$now"
+  LIGHT_BLOCKER_CHECK_STATUS="not_requested"
+  LIGHT_BLOCKER_CHECK_EXIT_CODE=""
+  LIGHT_BLOCKER_CHECK_STARTED_AT=""
+  LIGHT_BLOCKER_CHECK_ENDED_AT=""
+  SUSPECTED_LIGHT_BLOCKER_COUNT=""
+  EXTERIOR_OBJECT_COUNT=""
+  PILLAR_OBJECT_COUNT=""
+  CEILING_OBJECT_COUNT=""
   EXPORT_STATUS="not_requested"
   EXPORT_EXIT_CODE=""
   EXPORT_STARTED_AT=""
@@ -554,6 +653,91 @@ run_generate_seed() {
     echo "exit_code=${GENERATE_EXIT_CODE}"
     echo "status=${GENERATE_STATUS}"
   } >> "$generate_log"
+}
+
+run_light_blocker_check_seed() {
+  local worker_id="$1"
+  local cpu_set="$2"
+  local seed="$3"
+  local coarse_dir="$4"
+  local log_dir="$5"
+  local blocker_log="${log_dir}/light_blocker_check.log"
+  local blocker_report="${log_dir}/light_blockers_report.csv"
+  local exit_code
+
+  LIGHT_BLOCKER_CHECK_STATUS="not_requested"
+  LIGHT_BLOCKER_CHECK_EXIT_CODE=""
+  LIGHT_BLOCKER_CHECK_STARTED_AT=""
+  LIGHT_BLOCKER_CHECK_ENDED_AT=""
+  SUSPECTED_LIGHT_BLOCKER_COUNT=""
+  EXTERIOR_OBJECT_COUNT=""
+  PILLAR_OBJECT_COUNT=""
+  CEILING_OBJECT_COUNT=""
+
+  if [[ "$CHECK_ROOM_LIGHT_BLOCKERS" != "1" ]]; then
+    echo "CHECK_ROOM_LIGHT_BLOCKERS=${CHECK_ROOM_LIGHT_BLOCKERS}: light blocker check not requested." > "$blocker_log"
+    return 0
+  fi
+
+  build_light_blocker_check_cmd "$cpu_set" "$coarse_dir" "$log_dir"
+  local blocker_command
+  blocker_command="$(quote_command "${CMD[@]}")"
+
+  {
+    echo "worker_id=${worker_id}"
+    echo "cpu_set=${cpu_set}"
+    echo "seed=${seed}"
+    echo "coarse_dir=${coarse_dir}"
+    echo "started_at=$(timestamp)"
+    echo "light blocker check command:"
+    echo "$blocker_command"
+    echo
+  } > "$blocker_log"
+
+  if [[ "$DRY_RUN" == "1" ]]; then
+    LIGHT_BLOCKER_CHECK_STARTED_AT="$(timestamp)"
+    LIGHT_BLOCKER_CHECK_ENDED_AT="$LIGHT_BLOCKER_CHECK_STARTED_AT"
+    LIGHT_BLOCKER_CHECK_EXIT_CODE="0"
+    LIGHT_BLOCKER_CHECK_STATUS="skipped"
+    echo "DRY_RUN=1: light blocker check skipped." >> "$blocker_log"
+    return 0
+  fi
+
+  if [[ "$GENERATE_STATUS" != "complete" && "$GENERATE_STATUS" != "skipped" ]]; then
+    LIGHT_BLOCKER_CHECK_STARTED_AT="$(timestamp)"
+    LIGHT_BLOCKER_CHECK_ENDED_AT="$LIGHT_BLOCKER_CHECK_STARTED_AT"
+    LIGHT_BLOCKER_CHECK_EXIT_CODE=""
+    LIGHT_BLOCKER_CHECK_STATUS="skipped"
+    echo "Skipping light blocker check because coarse generation status is ${GENERATE_STATUS}." >> "$blocker_log"
+    return 0
+  fi
+
+  LIGHT_BLOCKER_CHECK_STARTED_AT="$(timestamp)"
+  set +e
+  "${CMD[@]}" >> "$blocker_log" 2>&1
+  exit_code=$?
+  set -e
+  LIGHT_BLOCKER_CHECK_ENDED_AT="$(timestamp)"
+  LIGHT_BLOCKER_CHECK_EXIT_CODE="$exit_code"
+
+  if [[ "$exit_code" == "0" ]]; then
+    LIGHT_BLOCKER_CHECK_STATUS="complete"
+  else
+    LIGHT_BLOCKER_CHECK_STATUS="failed"
+  fi
+
+  read -r SUSPECTED_LIGHT_BLOCKER_COUNT EXTERIOR_OBJECT_COUNT PILLAR_OBJECT_COUNT CEILING_OBJECT_COUNT < <(read_light_blocker_counts "$blocker_report")
+
+  {
+    echo
+    echo "ended_at=${LIGHT_BLOCKER_CHECK_ENDED_AT}"
+    echo "exit_code=${LIGHT_BLOCKER_CHECK_EXIT_CODE}"
+    echo "status=${LIGHT_BLOCKER_CHECK_STATUS}"
+    echo "suspected_light_blocker_count=${SUSPECTED_LIGHT_BLOCKER_COUNT}"
+    echo "exterior_object_count=${EXTERIOR_OBJECT_COUNT}"
+    echo "pillar_object_count=${PILLAR_OBJECT_COUNT}"
+    echo "ceiling_object_count=${CEILING_OBJECT_COUNT}"
+  } >> "$blocker_log"
 }
 
 run_export_seed() {
@@ -859,6 +1043,14 @@ run_seed() {
   GENERATE_EXIT_CODE=""
   GENERATE_STARTED_AT=""
   GENERATE_ENDED_AT=""
+  LIGHT_BLOCKER_CHECK_STATUS="not_requested"
+  LIGHT_BLOCKER_CHECK_EXIT_CODE=""
+  LIGHT_BLOCKER_CHECK_STARTED_AT=""
+  LIGHT_BLOCKER_CHECK_ENDED_AT=""
+  SUSPECTED_LIGHT_BLOCKER_COUNT=""
+  EXTERIOR_OBJECT_COUNT=""
+  PILLAR_OBJECT_COUNT=""
+  CEILING_OBJECT_COUNT=""
   EXPORT_STATUS="not_requested"
   EXPORT_EXIT_CODE=""
   EXPORT_STARTED_AT=""
@@ -875,11 +1067,16 @@ run_seed() {
   LIGHTING_ENDED_AT=""
   DOME_LIGHT_ADDED="no"
 
-  local generate_cmd_text export_cmd_text lighting_cmd_text bed_check_cmd_text
+  local generate_cmd_text export_cmd_text lighting_cmd_text bed_check_cmd_text light_blocker_check_cmd_text
   build_generate_cmd "$seed" "$cpu_set" "$coarse_dir"
   generate_cmd_text="$(quote_command "${CMD[@]}")"
   build_export_cmd "$cpu_set" "$coarse_dir" "$usd_dir"
   export_cmd_text="$(quote_command "${CMD[@]}")"
+  light_blocker_check_cmd_text=""
+  if [[ "$CHECK_ROOM_LIGHT_BLOCKERS" == "1" ]]; then
+    build_light_blocker_check_cmd "$cpu_set" "$coarse_dir" "$log_dir"
+    light_blocker_check_cmd_text="$(quote_command "${CMD[@]}")"
+  fi
   bed_check_cmd_text=""
   if [[ "$CHECK_BEDROOM_BED_COUNT" == "1" ]]; then
     build_bed_check_cmd "$cpu_set" "$coarse_dir" "$log_dir"
@@ -892,9 +1089,10 @@ run_seed() {
   fi
   write_seed_env "$seed" "$worker_id" "$cpu_set" "$coarse_dir" "$usd_dir" \
     "$env_file" "$generate_cmd_text" "$export_cmd_text" "$lighting_cmd_text" \
-    "$bed_check_cmd_text"
+    "$bed_check_cmd_text" "$light_blocker_check_cmd_text"
 
   run_generate_seed "$worker_id" "$cpu_set" "$seed" "$coarse_dir" "$log_dir"
+  run_light_blocker_check_seed "$worker_id" "$cpu_set" "$seed" "$coarse_dir" "$log_dir"
   run_bed_check_seed "$worker_id" "$cpu_set" "$seed" "$coarse_dir" "$log_dir"
   run_export_seed "$worker_id" "$cpu_set" "$seed" "$coarse_dir" "$usd_dir" "$log_dir"
   run_lighting_seed "$worker_id" "$cpu_set" "$seed" "$usd_dir" "$log_dir"
@@ -930,7 +1128,7 @@ worker_main() {
       mark_seed_stopped "$worker_id" "$cpu_set" "$seed"
       continue
     fi
-    echo "worker${worker_id}: seed ${seed} coarse -> bed_check -> export -> lighting -> next" >> "$worker_log"
+    echo "worker${worker_id}: seed ${seed} coarse -> light_blocker_check -> bed_check -> export -> lighting -> next" >> "$worker_log"
     run_seed "$worker_id" "$cpu_set" "$seed" >> "$worker_log" 2>&1
   done
   echo "ended_at=$(timestamp)" >> "$worker_log"
@@ -1006,9 +1204,12 @@ write_run_info() {
     echo "EXPORT_RESOLUTION=${EXPORT_RESOLUTION}"
     echo "ENABLE_WHEAT_REUSE=${ENABLE_WHEAT_REUSE}"
     echo "OMIT_CEILINGS_FOR_DOME_LIGHT=${OMIT_CEILINGS_FOR_DOME_LIGHT}"
+    echo "OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT=${OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT}"
+    echo "OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=${OMIT_ROOM_PILLARS_FOR_DOME_LIGHT}"
     echo "ENFORCE_ONE_BED_PER_BEDROOM=${ENFORCE_ONE_BED_PER_BEDROOM}"
     echo "CHECK_BEDROOM_BED_COUNT=${CHECK_BEDROOM_BED_COUNT}"
     echo "BEDROOM_BED_CHECK_STRICT=${BEDROOM_BED_CHECK_STRICT}"
+    echo "CHECK_ROOM_LIGHT_BLOCKERS=${CHECK_ROOM_LIGHT_BLOCKERS}"
     echo "ADD_ISAAC_DOME_LIGHT=${ADD_ISAAC_DOME_LIGHT}"
     echo "DOME_LIGHT_INTENSITY=${DOME_LIGHT_INTENSITY}"
     echo "ADD_ISAAC_FILL_LIGHT=${ADD_ISAAC_FILL_LIGHT}"
@@ -1050,6 +1251,13 @@ print_dry_run_plan() {
       build_generate_cmd "$seed" "$cpu_set" "$coarse_dir"
       echo "seed${seed} coarse:"
       quote_command "${CMD[@]}"
+      if [[ "$CHECK_ROOM_LIGHT_BLOCKERS" == "1" ]]; then
+        build_light_blocker_check_cmd "$cpu_set" "$coarse_dir" "$(seed_log_dir "$seed")"
+        echo "seed${seed} light blocker check:"
+        quote_command "${CMD[@]}"
+      else
+        echo "seed${seed} light blocker check: not requested"
+      fi
       if [[ "$CHECK_BEDROOM_BED_COUNT" == "1" ]]; then
         build_bed_check_cmd "$cpu_set" "$coarse_dir" "$(seed_log_dir "$seed")"
         echo "seed${seed} bed check:"

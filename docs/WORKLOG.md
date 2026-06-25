@@ -1,5 +1,122 @@
 # Worklog
 
+## 2026-06-25 - Room exterior omit option for Isaac Dome Light
+
+### Round Goal
+
+Respond to Isaac Sim feedback that removing room ceilings was not enough:
+frame-like room shells were still visible around rooms and had to be manually
+deleted before Dome Light reached the interior. This round kept the original
+generation behavior default-on and added only opt-in quality controls.
+
+No solver, asset factory, room count, door, wall, floor, furniture, clutter, or
+CPU production queue default behavior was changed.
+
+### Source Findings
+
+`split_rooms()` in
+`infinigen/core/constraints/example_solver/room/decorate.py` splits room
+meshes into `wall`, `floor`, `ceiling`, and `exterior`. The exterior objects
+are created from non-visible room faces:
+
+```text
+tagging.extract_mask(r, 1 - tagging.tagged_face_mask(r, t.Subpart.Visible))
+```
+
+They are named as `<room>.exterior` and placed in
+`unique_assets:room_exterior`. This makes them the most likely source of the
+Isaac frame/shell objects. `room_pillars()` is a second candidate because it
+creates `PillarFactory` objects in `unique_assets:pillars`, but it is not
+expected to appear for every room.
+
+`room_walls()`, `room_floors()`, and `room_ceilings()` use the split wall,
+floor, and ceiling collections, not the exterior collection. Removing exterior
+objects after extraction therefore does not delete walls, floors, door
+openings, furniture, or clutter and should not change room material assignment
+for walls/floors/ceilings.
+
+### Implementation
+
+Added default-off switches:
+
+```text
+OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT=1
+OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=1
+CHECK_ROOM_LIGHT_BLOCKERS=1
+```
+
+Changes:
+
+- `OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT=1` deletes the `split_rooms()` exterior
+  objects immediately after they are created, leaves
+  `unique_assets:room_exterior` as an empty collection, and logs
+  `[split_rooms] deleted room exterior because OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT=1`.
+- `OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=1` skips `room_pillars()` and logs
+  `[room_pillars] skipped because OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=1`.
+- `scripts/check_room_light_blockers.py` inspects a coarse `scene.blend` and
+  writes CSV/Markdown reports for objects whose names or collections suggest
+  `exterior`, `pillar`, `ceiling`, or large room-frame meshes.
+- `scripts/run_9950x3d_production_scene_queue.sh` now passes the new omit
+  flags to generation and can run the blocker checker after generation.
+- `scripts/analyze_9950x3d_production_queue.py` records the new flags,
+  blocker check status, and suspected/exterior/pillar/ceiling counts.
+
+### Validation
+
+Read-only seed200 blocker check:
+
+```text
+output root: outputs/production_9950x3d_ceiling_bedcheck_smoke_seed200
+report: outputs/production_9950x3d_ceiling_bedcheck_smoke_seed200/light_blocker_check/
+exterior=14
+pillar=0
+ceiling=14
+unknown_frame=28
+```
+
+The `ceiling` rows are `CeilingLightFactory` objects matched by name, not the
+deleted `room_ceilings` surfaces. The key result is the 14
+`unique_assets:room_exterior` objects named `<room>.exterior`.
+
+Dry-run passed for the recommended one-seed smoke shape:
+
+```bash
+DRY_RUN=1 \
+SEEDS=201 \
+JOBS=1 \
+CPU_SETS="0-3,16-19" \
+EXPORT_AFTER_GENERATE=1 \
+OMIT_CEILINGS_FOR_DOME_LIGHT=1 \
+OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT=1 \
+OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=0 \
+ENFORCE_ONE_BED_PER_BEDROOM=1 \
+CHECK_BEDROOM_BED_COUNT=1 \
+CHECK_ROOM_LIGHT_BLOCKERS=1 \
+ADD_ISAAC_DOME_LIGHT=0 \
+OUTPUT_ROOT=outputs/production_9950x3d_no_ceiling_no_exterior_smoke_seed201 \
+bash scripts/run_9950x3d_production_scene_queue.sh
+```
+
+Dry-run confirmed the ceiling and exterior flags are passed into generation,
+the pillars flag remains off, the light-blocker checker would run after
+generation, and Wheat reuse remains unset.
+
+### Recommendation
+
+Next run exactly one real seed first:
+
+```text
+SEEDS=201
+OMIT_CEILINGS_FOR_DOME_LIGHT=1
+OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT=1
+OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=0
+CHECK_ROOM_LIGHT_BLOCKERS=1
+```
+
+Inspect the full USD export folder in Isaac Sim. If a frame still blocks Dome
+Light, rerun one seed with `OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=1` as the second
+candidate.
+
 ## 2026-06-24 - Seed200 Isaac quality smoke
 
 ### Round Goal

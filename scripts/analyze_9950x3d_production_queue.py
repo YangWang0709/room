@@ -17,6 +17,9 @@ FIELDNAMES = [
     "seed",
     "worker_id",
     "cpu_set",
+    "omit_room_exterior_for_dome_light",
+    "omit_room_pillars_for_dome_light",
+    "check_room_light_blockers",
     "generate_status",
     "generate_exit_code",
     "generate_wall_time",
@@ -24,6 +27,12 @@ FIELDNAMES = [
     "generate_user_time",
     "generate_system_time",
     "scene_blend_exists",
+    "light_blocker_check_status",
+    "light_blocker_check_exit_code",
+    "suspected_light_blocker_count",
+    "exterior_object_count",
+    "pillar_object_count",
+    "ceiling_object_count",
     "export_status",
     "export_exit_code",
     "export_wall_time",
@@ -244,6 +253,15 @@ def collect_rows(root: Path) -> list[dict[str, str]]:
                 "seed": seed,
                 "worker_id": status.get("worker_id", ""),
                 "cpu_set": status.get("cpu_set", ""),
+                "omit_room_exterior_for_dome_light": status.get(
+                    "omit_room_exterior_for_dome_light", ""
+                ),
+                "omit_room_pillars_for_dome_light": status.get(
+                    "omit_room_pillars_for_dome_light", ""
+                ),
+                "check_room_light_blockers": status.get(
+                    "check_room_light_blockers", ""
+                ),
                 "generate_status": status.get("generate_status", ""),
                 "generate_exit_code": status.get("generate_exit_code", ""),
                 "generate_wall_time": generate_time["wall_time"],
@@ -251,6 +269,18 @@ def collect_rows(root: Path) -> list[dict[str, str]]:
                 "generate_user_time": generate_time["user_time"],
                 "generate_system_time": generate_time["system_time"],
                 "scene_blend_exists": bool_text((output_folder / "scene.blend").exists()),
+                "light_blocker_check_status": status.get(
+                    "light_blocker_check_status", "not_requested"
+                ),
+                "light_blocker_check_exit_code": status.get(
+                    "light_blocker_check_exit_code", ""
+                ),
+                "suspected_light_blocker_count": status.get(
+                    "suspected_light_blocker_count", ""
+                ),
+                "exterior_object_count": status.get("exterior_object_count", ""),
+                "pillar_object_count": status.get("pillar_object_count", ""),
+                "ceiling_object_count": status.get("ceiling_object_count", ""),
                 "export_status": status.get("export_status", "not_requested"),
                 "export_exit_code": status.get("export_exit_code", ""),
                 "export_wall_time": export_time["wall_time"],
@@ -324,6 +354,9 @@ def recommendation(rows: list[dict[str, str]], elapsed: float | None) -> str:
     bed_check_statuses = Counter(
         row.get("bed_check_status", "not_requested") for row in rows
     )
+    light_blocker_statuses = Counter(
+        row.get("light_blocker_check_status", "not_requested") for row in rows
+    )
     fatal_count = sum(1 for row in rows if row.get("fatal_marker") == "yes")
     if fatal_count or generate_statuses.get("failed") or export_statuses.get("failed"):
         return "Inspect failed seeds and fatal markers before increasing the production batch."
@@ -331,6 +364,8 @@ def recommendation(rows: list[dict[str, str]], elapsed: float | None) -> str:
         return "Quality gate failed; inspect bedroom bed-count reports before exporting more scenes."
     if bed_check_statuses.get("failed"):
         return "Bedroom bed-count check failures occurred; inspect bed_check.log and reports."
+    if light_blocker_statuses.get("failed"):
+        return "Room light blocker checks failed; inspect light_blocker_check.log and reports."
     lighting_statuses = Counter(
         row.get("lighting_status", "not_requested") for row in rows
     )
@@ -355,6 +390,9 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
     export_statuses = Counter(row.get("export_status", "") for row in rows)
     bed_check_statuses = Counter(
         row.get("bed_check_status", "not_requested") for row in rows
+    )
+    light_blocker_statuses = Counter(
+        row.get("light_blocker_check_status", "not_requested") for row in rows
     )
     lighting_statuses = Counter(
         row.get("lighting_status", "not_requested") for row in rows
@@ -434,6 +472,14 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
                     bed_check_statuses.get("not_requested", 0),
                 ],
                 [
+                    "light_blocker_check",
+                    light_blocker_statuses.get("complete", 0),
+                    light_blocker_statuses.get("failed", 0),
+                    light_blocker_statuses.get("timeout", 0),
+                    light_blocker_statuses.get("skipped", 0),
+                    light_blocker_statuses.get("not_requested", 0),
+                ],
+                [
                     "lighting",
                     lighting_statuses.get("complete", 0),
                     lighting_statuses.get("failed", 0),
@@ -451,11 +497,18 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
                 "seed",
                 "worker",
                 "cpu_set",
+                "omit_ext",
+                "omit_pillars",
                 "generate",
                 "gen_exit",
                 "gen_wall_s",
                 "gen_rss_kb",
                 "scene",
+                "blocker_check",
+                "blockers",
+                "exterior",
+                "pillars",
+                "ceilings",
                 "export",
                 "exp_exit",
                 "exp_wall_s",
@@ -477,11 +530,18 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
                     row.get("seed", ""),
                     row.get("worker_id", ""),
                     row.get("cpu_set", ""),
+                    row.get("omit_room_exterior_for_dome_light", ""),
+                    row.get("omit_room_pillars_for_dome_light", ""),
                     row.get("generate_status", ""),
                     row.get("generate_exit_code", ""),
                     row.get("generate_wall_time", ""),
                     row.get("generate_max_rss", ""),
                     row.get("scene_blend_exists", ""),
+                    row.get("light_blocker_check_status", ""),
+                    row.get("suspected_light_blocker_count", ""),
+                    row.get("exterior_object_count", ""),
+                    row.get("pillar_object_count", ""),
+                    row.get("ceiling_object_count", ""),
                     row.get("export_status", ""),
                     row.get("export_exit_code", ""),
                     row.get("export_wall_time", ""),

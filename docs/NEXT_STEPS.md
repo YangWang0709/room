@@ -14,9 +14,12 @@ New quality switches are default-off:
 
 ```text
 OMIT_CEILINGS_FOR_DOME_LIGHT=1
+OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT=1
+OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=1
 ENFORCE_ONE_BED_PER_BEDROOM=1
 CHECK_BEDROOM_BED_COUNT=1
 BEDROOM_BED_CHECK_STRICT=1
+CHECK_ROOM_LIGHT_BLOCKERS=1
 ADD_ISAAC_DOME_LIGHT=1
 DOME_LIGHT_INTENSITY=30000
 ADD_ISAAC_FILL_LIGHT=1
@@ -42,13 +45,39 @@ No Isaac/Omniverse Python installation was found under the common local paths
 checked. Treat this as an environment issue, not a seed200 generation/export
 failure.
 
+Isaac frame/shell follow-up:
+
+```text
+User feedback: after removing room ceilings, Isaac Sim still shows frame-like
+room shells that block Dome Light until manually deleted.
+Most likely source: split_rooms() creates <room>.exterior objects in
+unique_assets:room_exterior from non-visible room faces.
+Seed200 read-only checker: exterior=14, pillar=0, ceiling-name matches=14,
+unknown_frame=28.
+```
+
+The next test should keep pillars on and remove only ceilings plus room
+exterior:
+
+```text
+OMIT_CEILINGS_FOR_DOME_LIGHT=1
+OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT=1
+OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=0
+CHECK_ROOM_LIGHT_BLOCKERS=1
+```
+
+If that still leaves a visible frame in Isaac, run a second one-seed test with
+`OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=1`. Do not default either new omit behavior;
+do not delete walls, floors, doors, furniture, or clutter.
+
 Immediate validation path:
 
 1. Use a Python environment with USD `pxr` bindings for real Dome Light writes.
    The current shell and `infinigen` conda environment do not provide `pxr`.
-2. Run a small opt-in Isaac quality batch on `SEEDS=201-203` with ceilings
-   omitted, one bed per bedroom enforced, strict bed-count checking enabled,
-   and `ADD_ISAAC_DOME_LIGHT=0` unless a USD/Isaac Python environment is ready.
+2. Run a one-seed opt-in Isaac quality smoke on `SEEDS=201` with ceilings
+   omitted, room exterior omitted, pillars still enabled, strict bed-count
+   checking enabled, blocker checking enabled, and `ADD_ISAAC_DOME_LIGHT=0`
+   unless a USD/Isaac Python environment is ready.
 3. Inspect the resulting USD folder in Isaac Sim. Open the full
    `seed_<N>/usd/export_scene.blend/` folder so sidecar files stay available.
 4. Confirm lighting is acceptable before enabling optional fill light; keep

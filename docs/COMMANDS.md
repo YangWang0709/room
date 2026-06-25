@@ -10,7 +10,7 @@ Blender / `bpy` process.
 Each worker keeps a fixed CPU set and processes its own queue serially:
 
 ```text
-worker: coarse -> optional bed check -> export USD/USDC -> optional lighting -> next seed
+worker: coarse -> optional light blocker check -> optional bed check -> export USD/USDC -> optional lighting -> next seed
 ```
 
 Current default candidate:
@@ -85,9 +85,12 @@ running an Isaac quality batch:
 
 ```bash
 OMIT_CEILINGS_FOR_DOME_LIGHT=1 \
+OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT=1 \
+OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=0 \
 ENFORCE_ONE_BED_PER_BEDROOM=1 \
 CHECK_BEDROOM_BED_COUNT=1 \
 BEDROOM_BED_CHECK_STRICT=1 \
+CHECK_ROOM_LIGHT_BLOCKERS=1 \
 ADD_ISAAC_DOME_LIGHT=1 \
 DOME_LIGHT_INTENSITY=30000 \
 SEEDS=100,101,102,103 \
@@ -118,24 +121,49 @@ OUTPUT_ROOT=outputs/production_9950x3d_ceiling_bedcheck_smoke_seed200 \
 bash scripts/run_9950x3d_production_scene_queue.sh
 ```
 
-Recommended next small quality batch:
+Recommended next room-exterior quality dry-run:
+
+```bash
+DRY_RUN=1 \
+SEEDS=201 \
+JOBS=1 \
+CPU_SETS="0-3,16-19" \
+EXPORT_AFTER_GENERATE=1 \
+OMIT_CEILINGS_FOR_DOME_LIGHT=1 \
+OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT=1 \
+OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=0 \
+ENFORCE_ONE_BED_PER_BEDROOM=1 \
+CHECK_BEDROOM_BED_COUNT=1 \
+CHECK_ROOM_LIGHT_BLOCKERS=1 \
+ADD_ISAAC_DOME_LIGHT=0 \
+OUTPUT_ROOT=outputs/production_9950x3d_no_ceiling_no_exterior_smoke_seed201 \
+bash scripts/run_9950x3d_production_scene_queue.sh
+```
+
+Recommended next one-seed quality smoke:
 
 ```bash
 CLEAN=1 \
-SEEDS=201-203 \
+SEEDS=201 \
 JOBS=1 \
 CPU_SETS="0-3,16-19" \
 EXPORT_AFTER_GENERATE=1 \
 EXPORT_FORMAT=usdc \
 EXPORT_RESOLUTION=512 \
 OMIT_CEILINGS_FOR_DOME_LIGHT=1 \
+OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT=1 \
+OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=0 \
 ENFORCE_ONE_BED_PER_BEDROOM=1 \
 CHECK_BEDROOM_BED_COUNT=1 \
 BEDROOM_BED_CHECK_STRICT=1 \
+CHECK_ROOM_LIGHT_BLOCKERS=1 \
 ADD_ISAAC_DOME_LIGHT=0 \
-OUTPUT_ROOT=outputs/production_9950x3d_ceiling_bedcheck_smoke_seed201_203 \
+OUTPUT_ROOT=outputs/production_9950x3d_no_ceiling_no_exterior_smoke_seed201 \
 bash scripts/run_9950x3d_production_scene_queue.sh
 ```
+
+Use `OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=1` only as a second test if
+ceiling-off plus exterior-off still leaves a visible light-blocking frame.
 
 Optional fill light is separate and should stay off unless Dome Light alone is
 still too dark:
@@ -218,6 +246,14 @@ Check a full production root and write reports:
 python scripts/check_bedroom_bed_count.py \
   outputs/production_9950x3d_isaac_queue_seed1_40 \
   --allow-fail
+```
+
+Inspect room objects that may still block Dome Light:
+
+```bash
+python scripts/check_room_light_blockers.py \
+  outputs/production_9950x3d_ceiling_bedcheck_smoke_seed200/seed_200/coarse \
+  --output-dir outputs/production_9950x3d_ceiling_bedcheck_smoke_seed200/light_blocker_check
 ```
 
 ## Run 9950X3D Parallel Scene Benchmark

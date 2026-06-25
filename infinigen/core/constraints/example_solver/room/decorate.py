@@ -87,11 +87,18 @@ def split_rooms(rooms_meshed: list[bpy.types.Object]):
         tagging.extract_mask(r, 1 - tagging.tagged_face_mask(r, t.Subpart.Visible))
         for r in rooms_meshed
     ]
+    if _env_flag_enabled("OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT"):
+        exterior_objs = [o for o in meshes["exterior"] if o.name in bpy.data.objects]
+        if exterior_objs:
+            butil.delete(exterior_objs)
+        meshes["exterior"] = []
+        print("[split_rooms] deleted room exterior because OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT=1")
 
     for n, objs in meshes.items():
         for o in objs:
             o.name = o.name.split(".")[0] + f".{n}"
-        butil.origin_set(objs, "ORIGIN_GEOMETRY", center="MEDIAN")
+        if objs:
+            butil.origin_set(objs, "ORIGIN_GEOMETRY", center="MEDIAN")
 
     meshes = {
         n: butil.put_in_collection(objs, "unique_assets:room_" + n)
@@ -742,6 +749,10 @@ def room_stairs(constants, state, rooms_meshed):
 
 
 def room_pillars(walls: list[bpy.types.Object], constants: RoomConstants):
+    if _env_flag_enabled("OMIT_ROOM_PILLARS_FOR_DOME_LIGHT"):
+        print("[room_pillars] skipped because OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=1")
+        return
+
     col = butil.get_collection("unique_assets:pillars")
     for wall in tqdm(walls):
         if room_type(wall.name) not in pillar_rooms:

@@ -1,5 +1,66 @@
 # Profile Results
 
+## Isaac Room Exterior Light Blocker Check - 2026-06-25
+
+Profile type: source/tooling validation for the Isaac Dome Light frame/shell
+issue. This was not a production throughput run and did not run a new real
+generation seed.
+
+User feedback: after `OMIT_CEILINGS_FOR_DOME_LIGHT=1`, Isaac Sim still showed
+frame-like room shells around rooms. Manual deletion of those frames allowed
+Dome Light to reach interiors.
+
+Source finding: `split_rooms()` creates `<room>.exterior` meshes from
+non-visible room faces and places them in `unique_assets:room_exterior`.
+These exterior meshes are the most likely source of the visible frames.
+`room_pillars()` remains a second candidate, but should not be disabled first.
+
+New opt-in controls:
+
+```text
+OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT=1
+OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=1
+CHECK_ROOM_LIGHT_BLOCKERS=1
+```
+
+Read-only seed200 blocker check:
+
+```text
+command: python scripts/check_room_light_blockers.py outputs/production_9950x3d_ceiling_bedcheck_smoke_seed200/seed_200/coarse --output-dir outputs/production_9950x3d_ceiling_bedcheck_smoke_seed200/light_blocker_check
+report: outputs/production_9950x3d_ceiling_bedcheck_smoke_seed200/light_blocker_check/light_blockers_report.md
+rows: 56
+exterior: 14
+pillar: 0
+ceiling-name matches: 14
+unknown_frame: 28
+```
+
+The `ceiling` rows are `CeilingLightFactory` objects matched by name. The
+important blocker finding is the 14 `unique_assets:room_exterior` rows with
+object names such as `bathroom_0/0.exterior`.
+
+Seed201 dry-run passed:
+
+```text
+DRY_RUN=1 SEEDS=201 JOBS=1 CPU_SETS=0-3,16-19
+OMIT_CEILINGS_FOR_DOME_LIGHT=1
+OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT=1
+OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=0
+CHECK_ROOM_LIGHT_BLOCKERS=1
+ADD_ISAAC_DOME_LIGHT=0
+OUTPUT_ROOT=outputs/production_9950x3d_no_ceiling_no_exterior_smoke_seed201
+```
+
+Dry-run confirmed generation receives the ceiling and exterior omit flags,
+pillars remain enabled, the blocker checker would run after generation,
+bed-count checking would run, export would run, lighting is not requested, and
+Wheat reuse is unset.
+
+Recommendation: run a single real seed201 smoke with ceilings off, room
+exterior off, pillars still on, blocker checking on, strict bed checking on,
+and `ADD_ISAAC_DOME_LIGHT=0`. If Isaac still shows light-blocking frames, run a
+second single-seed test with `OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=1`.
+
 ## 9950X3D Isaac Quality Smoke Seed 200 - 2026-06-24
 
 Profile type: single-seed Isaac quality smoke for the opt-in ceiling omission,
