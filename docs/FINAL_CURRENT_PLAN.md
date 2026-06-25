@@ -1,0 +1,69 @@
+# Final Current Infinigen Isaac Production Plan
+
+## Preserved Output
+
+The only output directory currently preserved is:
+
+```text
+outputs/production_9950x3d_no_ceiling_no_exterior_smoke_seed201
+```
+
+All other generated `outputs` artifacts have been cleaned.
+
+## Recommended Production Command
+
+```bash
+CLEAN=1 \
+SEEDS=1-40 \
+JOBS=4 \
+CPU_SETS="0-3,16-19;4-7,20-23;8-11,24-27;12-15,28-31" \
+EXPORT_AFTER_GENERATE=1 \
+EXPORT_FORMAT=usdc \
+EXPORT_RESOLUTION=512 \
+OMIT_CEILINGS_FOR_DOME_LIGHT=1 \
+OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT=1 \
+OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=0 \
+ENFORCE_ONE_BED_PER_BEDROOM=1 \
+CHECK_BEDROOM_BED_COUNT=1 \
+BEDROOM_BED_CHECK_STRICT=1 \
+ADD_ISAAC_DOME_LIGHT=0 \
+OUTPUT_ROOT=outputs/production_final_seed1_40 \
+bash scripts/run_9950x3d_production_scene_queue.sh
+```
+
+## CPU Configuration
+
+Use `JOBS=4`.
+
+CPU sets:
+
+```text
+0-3,16-19
+4-7,20-23
+8-11,24-27
+12-15,28-31
+```
+
+## Quality Plan
+
+- Remove ceilings.
+- Delete the `room_exterior` frame.
+- Keep pillars.
+- Enforce and check one bed per bedroom.
+- Do not generate door panels; keep door openings only.
+- Manually add a Dome Light in Isaac Sim.
+
+## Defaults Currently Disabled
+
+- Wheat reuse.
+- Room pillars removal.
+- Automatic `ADD_ISAAC_DOME_LIGHT` USD authoring.
+- `JOBS=5`, `JOBS=6`, and `JOBS=8`.
+- Parallel export.
+
+## Known Issues
+
+- The current conda environment does not have `pxr`, so automatic Dome Light USD authoring is not available.
+- A small number of seeds may still hit long-tail `NatureShelf`, `KitchenIsland`, or `BookStack` behavior.
+- A small number of exports may timeout or exit with signal 11.
+- `outputs` has been cleaned and now preserves only `outputs/production_9950x3d_no_ceiling_no_exterior_smoke_seed201`.
