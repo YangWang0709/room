@@ -108,6 +108,32 @@ Seed200 read-only check found 14 `unique_assets:room_exterior` objects and no
 pillar objects. The ceiling-name matches were `CeilingLightFactory` objects,
 not the deleted room ceiling surfaces.
 
+Seed201 real smoke with ceilings off, room exterior off, and pillars still on
+confirmed the exterior omit path:
+
+```text
+generate_status=complete
+export_status=complete
+bed_check_status=complete
+quality_status=pass
+suspected_light_blocker_count=32
+exterior_object_count=0
+pillar_object_count=0
+ceiling_object_count=14
+room_ceilings skipped: confirmed
+room_exterior deleted: confirmed
+USDC: outputs/production_9950x3d_no_ceiling_no_exterior_smoke_seed201/seed_201/usd/export_scene.blend/export_scene.usdc
+```
+
+Inspect the full Isaac Sim folder:
+
+```text
+outputs/production_9950x3d_no_ceiling_no_exterior_smoke_seed201/seed_201/usd/export_scene.blend/
+```
+
+If a visible frame still blocks Dome Light there, run one follow-up seed with
+`OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=1`. Otherwise keep pillars enabled.
+
 ## Bedroom Quality
 
 The bedroom quality path is separate:

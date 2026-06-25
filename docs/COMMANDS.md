@@ -121,7 +121,7 @@ OUTPUT_ROOT=outputs/production_9950x3d_ceiling_bedcheck_smoke_seed200 \
 bash scripts/run_9950x3d_production_scene_queue.sh
 ```
 
-Recommended next room-exterior quality dry-run:
+Seed201 room-exterior quality dry-run used before the real smoke:
 
 ```bash
 DRY_RUN=1 \
@@ -140,7 +140,7 @@ OUTPUT_ROOT=outputs/production_9950x3d_no_ceiling_no_exterior_smoke_seed201 \
 bash scripts/run_9950x3d_production_scene_queue.sh
 ```
 
-Recommended next one-seed quality smoke:
+Validated seed201 no-ceiling/no-exterior quality smoke:
 
 ```bash
 CLEAN=1 \
@@ -161,6 +161,10 @@ ADD_ISAAC_DOME_LIGHT=0 \
 OUTPUT_ROOT=outputs/production_9950x3d_no_ceiling_no_exterior_smoke_seed201 \
 bash scripts/run_9950x3d_production_scene_queue.sh
 ```
+
+Seed201 completed with `generate_status=complete`, `export_status=complete`,
+`bed_check_status=complete`, `quality_status=pass`, `exterior_object_count=0`,
+and `pillar_object_count=0`.
 
 Use `OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=1` only as a second test if
 ceiling-off plus exterior-off still leaves a visible light-blocking frame.
@@ -200,6 +204,7 @@ For Isaac Sim, open the full USD export folder, not just the `.usdc` file:
 
 ```text
 outputs/production_9950x3d_isaac_queue_seed1_40/seed_<N>/usd/export_scene.blend/
+outputs/production_9950x3d_no_ceiling_no_exterior_smoke_seed201/seed_201/usd/export_scene.blend/
 ```
 
 If a scene appears black in Isaac, add or check a Dome Light / Point Light and

@@ -66,7 +66,28 @@ OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=0
 CHECK_ROOM_LIGHT_BLOCKERS=1
 ```
 
-If that still leaves a visible frame in Isaac, run a second one-seed test with
+Seed201 completed this exact one-seed smoke:
+
+```text
+SEEDS=201 JOBS=1 CPU_SETS=0-3,16-19
+generate_status=complete
+export_status=complete
+bed_check_status=complete
+bedroom_double_bed_count=0
+quality_status=pass
+light_blocker_check_status=complete
+suspected_light_blocker_count=32
+exterior_object_count=0
+pillar_object_count=0
+ceiling_object_count=14
+room_ceilings skipped: confirmed in generate.log
+room_exterior deleted: confirmed in generate.log
+USDC: outputs/production_9950x3d_no_ceiling_no_exterior_smoke_seed201/seed_201/usd/export_scene.blend/export_scene.usdc
+Isaac open directory: outputs/production_9950x3d_no_ceiling_no_exterior_smoke_seed201/seed_201/usd/export_scene.blend/
+```
+
+The next action is visual inspection in Isaac Sim. If that still leaves a
+visible frame blocking Dome Light, run a second one-seed test with
 `OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=1`. Do not default either new omit behavior;
 do not delete walls, floors, doors, furniture, or clutter.
 
@@ -74,17 +95,13 @@ Immediate validation path:
 
 1. Use a Python environment with USD `pxr` bindings for real Dome Light writes.
    The current shell and `infinigen` conda environment do not provide `pxr`.
-2. Run a one-seed opt-in Isaac quality smoke on `SEEDS=201` with ceilings
-   omitted, room exterior omitted, pillars still enabled, strict bed-count
-   checking enabled, blocker checking enabled, and `ADD_ISAAC_DOME_LIGHT=0`
-   unless a USD/Isaac Python environment is ready.
-3. Inspect the resulting USD folder in Isaac Sim. Open the full
+2. Inspect the seed201 USD folder in Isaac Sim. Open the full
    `seed_<N>/usd/export_scene.blend/` folder so sidecar files stay available.
-4. Confirm lighting is acceptable before enabling optional fill light; keep
+3. Confirm lighting is acceptable before enabling optional fill light; keep
    `ADD_ISAAC_FILL_LIGHT=0` unless the Dome Light alone is still too dark.
-5. Run `scripts/check_bedroom_bed_count.py` on the batch root and require zero
+4. Run `scripts/check_bedroom_bed_count.py` on the batch root and require zero
    `fail` rows before sending scenes for review.
-6. If a bedroom still has more than one bed with
+5. If a bedroom still has more than one bed with
    `ENFORCE_ONE_BED_PER_BEDROOM=1`, debug the solver relation state before
    adding any post-export deletion path.
 

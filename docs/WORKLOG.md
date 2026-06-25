@@ -1,5 +1,105 @@
 # Worklog
 
+## 2026-06-25 - Seed201 no-ceiling no-exterior Isaac smoke
+
+### Round Goal
+
+Run exactly one real seed201 smoke with room ceilings omitted, room exterior
+omitted, pillars still enabled, strict bedroom bed checking enabled, and room
+light-blocker checking enabled. This validated the new opt-in Isaac quality
+path without running a 4/40-seed batch, changing solver/factory behavior,
+changing CPU production defaults, enabling Wheat reuse, or reducing content.
+
+### Command
+
+```bash
+CLEAN=1 \
+SEEDS=201 \
+JOBS=1 \
+CPU_SETS="0-3,16-19" \
+EXPORT_AFTER_GENERATE=1 \
+EXPORT_FORMAT=usdc \
+EXPORT_RESOLUTION=512 \
+OMIT_CEILINGS_FOR_DOME_LIGHT=1 \
+OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT=1 \
+OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=0 \
+ENFORCE_ONE_BED_PER_BEDROOM=1 \
+CHECK_BEDROOM_BED_COUNT=1 \
+BEDROOM_BED_CHECK_STRICT=1 \
+CHECK_ROOM_LIGHT_BLOCKERS=1 \
+ADD_ISAAC_DOME_LIGHT=0 \
+OUTPUT_ROOT=outputs/production_9950x3d_no_ceiling_no_exterior_smoke_seed201 \
+bash scripts/run_9950x3d_production_scene_queue.sh
+```
+
+Pre-run process check found no existing `generate_indoors`,
+`infinigen.tools.export`, production queue, or parallel benchmark processes.
+Static checks, `git diff --check`, and the dry-run passed before the real run.
+
+### Result
+
+```text
+generate_status=complete, exit 0, wall=9203.000s, max_rss=9999948 KB
+light_blocker_check_status=complete, exit 0
+suspected_light_blocker_count=32
+exterior_object_count=0
+pillar_object_count=0
+ceiling_object_count=14
+bed_check_status=complete, exit 0
+bedroom_double_bed_count=0
+quality_status=pass
+export_status=complete, exit 0, wall=436.410s, max_rss=15889232 KB
+lighting_status=not_requested
+dome_light_added=no
+fatal_marker=no
+total elapsed wall=9642.000s
+```
+
+`generate.log` confirmed:
+
+```text
+[split_rooms] deleted room exterior because OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT=1
+[room_ceilings] skipped because OMIT_CEILINGS_FOR_DOME_LIGHT=1
+```
+
+The seed200 read-only blocker check had `exterior=14`; seed201 with the new
+exterior omit path had `exterior=0`. The remaining blocker report rows are 14
+`CeilingLightFactory` name matches and 18 `unknown_frame` room shell/mesh
+placeholder rows. Pillar count stayed `0` while
+`OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=0`.
+
+USDC output:
+
+```text
+outputs/production_9950x3d_no_ceiling_no_exterior_smoke_seed201/seed_201/usd/export_scene.blend/export_scene.usdc
+```
+
+Open this directory in Isaac Sim so sidecar textures stay available:
+
+```text
+outputs/production_9950x3d_no_ceiling_no_exterior_smoke_seed201/seed_201/usd/export_scene.blend/
+```
+
+No traceback, OOM, killed marker, CUDA error, or swap use was found. Blender
+printed a small `Not freed memory blocks` shutdown warning on successful
+generate exit; this is recorded separately as `blender_shutdown_leak_warning`.
+
+### Timing Notes
+
+This single seed was long for real generation reasons. The solver hit slow
+failed/unaccepted proposal paths, especially a kitchen freestanding stage with
+many `KitchenIslandFactory` attempts. Final asset population also had a long
+tail: `[populate_assets]` took `0:38:48.771060`, with repeated
+`NatureShelfTrinketsFactory`, `LargePlantContainerFactory`, `BookStackFactory`,
+and `BookColumnFactory` work.
+
+### Recommendation
+
+Inspect seed201 in Isaac Sim. If a visible frame still blocks Dome Light, run
+one follow-up smoke with `OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=1`. Otherwise keep
+pillars enabled and treat the room-exterior omit path as the successful
+candidate for this issue.
+
 ## 2026-06-25 - Room exterior omit option for Isaac Dome Light
 
 ### Round Goal
