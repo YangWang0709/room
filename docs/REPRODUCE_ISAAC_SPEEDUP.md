@@ -54,6 +54,13 @@ Use the normal Infinigen dependency environment. The active Python environment
 must be able to run Blender and `bpy` through the existing Infinigen indoor
 pipeline.
 
+On the current host, use the conda Python explicitly when launching the
+production queue:
+
+```text
+PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python
+```
+
 USDC export uses the current `infinigen.tools.export` path. The recommended
 command keeps `ADD_ISAAC_DOME_LIGHT=0` because the ordinary conda environment
 used in the current runs does not provide USD `pxr` Python bindings. Add a Dome
@@ -63,6 +70,7 @@ an Isaac/Omniverse Python environment that provides `pxr`.
 ## 5. Final Production Command
 
 ```bash
+PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python \
 CLEAN=1 \
 SEEDS=1-40 \
 JOBS=4 \
@@ -79,6 +87,7 @@ CARPET_CHECK_STRICT=1 \
 ENFORCE_ONE_BED_PER_BEDROOM=1 \
 CHECK_BEDROOM_BED_COUNT=1 \
 BEDROOM_BED_CHECK_STRICT=1 \
+CHECK_ROOM_LIGHT_BLOCKERS=1 \
 ADD_ISAAC_DOME_LIGHT=0 \
 OUTPUT_ROOT=outputs/production_final_seed1_40 \
 bash scripts/run_9950x3d_production_scene_queue.sh
@@ -103,6 +112,7 @@ INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
 - `ENFORCE_ONE_BED_PER_BEDROOM`: require one bed per bedroom instead of allowing one or two.
 - `CHECK_BEDROOM_BED_COUNT`: run the bedroom bed-count checker after coarse generation.
 - `CHECK_NO_CARPETS`: run the no-carpet checker after coarse generation.
+- `CHECK_ROOM_LIGHT_BLOCKERS`: run the room exterior/pillar/ceiling/frame reporting checker after coarse generation.
 - Production queue order: `coarse -> bed check -> no-carpet check -> light blocker check -> export`.
 - `ADD_ISAAC_DOME_LIGHT`: keep this `0` unless running from a Python environment with USD `pxr` bindings.
 - `ENABLE_WHEAT_REUSE`: remains off by default. Wheat template geometry reuse is not the recommended production default.
@@ -150,6 +160,7 @@ furniture/clutter.
 - `NatureShelfTrinketsFactory`, `KitchenIslandFactory`, `BookStackFactory`, and related factories can still produce long tails.
 - A small number of exports may timeout or exit with signal 11.
 - The current conda environment does not provide `pxr`, so automatic Dome Light USD writing may be unavailable.
+- If the shell's default `python` lacks `bpy`, set `PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python`.
 - This branch targets Isaac static scene production, not bitwise-identical equivalence with the upstream paper defaults.
 - Generated `outputs`, `.blend`, `.usd`, `.usdc`, `.csv`, logs, profiles, zips, and caches are not committed.
 

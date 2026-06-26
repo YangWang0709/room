@@ -1,5 +1,115 @@
 # Profile Results
 
+## Final Seed201 No-Carpet Timing Run - 2026-06-26
+
+Profile type: single-seed final Isaac production timing run with ceiling
+omission, room exterior omission, no carpet/rug generation, strict bedroom bed
+checking, strict no-carpet checking, room light-blocker reporting, and USDC
+export. This was not a CPU scaling experiment and did not test `JOBS=5/6/8`.
+
+Pre-run dry-run confirmed the production queue order:
+
+```text
+coarse -> bed check -> no-carpet check -> light blocker check -> export
+```
+
+The real run used:
+
+```text
+PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python
+CLEAN=1
+SEEDS=201
+JOBS=1
+CPU_SETS=0-3,16-19
+EXPORT_AFTER_GENERATE=1
+EXPORT_FORMAT=usdc
+EXPORT_RESOLUTION=512
+OMIT_CEILINGS_FOR_DOME_LIGHT=1
+OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT=1
+OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=0
+OMIT_CARPETS_FOR_ISAAC=1
+CHECK_NO_CARPETS=1
+CARPET_CHECK_STRICT=1
+ENFORCE_ONE_BED_PER_BEDROOM=1
+CHECK_BEDROOM_BED_COUNT=1
+BEDROOM_BED_CHECK_STRICT=1
+CHECK_ROOM_LIGHT_BLOCKERS=1
+ADD_ISAAC_DOME_LIGHT=0
+OUTPUT_ROOT=outputs/production_final_seed201_timing
+```
+
+The old review output was preserved:
+
+```text
+outputs/production_9950x3d_no_ceiling_no_exterior_smoke_seed201
+```
+
+Implementation fix before the run: `OMIT_CARPETS_FOR_ISAAC=1` removes
+`RugFactory` from asset usage, so `home_furniture_constraints()` must not build
+the `obj[elements.RugFactory]` relation in that mode. The fix skips rug
+constraints and rug/floor-covering score terms in no-carpet mode while leaving
+normal rug behavior unchanged when the flag is disabled.
+
+Result summary:
+
+| seed | CPU set | generate | gen wall s | export | exp wall s | bed check | double beds | carpet check | carpets | blocker check | suspected | exterior | pillars | ceilings | quality | fatal |
+| ---: | --- | --- | ---: | --- | ---: | --- | ---: | --- | ---: | --- | ---: | ---: | ---: | ---: | --- | --- |
+| 201 | `0-3,16-19` | complete, exit 0 | 10825.000 | complete, exit 0 | 426.530 | complete, exit 0 | 0 | complete, exit 0 | 0 | complete, exit 0 | 32 | 0 | 0 | 14 | pass | no |
+
+Aggregate:
+
+```text
+generated scene count: 1/1
+exported USDC count: 1/1
+failed seeds: 0
+total elapsed wall time: 11255.000 s
+coarse throughput: 0.320 scenes/hour
+end-to-end USDC throughput: 0.320 scenes/hour
+generate max RSS: 10251748 KB
+export max RSS: 15052036 KB
+```
+
+Stage timing:
+
+```text
+[solve_rooms] 0:00:42.819639
+[solve_large] 0:59:52.950282
+[solve_medium] 0:43:30.565935
+[solve_small] 0:31:26.350655
+[populate_assets] 0:41:27.091987
+[MAIN TOTAL] 3:00:23.754806
+```
+
+USDC output:
+
+```text
+outputs/production_final_seed201_timing/seed_201/usd/export_scene.blend/export_scene.usdc
+```
+
+Isaac Sim should open the full directory:
+
+```text
+outputs/production_final_seed201_timing/seed_201/usd/export_scene.blend/
+```
+
+No traceback, OOM, killed marker, signal 11, timeout status, CUDA error, or
+swap use was found. Blender printed a small successful-shutdown
+`Not freed memory blocks` warning. Export printed texture self-copy warnings
+but exited 0 and produced the USDC.
+
+Main long-tail observations: `KitchenIslandFactory` in `solve_large`;
+`OfficeChairFactory` / `SimpleDesk` and `SideTable` / `Sofa` in
+`solve_medium`; repeated `DeskLampFactory`, `PlantContainerFactory`,
+`BookStackFactory`, `BookColumnFactory`, and `NatureShelfTrinketsFactory` in
+`solve_small`; and repeated `NatureShelfTrinketsFactory` plus
+`LargePlantContainerFactory` sections in final `populate_assets`.
+
+Local report:
+
+```text
+outputs/production_final_seed201_timing/seed201_final_timing_report.md
+```
+
 ## No-Carpet Isaac Production Queue Tooling - 2026-06-26
 
 Profile type: source/tooling update for the current 9950X3D Isaac production

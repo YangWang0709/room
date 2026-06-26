@@ -1,5 +1,133 @@
 # Worklog
 
+## 2026-06-26 - Seed201 final no-carpet timing run
+
+### Round Goal
+
+Rerun seed201 with the latest Isaac production quality standard and record key
+timings without touching the old review output directory:
+
+```text
+outputs/production_9950x3d_no_ceiling_no_exterior_smoke_seed201
+```
+
+This run used `JOBS=1`, `CPU_SETS=0-3,16-19`, no Wheat reuse, no solver
+change, no asset factory speed experiment, and no `JOBS=5/6/8` test.
+
+### Fix Before Real Run
+
+The dry-run order was corrected earlier to:
+
+```text
+coarse -> bed check -> no-carpet check -> light blocker check -> export
+```
+
+The first real attempt then exposed a no-carpet omission bug:
+`OMIT_CARPETS_FOR_ISAAC=1` removed `RugFactory` from asset usage, but
+`home_furniture_constraints()` still built
+`obj[elements.RugFactory].related_to(rooms, cu.on_floor)`. That produced
+`RugFactory was not in fac_context`.
+
+The fix keeps original behavior when `OMIT_CARPETS_FOR_ISAAC=0`, and when the
+flag is enabled it skips both rug constraints and rug/floor-covering score
+terms before touching `obj[elements.RugFactory]`. The generate log now prints:
+
+```text
+[carpet_omit] skipped RugFactory constraints because OMIT_CARPETS_FOR_ISAAC=1
+```
+
+The queue also prints `PYTHON_BIN` in worker assignment output so runs can
+confirm they are using the conda Python with `bpy`.
+
+### Command
+
+```bash
+PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python \
+CLEAN=1 \
+SEEDS=201 \
+JOBS=1 \
+CPU_SETS="0-3,16-19" \
+EXPORT_AFTER_GENERATE=1 \
+EXPORT_FORMAT=usdc \
+EXPORT_RESOLUTION=512 \
+OMIT_CEILINGS_FOR_DOME_LIGHT=1 \
+OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT=1 \
+OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=0 \
+OMIT_CARPETS_FOR_ISAAC=1 \
+CHECK_NO_CARPETS=1 \
+CARPET_CHECK_STRICT=1 \
+ENFORCE_ONE_BED_PER_BEDROOM=1 \
+CHECK_BEDROOM_BED_COUNT=1 \
+BEDROOM_BED_CHECK_STRICT=1 \
+CHECK_ROOM_LIGHT_BLOCKERS=1 \
+ADD_ISAAC_DOME_LIGHT=0 \
+OUTPUT_ROOT=outputs/production_final_seed201_timing \
+bash scripts/run_9950x3d_production_scene_queue.sh
+```
+
+### Result
+
+```text
+generate_status=complete, exit 0, wall=10825.000s, max_rss=10251748 KB
+bed_check_status=complete, exit 0, bedroom_double_bed_count=0
+no_carpet_check_status=complete, exit 0, carpet_object_count=0
+light_blocker_check_status=complete, exit 0
+suspected_light_blocker_count=32
+exterior_object_count=0
+pillar_object_count=0
+ceiling_object_count=14
+quality_status=pass
+export_status=complete, exit 0, wall=426.530s, max_rss=15052036 KB
+lighting_status=not_requested
+dome_light_added=no
+fatal_marker=no
+blender_shutdown_leak_warning=yes
+total elapsed wall=11255.000s
+```
+
+Output paths:
+
+```text
+scene.blend:
+outputs/production_final_seed201_timing/seed_201/coarse/scene.blend
+size=2.9G
+
+USDC:
+outputs/production_final_seed201_timing/seed_201/usd/export_scene.blend/export_scene.usdc
+size=3.2G
+
+Isaac Sim open directory:
+outputs/production_final_seed201_timing/seed_201/usd/export_scene.blend/
+```
+
+No traceback, OOM, killed marker, signal 11, timeout status, CUDA error, or
+swap use was found. Blender printed a small `Not freed memory blocks` shutdown
+warning after successful scene save. Export printed many texture self-copy
+warnings, but exited 0 and produced the USDC.
+
+### Timing Notes
+
+```text
+[solve_large] 0:59:52.950282
+[solve_medium] 0:43:30.565935
+[solve_small] 0:31:26.350655
+[populate_assets] 0:41:27.091987
+[MAIN TOTAL] 3:00:23.754806
+```
+
+The main long tails were `KitchenIslandFactory` in `solve_large`,
+`OfficeChairFactory` / `SimpleDesk` and `SideTable` / `Sofa` in
+`solve_medium`, repeated `DeskLampFactory`, `PlantContainerFactory`,
+`BookStackFactory`, `BookColumnFactory`, and `NatureShelfTrinketsFactory` in
+`solve_small`, and repeated `NatureShelfTrinketsFactory` plus
+`LargePlantContainerFactory` work in `populate_assets`.
+
+Local generated report:
+
+```text
+outputs/production_final_seed201_timing/seed201_final_timing_report.md
+```
+
 ## 2026-06-26 - Default no-carpet Isaac production queue
 
 ### Round Goal

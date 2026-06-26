@@ -640,7 +640,6 @@ def home_furniture_constraints():
     walldec = obj[Semantics.WallDecoration].related_to(rooms, cu.flush_wall)
     wall_art = walldec[wall_decorations.WallArtFactory]
     mirror = walldec[wall_decorations.MirrorFactory]
-    rugs = obj[elements.RugFactory].related_to(rooms, cu.on_floor)
 
     def rug_count_limit(room, max_count):
         if omit_carpets:
@@ -648,6 +647,7 @@ def home_furniture_constraints():
         return rugs.related_to(room).count().in_range(0, max_count)
 
     if not omit_carpets:
+        rugs = obj[elements.RugFactory].related_to(rooms, cu.on_floor)
         constraints["rugs"] = rooms.all(
             lambda r: (cl.min_distance_internal(rugs.related_to(r)) >= 1)
         )
@@ -694,6 +694,11 @@ def home_furniture_constraints():
                 rug.distance(rooms, cu.walltags).maximize(weight=3)
                 + cl.angle_alignment_cost(rug, rooms, cu.walltags).minimize(weight=3)
             )
+        )
+    else:
+        print(
+            "[carpet_omit] skipped RugFactory constraints because "
+            "OMIT_CARPETS_FOR_ISAAC=1"
         )
     # endregion
 

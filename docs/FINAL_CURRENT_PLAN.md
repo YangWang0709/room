@@ -1,18 +1,26 @@
 # Final Current Infinigen Isaac Production Plan
 
-## Preserved Output
+## Preserved And Latest Outputs
 
-The only output directory currently preserved is:
+The old review output that must not be deleted, moved, overwritten, or cleaned
+is:
 
 ```text
 outputs/production_9950x3d_no_ceiling_no_exterior_smoke_seed201
 ```
 
-All other generated `outputs` artifacts have been cleaned.
+The latest final seed201 timing run is:
+
+```text
+outputs/production_final_seed201_timing
+```
+
+Generated `outputs` artifacts are local run products and are not committed.
 
 ## Recommended Production Command
 
 ```bash
+PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python \
 CLEAN=1 \
 SEEDS=1-40 \
 JOBS=4 \
@@ -29,6 +37,7 @@ CARPET_CHECK_STRICT=1 \
 ENFORCE_ONE_BED_PER_BEDROOM=1 \
 CHECK_BEDROOM_BED_COUNT=1 \
 BEDROOM_BED_CHECK_STRICT=1 \
+CHECK_ROOM_LIGHT_BLOCKERS=1 \
 ADD_ISAAC_DOME_LIGHT=0 \
 OUTPUT_ROOT=outputs/production_final_seed1_40 \
 bash scripts/run_9950x3d_production_scene_queue.sh
@@ -88,5 +97,6 @@ CHECK_NO_CARPETS=0
 - The current conda environment does not have `pxr`, so automatic Dome Light USD authoring is not available.
 - A small number of seeds may still hit long-tail `NatureShelf`, `KitchenIsland`, or `BookStack` behavior.
 - A small number of exports may timeout or exit with signal 11.
-- `outputs` has been cleaned and now preserves only `outputs/production_9950x3d_no_ceiling_no_exterior_smoke_seed201`.
+- The old review output remains `outputs/production_9950x3d_no_ceiling_no_exterior_smoke_seed201`; the latest timing output is `outputs/production_final_seed201_timing`.
 - The current production queue defaults to `OMIT_CARPETS_FOR_ISAAC=1`, `CHECK_NO_CARPETS=1`, and `CARPET_CHECK_STRICT=1`.
+- Use `PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python` on this host if the base Python cannot import `bpy`.

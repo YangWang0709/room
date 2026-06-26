@@ -18,6 +18,7 @@ Current default candidate:
 ```text
 JOBS=4
 CPU_SETS="0-3,16-19;4-7,20-23;8-11,24-27;12-15,28-31"
+PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python
 OMIT_CARPETS_FOR_ISAAC=1
 CHECK_NO_CARPETS=1
 CARPET_CHECK_STRICT=1
@@ -45,6 +46,7 @@ bash scripts/run_9950x3d_production_scene_queue.sh
 Run the current final seed 1-40 Isaac production shape:
 
 ```bash
+PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python \
 CLEAN=1 \
 SEEDS=1-40 \
 JOBS=4 \
@@ -61,6 +63,7 @@ CARPET_CHECK_STRICT=1 \
 ENFORCE_ONE_BED_PER_BEDROOM=1 \
 CHECK_BEDROOM_BED_COUNT=1 \
 BEDROOM_BED_CHECK_STRICT=1 \
+CHECK_ROOM_LIGHT_BLOCKERS=1 \
 ADD_ISAAC_DOME_LIGHT=0 \
 OUTPUT_ROOT=outputs/production_final_seed1_40 \
 bash scripts/run_9950x3d_production_scene_queue.sh
@@ -201,6 +204,40 @@ bash scripts/run_9950x3d_production_scene_queue.sh
 Seed201 completed with `generate_status=complete`, `export_status=complete`,
 `bed_check_status=complete`, `quality_status=pass`, `exterior_object_count=0`,
 and `pillar_object_count=0`.
+
+Final seed201 no-carpet timing run:
+
+```bash
+PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python \
+CLEAN=1 \
+SEEDS=201 \
+JOBS=1 \
+CPU_SETS="0-3,16-19" \
+EXPORT_AFTER_GENERATE=1 \
+EXPORT_FORMAT=usdc \
+EXPORT_RESOLUTION=512 \
+OMIT_CEILINGS_FOR_DOME_LIGHT=1 \
+OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT=1 \
+OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=0 \
+OMIT_CARPETS_FOR_ISAAC=1 \
+CHECK_NO_CARPETS=1 \
+CARPET_CHECK_STRICT=1 \
+ENFORCE_ONE_BED_PER_BEDROOM=1 \
+CHECK_BEDROOM_BED_COUNT=1 \
+BEDROOM_BED_CHECK_STRICT=1 \
+CHECK_ROOM_LIGHT_BLOCKERS=1 \
+ADD_ISAAC_DOME_LIGHT=0 \
+OUTPUT_ROOT=outputs/production_final_seed201_timing \
+bash scripts/run_9950x3d_production_scene_queue.sh
+```
+
+Seed201 final timing completed with `generate_status=complete`,
+`export_status=complete`, `bedroom_double_bed_count=0`,
+`carpet_object_count=0`, `quality_status=pass`, and USDC at:
+
+```text
+outputs/production_final_seed201_timing/seed_201/usd/export_scene.blend/export_scene.usdc
+```
 
 Use `OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=1` only as a second test if
 ceiling-off plus exterior-off still leaves a visible light-blocking frame.

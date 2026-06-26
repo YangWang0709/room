@@ -1452,6 +1452,7 @@ write_run_info() {
 print_worker_assignments() {
   local worker_id
   echo "Output root: ${OUTPUT_ROOT}"
+  echo "PYTHON_BIN=${PYTHON_BIN}"
   echo "JOBS=${JOBS}"
   echo "CPU_SETS=${CPU_SETS}"
   echo "Seeds: $(join_by_comma "${SEED_LIST[@]}")"
