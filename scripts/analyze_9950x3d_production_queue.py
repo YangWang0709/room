@@ -30,6 +30,9 @@ FIELDNAMES = [
     "generate_user_time",
     "generate_system_time",
     "scene_blend_exists",
+    "bed_check_status",
+    "bed_check_exit_code",
+    "bedroom_double_bed_count",
     "carpet_check_status",
     "carpet_check_exit_code",
     "carpet_object_count",
@@ -47,9 +50,6 @@ FIELDNAMES = [
     "export_user_time",
     "export_system_time",
     "usd_exists",
-    "bed_check_status",
-    "bed_check_exit_code",
-    "bedroom_double_bed_count",
     "quality_status",
     "lighting_status",
     "lighting_exit_code",
@@ -380,11 +380,11 @@ def recommendation(rows: list[dict[str, str]], elapsed: float | None) -> str:
     if fatal_count or generate_statuses.get("failed") or export_statuses.get("failed"):
         return "Inspect failed seeds and fatal markers before increasing the production batch."
     if any(row.get("quality_status") == "quality_failed" for row in rows):
-        return "Quality gate failed; inspect no-carpet and bedroom bed-count reports before exporting more scenes."
-    if carpet_check_statuses.get("failed"):
-        return "No-carpet check failures occurred; inspect carpet_check.log and no_carpet_report files."
+        return "Quality gate failed; inspect bedroom bed-count and no-carpet reports before exporting more scenes."
     if bed_check_statuses.get("failed"):
         return "Bedroom bed-count check failures occurred; inspect bed_check.log and reports."
+    if carpet_check_statuses.get("failed"):
+        return "No-carpet check failures occurred; inspect carpet_check.log and no_carpet_report files."
     if light_blocker_statuses.get("failed"):
         return "Room light blocker checks failed; inspect light_blocker_check.log and reports."
     lighting_statuses = Counter(
@@ -481,12 +481,12 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
                     generate_statuses.get("not_requested", 0),
                 ],
                 [
-                    "export",
-                    export_statuses.get("complete", 0),
-                    export_statuses.get("failed", 0),
-                    export_statuses.get("timeout", 0),
-                    export_statuses.get("skipped", 0),
-                    export_statuses.get("not_requested", 0),
+                    "bed_check",
+                    bed_check_statuses.get("complete", 0),
+                    bed_check_statuses.get("failed", 0),
+                    bed_check_statuses.get("timeout", 0),
+                    bed_check_statuses.get("skipped", 0),
+                    bed_check_statuses.get("not_requested", 0),
                 ],
                 [
                     "carpet_check",
@@ -497,20 +497,20 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
                     carpet_check_statuses.get("not_requested", 0),
                 ],
                 [
-                    "bed_check",
-                    bed_check_statuses.get("complete", 0),
-                    bed_check_statuses.get("failed", 0),
-                    bed_check_statuses.get("timeout", 0),
-                    bed_check_statuses.get("skipped", 0),
-                    bed_check_statuses.get("not_requested", 0),
-                ],
-                [
                     "light_blocker_check",
                     light_blocker_statuses.get("complete", 0),
                     light_blocker_statuses.get("failed", 0),
                     light_blocker_statuses.get("timeout", 0),
                     light_blocker_statuses.get("skipped", 0),
                     light_blocker_statuses.get("not_requested", 0),
+                ],
+                [
+                    "export",
+                    export_statuses.get("complete", 0),
+                    export_statuses.get("failed", 0),
+                    export_statuses.get("timeout", 0),
+                    export_statuses.get("skipped", 0),
+                    export_statuses.get("not_requested", 0),
                 ],
                 [
                     "lighting",
@@ -538,6 +538,9 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
                 "gen_wall_s",
                 "gen_rss_kb",
                 "scene",
+                "bed_check",
+                "bed_exit",
+                "double_beds",
                 "carpet_check",
                 "carpets",
                 "carpet_unknown",
@@ -551,9 +554,6 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
                 "exp_wall_s",
                 "exp_rss_kb",
                 "usd",
-                "bed_check",
-                "bed_exit",
-                "double_beds",
                 "quality",
                 "lighting",
                 "light_exit",
@@ -575,6 +575,9 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
                     row.get("generate_wall_time", ""),
                     row.get("generate_max_rss", ""),
                     row.get("scene_blend_exists", ""),
+                    row.get("bed_check_status", ""),
+                    row.get("bed_check_exit_code", ""),
+                    row.get("bedroom_double_bed_count", ""),
                     row.get("carpet_check_status", ""),
                     row.get("carpet_object_count", ""),
                     row.get("carpet_unknown_count", ""),
@@ -588,9 +591,6 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
                     row.get("export_wall_time", ""),
                     row.get("export_max_rss", ""),
                     row.get("usd_exists", ""),
-                    row.get("bed_check_status", ""),
-                    row.get("bed_check_exit_code", ""),
-                    row.get("bedroom_double_bed_count", ""),
                     row.get("quality_status", ""),
                     row.get("lighting_status", ""),
                     row.get("lighting_exit_code", ""),
@@ -629,12 +629,12 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
                     "seed",
                     "worker",
                     "generate",
-                    "export",
+                    "bed_check",
+                    "double_beds",
                     "carpet_check",
                     "carpets",
                     "carpet_unknown",
-                    "bed_check",
-                    "double_beds",
+                    "export",
                     "quality",
                     "lighting",
                     "fatal_detail",
@@ -644,23 +644,23 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
                         row.get("seed", ""),
                         row.get("worker_id", ""),
                         row.get("generate_status", ""),
-                        row.get("export_status", ""),
+                        row.get("bed_check_status", ""),
+                        row.get("bedroom_double_bed_count", ""),
                         row.get("carpet_check_status", ""),
                         row.get("carpet_object_count", ""),
                         row.get("carpet_unknown_count", ""),
-                        row.get("bed_check_status", ""),
-                        row.get("bedroom_double_bed_count", ""),
+                        row.get("export_status", ""),
                         row.get("quality_status", ""),
                         row.get("lighting_status", ""),
                         row.get("fatal_marker_detail", "")
                         or (
-                            "no-carpet check failed"
-                            if row.get("carpet_check_status") == "failed"
+                            "bed check failed"
+                            if row.get("bed_check_status") == "failed"
                             else ""
                         )
                         or (
-                            "bed check failed"
-                            if row.get("bed_check_status") == "failed"
+                            "no-carpet check failed"
+                            if row.get("carpet_check_status") == "failed"
                             else ""
                         )
                         or (

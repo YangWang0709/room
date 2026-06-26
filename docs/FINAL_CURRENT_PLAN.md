@@ -58,6 +58,16 @@ CPU sets:
 - Manually add a Dome Light in Isaac Sim.
 - Do not delete floors, walls, beds, sofas, tables, or normal furniture/clutter.
 
+Production queue order:
+
+```text
+coarse -> bed check -> no-carpet check -> light blocker check -> export
+```
+
+Bedroom bed-count and no-carpet strict failures set
+`quality_status=quality_failed` and skip export. The light-blocker check is a
+reporting check by default and does not block export.
+
 ## Defaults Currently Disabled
 
 - Wheat reuse.

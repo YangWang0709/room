@@ -547,14 +547,14 @@ write_seed_env() {
     echo "NUMEXPR_NUM_THREADS=1"
     echo "BLIS_NUM_THREADS=1"
     echo "generate_command=${generate_command}"
-    if [[ -n "$light_blocker_check_command" ]]; then
-      echo "light_blocker_check_command=${light_blocker_check_command}"
+    if [[ -n "$bed_check_command" ]]; then
+      echo "bed_check_command=${bed_check_command}"
     fi
     if [[ -n "$carpet_check_command" ]]; then
       echo "carpet_check_command=${carpet_check_command}"
     fi
-    if [[ -n "$bed_check_command" ]]; then
-      echo "bed_check_command=${bed_check_command}"
+    if [[ -n "$light_blocker_check_command" ]]; then
+      echo "light_blocker_check_command=${light_blocker_check_command}"
     fi
     if [[ -n "$export_command" ]]; then
       echo "export_command=${export_command}"
@@ -811,17 +811,21 @@ run_carpet_check_seed() {
   fi
 
   read -r CARPET_OBJECT_COUNT CARPET_UNKNOWN_COUNT < <(read_carpet_check_counts "$carpet_report")
-  if [[ "${CARPET_OBJECT_COUNT:-0}" != "0" ]]; then
-    if [[ "$CARPET_CHECK_STRICT" == "1" ]]; then
-      QUALITY_STATUS="quality_failed"
-    elif [[ "${QUALITY_STATUS:-not_requested}" == "not_requested" ]]; then
+  local previous_quality="${QUALITY_STATUS:-not_requested}"
+  if [[ "$CARPET_CHECK_STRICT" == "1" && \
+    ( "$CARPET_CHECK_STATUS" == "failed" || \
+      "${CARPET_OBJECT_COUNT:-0}" != "0" || \
+      "${CARPET_UNKNOWN_COUNT:-0}" != "0" ) ]]; then
+    QUALITY_STATUS="quality_failed"
+  elif [[ "${CARPET_OBJECT_COUNT:-0}" != "0" ]]; then
+    if [[ "$previous_quality" != "quality_failed" && "$previous_quality" != "unknown" ]]; then
       QUALITY_STATUS="warning"
     fi
   elif [[ "${CARPET_UNKNOWN_COUNT:-0}" != "0" ]]; then
-    if [[ "${QUALITY_STATUS:-not_requested}" != "quality_failed" ]]; then
+    if [[ "$previous_quality" != "quality_failed" ]]; then
       QUALITY_STATUS="unknown"
     fi
-  elif [[ "${QUALITY_STATUS:-not_requested}" == "not_requested" ]]; then
+  elif [[ "$previous_quality" == "not_requested" ]]; then
     QUALITY_STATUS="pass"
   fi
 
@@ -988,12 +992,15 @@ run_export_seed() {
     return 0
   fi
 
-  if [[ "$BEDROOM_BED_CHECK_STRICT" == "1" && "$QUALITY_STATUS" == "quality_failed" ]]; then
+  if [[ "$BEDROOM_BED_CHECK_STRICT" == "1" && \
+    ( "$QUALITY_STATUS" == "quality_failed" || \
+      "${BED_CHECK_STATUS:-not_requested}" == "failed" || \
+      "${BEDROOM_DOUBLE_BED_COUNT:-0}" != "0" ) ]]; then
     EXPORT_STARTED_AT="$(timestamp)"
     EXPORT_ENDED_AT="$EXPORT_STARTED_AT"
     EXPORT_EXIT_CODE=""
     EXPORT_STATUS="skipped"
-    echo "Skipping export because BEDROOM_BED_CHECK_STRICT=1 and quality_status=${QUALITY_STATUS}." >> "$export_log"
+    echo "Skipping export because BEDROOM_BED_CHECK_STRICT=1, bed_check_status=${BED_CHECK_STATUS}, bedroom_double_bed_count=${BEDROOM_DOUBLE_BED_COUNT}, and quality_status=${QUALITY_STATUS}." >> "$export_log"
     return 0
   fi
 
@@ -1120,7 +1127,12 @@ run_bed_check_seed() {
 
   read -r BEDROOM_DOUBLE_BED_COUNT unknown_count < <(read_bed_check_counts "$bed_check_report")
   local previous_quality="${QUALITY_STATUS:-not_requested}"
-  if [[ "${BEDROOM_DOUBLE_BED_COUNT:-0}" != "0" ]]; then
+  if [[ "$BEDROOM_BED_CHECK_STRICT" == "1" && \
+    ( "$BED_CHECK_STATUS" == "failed" || \
+      "${BEDROOM_DOUBLE_BED_COUNT:-0}" != "0" || \
+      "${unknown_count:-0}" != "0" ) ]]; then
+    QUALITY_STATUS="quality_failed"
+  elif [[ "${BEDROOM_DOUBLE_BED_COUNT:-0}" != "0" ]]; then
     QUALITY_STATUS="quality_failed"
   elif [[ "$previous_quality" == "quality_failed" ]]; then
     QUALITY_STATUS="quality_failed"
@@ -1304,9 +1316,9 @@ run_seed() {
     "$bed_check_cmd_text" "$light_blocker_check_cmd_text" "$carpet_check_cmd_text"
 
   run_generate_seed "$worker_id" "$cpu_set" "$seed" "$coarse_dir" "$log_dir"
+  run_bed_check_seed "$worker_id" "$cpu_set" "$seed" "$coarse_dir" "$log_dir"
   run_carpet_check_seed "$worker_id" "$cpu_set" "$seed" "$coarse_dir" "$log_dir"
   run_light_blocker_check_seed "$worker_id" "$cpu_set" "$seed" "$coarse_dir" "$log_dir"
-  run_bed_check_seed "$worker_id" "$cpu_set" "$seed" "$coarse_dir" "$log_dir"
   run_export_seed "$worker_id" "$cpu_set" "$seed" "$coarse_dir" "$usd_dir" "$log_dir"
   run_lighting_seed "$worker_id" "$cpu_set" "$seed" "$usd_dir" "$log_dir"
   write_status_file "$status_file"
@@ -1341,7 +1353,7 @@ worker_main() {
       mark_seed_stopped "$worker_id" "$cpu_set" "$seed"
       continue
     fi
-    echo "worker${worker_id}: seed ${seed} coarse -> carpet_check -> light_blocker_check -> bed_check -> export -> lighting -> next" >> "$worker_log"
+    echo "worker${worker_id}: seed ${seed} coarse -> bed_check -> carpet_check -> light_blocker_check -> export -> lighting -> next" >> "$worker_log"
     run_seed "$worker_id" "$cpu_set" "$seed" >> "$worker_log" 2>&1
   done
   echo "ended_at=$(timestamp)" >> "$worker_log"
@@ -1470,6 +1482,18 @@ print_dry_run_plan() {
       build_generate_cmd "$seed" "$cpu_set" "$coarse_dir"
       echo "seed${seed} coarse:"
       quote_command "${CMD[@]}"
+      if [[ "$CHECK_BEDROOM_BED_COUNT" == "1" ]]; then
+        build_bed_check_cmd "$cpu_set" "$coarse_dir" "$(seed_log_dir "$seed")"
+        echo "seed${seed} bed check:"
+        quote_command "${CMD[@]}"
+        if [[ "$BEDROOM_BED_CHECK_STRICT" == "1" ]]; then
+          echo "seed${seed} export gate: bedroom bed strict failures skip export"
+        else
+          echo "seed${seed} export gate: bedroom bed failures warn only"
+        fi
+      else
+        echo "seed${seed} bed check: not requested"
+      fi
       if [[ "$CHECK_NO_CARPETS" == "1" ]]; then
         build_carpet_check_cmd "$cpu_set" "$coarse_dir" "$(seed_log_dir "$seed")"
         echo "seed${seed} no-carpet check:"
@@ -1488,13 +1512,6 @@ print_dry_run_plan() {
         quote_command "${CMD[@]}"
       else
         echo "seed${seed} light blocker check: not requested"
-      fi
-      if [[ "$CHECK_BEDROOM_BED_COUNT" == "1" ]]; then
-        build_bed_check_cmd "$cpu_set" "$coarse_dir" "$(seed_log_dir "$seed")"
-        echo "seed${seed} bed check:"
-        quote_command "${CMD[@]}"
-      else
-        echo "seed${seed} bed check: not requested"
       fi
       if [[ "$EXPORT_AFTER_GENERATE" == "1" ]]; then
         build_export_cmd "$cpu_set" "$coarse_dir" "$usd_dir"

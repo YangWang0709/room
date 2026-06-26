@@ -10,7 +10,7 @@ Blender / `bpy` process.
 Each worker keeps a fixed CPU set and processes its own queue serially:
 
 ```text
-worker: coarse -> no-carpet check -> optional light blocker check -> optional bed check -> export USD/USDC -> optional lighting -> next seed
+worker: coarse -> bed check -> no-carpet check -> optional light blocker check -> export USD/USDC -> optional lighting -> next seed
 ```
 
 Current default candidate:

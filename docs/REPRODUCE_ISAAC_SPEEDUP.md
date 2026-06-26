@@ -103,6 +103,7 @@ INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
 - `ENFORCE_ONE_BED_PER_BEDROOM`: require one bed per bedroom instead of allowing one or two.
 - `CHECK_BEDROOM_BED_COUNT`: run the bedroom bed-count checker after coarse generation.
 - `CHECK_NO_CARPETS`: run the no-carpet checker after coarse generation.
+- Production queue order: `coarse -> bed check -> no-carpet check -> light blocker check -> export`.
 - `ADD_ISAAC_DOME_LIGHT`: keep this `0` unless running from a Python environment with USD `pxr` bindings.
 - `ENABLE_WHEAT_REUSE`: remains off by default. Wheat template geometry reuse is not the recommended production default.
 
