@@ -23,13 +23,25 @@ First, follow our [Installation Instructions](docs/Installation.md).
 ### Isaac Sim optimized indoor scene generation
 
 This fork includes a production path for generating 10-room indoor static scenes
-for Isaac Sim and exporting them as USDC. Start with
-[Reproduce Isaac Sim Indoor Speedup](docs/REPRODUCE_ISAAC_SPEEDUP.md) for the
-full command and environment notes, and see
-[Final Current Plan](docs/FINAL_CURRENT_PLAN.md) for the current recommended
-flags.
+for Isaac Sim and exporting them as USDC. The one-command final 40-scene entry
+point is:
 
-The main queue entry point is
+```bash
+cd ~/infinigen
+CLEAN=1 bash scripts/run_final_40_scene_production.sh
+```
+
+Use `SEEDS=41-80` for another 40-scene range, or
+`OUTPUT_ROOT=outputs/my_40_scenes` for a custom output folder. The launcher
+writes `summary.csv`, `summary.md`, `FINAL_RUN_REPORT.md`, and
+`launcher_logs/final_paths.txt` under the output root. Open each
+`seed_<SEED>/usd/export_scene.blend/` directory in Isaac Sim and add Dome Light
+manually.
+
+Start with [Reproduce Isaac Sim Indoor Speedup](docs/REPRODUCE_ISAAC_SPEEDUP.md)
+for the full command and environment notes, and see
+[Final Current Plan](docs/FINAL_CURRENT_PLAN.md) for the current recommended
+flags. The lower-level queue is
 `scripts/run_9950x3d_production_scene_queue.sh`, with summaries from
 `scripts/analyze_9950x3d_production_queue.py`. Generated `outputs`, `.blend`,
 `.usd`, `.usdc`, logs, profiles, and caches are not tracked.

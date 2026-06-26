@@ -1,5 +1,81 @@
 # Commands
 
+## Run Final 40-Scene Production Launcher
+
+Use this one-command entry point for the current final 40-scene Isaac static
+production batch. It wraps the existing 9950X3D queue, keeps all seeds under one
+output root, writes launcher logs, runs the analyzer, and generates a final
+report with USD paths and failed seed details.
+
+```bash
+cd ~/infinigen
+CLEAN=1 bash scripts/run_final_40_scene_production.sh
+```
+
+Defaults:
+
+```text
+SEEDS=1-40
+OUTPUT_ROOT=outputs/final_40_scene_production
+PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python
+JOBS=4
+CPU_SETS="0-3,16-19;4-7,20-23;8-11,24-27;12-15,28-31"
+EXPORT_FORMAT=usdc
+EXPORT_RESOLUTION=512
+ADD_ISAAC_DOME_LIGHT=0
+ENABLE_WHEAT_REUSE=0
+```
+
+Run the next seed range:
+
+```bash
+SEEDS=41-80 CLEAN=1 bash scripts/run_final_40_scene_production.sh
+```
+
+Use a custom output root:
+
+```bash
+OUTPUT_ROOT=outputs/my_40_scenes CLEAN=1 bash scripts/run_final_40_scene_production.sh
+```
+
+Dry-run the final command shape without real generation/export:
+
+```bash
+DRY_RUN=1 \
+SEEDS=1-4 \
+OUTPUT_ROOT=outputs/final_40_scene_production_dryrun \
+bash scripts/run_final_40_scene_production.sh
+```
+
+Review the final report and path list:
+
+```bash
+cat outputs/final_40_scene_production/FINAL_RUN_REPORT.md
+cat outputs/final_40_scene_production/launcher_logs/final_paths.txt
+```
+
+Generated output layout:
+
+```text
+outputs/final_40_scene_production/
+  seed_<SEED>/coarse/scene.blend
+  seed_<SEED>/usd/export_scene.blend/export_scene.usdc
+  logs/seed_<SEED>/
+  worker_0.log
+  worker_1.log
+  worker_2.log
+  worker_3.log
+  launcher_logs/
+  summary.csv
+  summary.md
+  FINAL_RUN_REPORT.md
+  final_report.md
+```
+
+In Isaac Sim, open each `seed_<SEED>/usd/export_scene.blend/` directory and
+select `export_scene.usdc`. Do not move only the `.usdc` file. Add Dome Light
+manually because `ADD_ISAAC_DOME_LIGHT=0` in the current conda environment.
+
 ## Run 9950X3D Production Scene Queue
 
 Use this for the current 9950X3D production path after the clean `JOBS=4` CCD
@@ -65,7 +141,7 @@ CHECK_BEDROOM_BED_COUNT=1 \
 BEDROOM_BED_CHECK_STRICT=1 \
 CHECK_ROOM_LIGHT_BLOCKERS=1 \
 ADD_ISAAC_DOME_LIGHT=0 \
-OUTPUT_ROOT=outputs/production_final_seed1_40 \
+OUTPUT_ROOT=outputs/final_40_scene_production \
 bash scripts/run_9950x3d_production_scene_queue.sh
 ```
 
@@ -331,7 +407,7 @@ objects:
 
 ```bash
 python scripts/check_no_carpets.py \
-  outputs/production_final_seed1_40
+  outputs/final_40_scene_production
 ```
 
 The checker writes `no_carpet_report.csv` and `no_carpet_report.md`. It

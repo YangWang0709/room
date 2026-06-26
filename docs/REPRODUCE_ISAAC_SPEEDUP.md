@@ -67,7 +67,47 @@ used in the current runs does not provide USD `pxr` Python bindings. Add a Dome
 Light manually in Isaac Sim, or run `scripts/add_isaac_lighting_to_usd.py` from
 an Isaac/Omniverse Python environment that provides `pxr`.
 
-## 5. Final Production Command
+## 5. Final One-Command Production Launcher
+
+The recommended final entry point is the wrapper script. It performs preflight
+checks, calls the existing production queue with the final flags, writes launcher
+logs, runs the analyzer, and produces a human-readable final report:
+
+```bash
+cd ~/infinigen
+CLEAN=1 bash scripts/run_final_40_scene_production.sh
+```
+
+By default this generates seeds `1-40` under:
+
+```text
+outputs/final_40_scene_production
+```
+
+Run a different seed range:
+
+```bash
+SEEDS=41-80 CLEAN=1 bash scripts/run_final_40_scene_production.sh
+```
+
+Use a custom output root:
+
+```bash
+OUTPUT_ROOT=outputs/my_40_scenes CLEAN=1 bash scripts/run_final_40_scene_production.sh
+```
+
+Review the final report and USD path list:
+
+```bash
+cat outputs/final_40_scene_production/FINAL_RUN_REPORT.md
+cat outputs/final_40_scene_production/launcher_logs/final_paths.txt
+```
+
+Open each `seed_<SEED>/usd/export_scene.blend/` directory in Isaac Sim, select
+`export_scene.usdc`, keep sidecar files in place, and add Dome Light manually.
+
+The wrapper calls `scripts/run_9950x3d_production_scene_queue.sh` internally.
+The equivalent low-level queue command is still useful for debugging:
 
 ```bash
 PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python \
@@ -89,7 +129,8 @@ CHECK_BEDROOM_BED_COUNT=1 \
 BEDROOM_BED_CHECK_STRICT=1 \
 CHECK_ROOM_LIGHT_BLOCKERS=1 \
 ADD_ISAAC_DOME_LIGHT=0 \
-OUTPUT_ROOT=outputs/production_final_seed1_40 \
+ENABLE_WHEAT_REUSE=0 \
+OUTPUT_ROOT=outputs/final_40_scene_production \
 bash scripts/run_9950x3d_production_scene_queue.sh
 ```
 
@@ -122,18 +163,21 @@ INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
 The final output root is structured like this:
 
 ```text
-outputs/production_final_seed1_40/
+outputs/final_40_scene_production/
   seed_<SEED>/coarse/scene.blend
   seed_<SEED>/usd/export_scene.blend/export_scene.usdc
   logs/seed_<SEED>/
+  launcher_logs/
   summary.csv
   summary.md
+  FINAL_RUN_REPORT.md
+  final_report.md
 ```
 
 Open the full exported USD folder in Isaac Sim:
 
 ```text
-outputs/production_final_seed1_40/seed_<SEED>/usd/export_scene.blend/
+outputs/final_40_scene_production/seed_<SEED>/usd/export_scene.blend/
 ```
 
 Do not move only the single `.usdc` file; keep the sidecar files with it.
@@ -169,28 +213,28 @@ furniture/clutter.
 Summarize a production run:
 
 ```bash
-python scripts/analyze_9950x3d_production_queue.py outputs/production_final_seed1_40 --write-summaries
+python scripts/analyze_9950x3d_production_queue.py outputs/final_40_scene_production --write-summaries
 ```
 
 Check no carpets on a whole batch root:
 
 ```bash
-python scripts/check_no_carpets.py outputs/production_final_seed1_40 --allow-fail
+python scripts/check_no_carpets.py outputs/final_40_scene_production --allow-fail
 ```
 
 Check bedroom bed counts on a whole batch root:
 
 ```bash
-python scripts/check_bedroom_bed_count.py outputs/production_final_seed1_40 --allow-fail
+python scripts/check_bedroom_bed_count.py outputs/final_40_scene_production --allow-fail
 ```
 
 Check room light blockers per generated seed. The production queue already runs
 this per seed when `CHECK_ROOM_LIGHT_BLOCKERS=1`; to rerun it manually:
 
 ```bash
-for coarse in outputs/production_final_seed1_40/seed_*/coarse; do
+for coarse in outputs/final_40_scene_production/seed_*/coarse; do
   seed_dir="$(dirname "$coarse")"
-  log_dir="outputs/production_final_seed1_40/logs/$(basename "$seed_dir")"
+  log_dir="outputs/final_40_scene_production/logs/$(basename "$seed_dir")"
   python scripts/check_room_light_blockers.py "$coarse" --output-dir "$log_dir"
 done
 ```

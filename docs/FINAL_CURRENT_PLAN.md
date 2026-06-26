@@ -19,6 +19,50 @@ Generated `outputs` artifacts are local run products and are not committed.
 
 ## Recommended Production Command
 
+Use the one-command final launcher:
+
+```bash
+cd ~/infinigen
+CLEAN=1 bash scripts/run_final_40_scene_production.sh
+```
+
+Defaults:
+
+```text
+SEEDS=1-40
+OUTPUT_ROOT=outputs/final_40_scene_production
+PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python
+JOBS=4
+EXPORT_FORMAT=usdc
+EXPORT_RESOLUTION=512
+ADD_ISAAC_DOME_LIGHT=0
+ENABLE_WHEAT_REUSE=0
+```
+
+Custom seed range:
+
+```bash
+SEEDS=41-80 CLEAN=1 bash scripts/run_final_40_scene_production.sh
+```
+
+Custom output root:
+
+```bash
+OUTPUT_ROOT=outputs/my_40_scenes CLEAN=1 bash scripts/run_final_40_scene_production.sh
+```
+
+After the run:
+
+```bash
+cat outputs/final_40_scene_production/FINAL_RUN_REPORT.md
+cat outputs/final_40_scene_production/launcher_logs/final_paths.txt
+```
+
+Open each `seed_<SEED>/usd/export_scene.blend/` directory in Isaac Sim, select
+`export_scene.usdc`, keep sidecar files in place, and add Dome Light manually.
+
+The launcher calls the existing queue with this final flag shape:
+
 ```bash
 PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python \
 CLEAN=1 \
@@ -39,7 +83,8 @@ CHECK_BEDROOM_BED_COUNT=1 \
 BEDROOM_BED_CHECK_STRICT=1 \
 CHECK_ROOM_LIGHT_BLOCKERS=1 \
 ADD_ISAAC_DOME_LIGHT=0 \
-OUTPUT_ROOT=outputs/production_final_seed1_40 \
+ENABLE_WHEAT_REUSE=0 \
+OUTPUT_ROOT=outputs/final_40_scene_production \
 bash scripts/run_9950x3d_production_scene_queue.sh
 ```
 
