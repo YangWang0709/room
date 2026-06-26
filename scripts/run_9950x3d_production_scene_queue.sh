@@ -18,6 +18,9 @@ ENABLE_WHEAT_REUSE="${ENABLE_WHEAT_REUSE:-0}"
 OMIT_CEILINGS_FOR_DOME_LIGHT="${OMIT_CEILINGS_FOR_DOME_LIGHT:-0}"
 OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT="${OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT:-0}"
 OMIT_ROOM_PILLARS_FOR_DOME_LIGHT="${OMIT_ROOM_PILLARS_FOR_DOME_LIGHT:-0}"
+OMIT_CARPETS_FOR_ISAAC="${OMIT_CARPETS_FOR_ISAAC:-1}"
+CHECK_NO_CARPETS="${CHECK_NO_CARPETS:-1}"
+CARPET_CHECK_STRICT="${CARPET_CHECK_STRICT:-1}"
 ENFORCE_ONE_BED_PER_BEDROOM="${ENFORCE_ONE_BED_PER_BEDROOM:-0}"
 CHECK_BEDROOM_BED_COUNT="${CHECK_BEDROOM_BED_COUNT:-0}"
 BEDROOM_BED_CHECK_STRICT="${BEDROOM_BED_CHECK_STRICT:-0}"
@@ -50,6 +53,9 @@ PROFILE_ENV_VARS=(
   OMIT_CEILINGS_FOR_DOME_LIGHT
   OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT
   OMIT_ROOM_PILLARS_FOR_DOME_LIGHT
+  OMIT_CARPETS_FOR_ISAAC
+  CHECK_NO_CARPETS
+  CARPET_CHECK_STRICT
   ENFORCE_ONE_BED_PER_BEDROOM
   CHECK_BEDROOM_BED_COUNT
   BEDROOM_BED_CHECK_STRICT
@@ -270,6 +276,31 @@ print(f"{suspected} {exterior} {pillar} {ceiling}")
 PY
 }
 
+read_carpet_check_counts() {
+  local report_csv="$1"
+  "$PYTHON_BIN" - "$report_csv" <<'PY'
+import csv
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+if not path.exists():
+    print("0 1")
+    raise SystemExit(0)
+
+carpets = 0
+unknown = 0
+with path.open(newline="") as handle:
+    for row in csv.DictReader(handle):
+        status = (row.get("status") or "").strip().lower()
+        if status == "fail":
+            carpets += 1
+        elif status == "unknown":
+            unknown += 1
+print(f"{carpets} {unknown}")
+PY
+}
+
 build_generate_cmd() {
   local seed="$1"
   local cpu_set="$2"
@@ -301,6 +332,9 @@ build_generate_cmd() {
   if [[ "$OMIT_ROOM_PILLARS_FOR_DOME_LIGHT" == "1" ]]; then
     CMD+=(OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=1)
   fi
+  if [[ "$OMIT_CARPETS_FOR_ISAAC" == "1" ]]; then
+    CMD+=(OMIT_CARPETS_FOR_ISAAC=1)
+  fi
   if [[ "$ENFORCE_ONE_BED_PER_BEDROOM" == "1" ]]; then
     CMD+=(ENFORCE_ONE_BED_PER_BEDROOM=1)
   fi
@@ -317,6 +351,26 @@ build_generate_cmd() {
     restrict_solving.solve_max_rooms=10
     populate_doors.door_chance=0
   )
+}
+
+build_carpet_check_cmd() {
+  local cpu_set="$1"
+  local coarse_dir="$2"
+  local log_dir="$3"
+  CMD=(taskset -c "$cpu_set" env)
+  local var
+  for var in "${PROFILE_ENV_VARS[@]}"; do
+    CMD+=(-u "$var")
+  done
+  CMD+=(
+    "$PYTHON_BIN"
+    scripts/check_no_carpets.py
+    "$coarse_dir"
+    --output-dir "$log_dir"
+  )
+  if [[ "$CARPET_CHECK_STRICT" != "1" ]]; then
+    CMD+=(--allow-fail)
+  fi
 }
 
 build_light_blocker_check_cmd() {
@@ -414,6 +468,7 @@ write_seed_env() {
   local lighting_command="${9:-}"
   local bed_check_command="${10:-}"
   local light_blocker_check_command="${11:-}"
+  local carpet_check_command="${12:-}"
 
   {
     echo "seed=${seed}"
@@ -433,6 +488,9 @@ write_seed_env() {
     echo "omit_ceilings_for_dome_light=${OMIT_CEILINGS_FOR_DOME_LIGHT}"
     echo "omit_room_exterior_for_dome_light=${OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT}"
     echo "omit_room_pillars_for_dome_light=${OMIT_ROOM_PILLARS_FOR_DOME_LIGHT}"
+    echo "omit_carpets_for_isaac=${OMIT_CARPETS_FOR_ISAAC}"
+    echo "check_no_carpets=${CHECK_NO_CARPETS}"
+    echo "carpet_check_strict=${CARPET_CHECK_STRICT}"
     echo "enforce_one_bed_per_bedroom=${ENFORCE_ONE_BED_PER_BEDROOM}"
     echo "check_bedroom_bed_count=${CHECK_BEDROOM_BED_COUNT}"
     echo "bedroom_bed_check_strict=${BEDROOM_BED_CHECK_STRICT}"
@@ -468,6 +526,11 @@ write_seed_env() {
     else
       echo "OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=unset"
     fi
+    if [[ "$OMIT_CARPETS_FOR_ISAAC" == "1" ]]; then
+      echo "OMIT_CARPETS_FOR_ISAAC=1"
+    else
+      echo "OMIT_CARPETS_FOR_ISAAC=unset"
+    fi
     if [[ "$ENFORCE_ONE_BED_PER_BEDROOM" == "1" ]]; then
       echo "ENFORCE_ONE_BED_PER_BEDROOM=1"
     else
@@ -486,6 +549,9 @@ write_seed_env() {
     echo "generate_command=${generate_command}"
     if [[ -n "$light_blocker_check_command" ]]; then
       echo "light_blocker_check_command=${light_blocker_check_command}"
+    fi
+    if [[ -n "$carpet_check_command" ]]; then
+      echo "carpet_check_command=${carpet_check_command}"
     fi
     if [[ -n "$bed_check_command" ]]; then
       echo "bed_check_command=${bed_check_command}"
@@ -507,11 +573,20 @@ write_status_file() {
     echo "cpu_set=${STATUS_CPU_SET:-}"
     echo "omit_room_exterior_for_dome_light=${OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT}"
     echo "omit_room_pillars_for_dome_light=${OMIT_ROOM_PILLARS_FOR_DOME_LIGHT}"
+    echo "omit_carpets_for_isaac=${OMIT_CARPETS_FOR_ISAAC}"
+    echo "check_no_carpets=${CHECK_NO_CARPETS}"
+    echo "carpet_check_strict=${CARPET_CHECK_STRICT}"
     echo "check_room_light_blockers=${CHECK_ROOM_LIGHT_BLOCKERS}"
     echo "generate_status=${GENERATE_STATUS:-}"
     echo "generate_exit_code=${GENERATE_EXIT_CODE:-}"
     echo "generate_started_at=${GENERATE_STARTED_AT:-}"
     echo "generate_ended_at=${GENERATE_ENDED_AT:-}"
+    echo "carpet_check_status=${CARPET_CHECK_STATUS:-}"
+    echo "carpet_check_exit_code=${CARPET_CHECK_EXIT_CODE:-}"
+    echo "carpet_check_started_at=${CARPET_CHECK_STARTED_AT:-}"
+    echo "carpet_check_ended_at=${CARPET_CHECK_ENDED_AT:-}"
+    echo "carpet_object_count=${CARPET_OBJECT_COUNT:-}"
+    echo "carpet_unknown_count=${CARPET_UNKNOWN_COUNT:-}"
     echo "light_blocker_check_status=${LIGHT_BLOCKER_CHECK_STATUS:-}"
     echo "light_blocker_check_exit_code=${LIGHT_BLOCKER_CHECK_EXIT_CODE:-}"
     echo "light_blocker_check_started_at=${LIGHT_BLOCKER_CHECK_STARTED_AT:-}"
@@ -559,6 +634,12 @@ mark_seed_stopped() {
   GENERATE_EXIT_CODE=""
   GENERATE_STARTED_AT="$now"
   GENERATE_ENDED_AT="$now"
+  CARPET_CHECK_STATUS="not_requested"
+  CARPET_CHECK_EXIT_CODE=""
+  CARPET_CHECK_STARTED_AT=""
+  CARPET_CHECK_ENDED_AT=""
+  CARPET_OBJECT_COUNT=""
+  CARPET_UNKNOWN_COUNT=""
   LIGHT_BLOCKER_CHECK_STATUS="not_requested"
   LIGHT_BLOCKER_CHECK_EXIT_CODE=""
   LIGHT_BLOCKER_CHECK_STARTED_AT=""
@@ -653,6 +734,106 @@ run_generate_seed() {
     echo "exit_code=${GENERATE_EXIT_CODE}"
     echo "status=${GENERATE_STATUS}"
   } >> "$generate_log"
+}
+
+run_carpet_check_seed() {
+  local worker_id="$1"
+  local cpu_set="$2"
+  local seed="$3"
+  local coarse_dir="$4"
+  local log_dir="$5"
+  local carpet_log="${log_dir}/carpet_check.log"
+  local carpet_report="${log_dir}/no_carpet_report.csv"
+  local exit_code
+
+  CARPET_CHECK_STATUS="not_requested"
+  CARPET_CHECK_EXIT_CODE=""
+  CARPET_CHECK_STARTED_AT=""
+  CARPET_CHECK_ENDED_AT=""
+  CARPET_OBJECT_COUNT=""
+  CARPET_UNKNOWN_COUNT=""
+
+  if [[ "$CHECK_NO_CARPETS" != "1" ]]; then
+    echo "CHECK_NO_CARPETS=${CHECK_NO_CARPETS}: no-carpet check not requested." > "$carpet_log"
+    return 0
+  fi
+
+  build_carpet_check_cmd "$cpu_set" "$coarse_dir" "$log_dir"
+  local carpet_command
+  carpet_command="$(quote_command "${CMD[@]}")"
+
+  {
+    echo "worker_id=${worker_id}"
+    echo "cpu_set=${cpu_set}"
+    echo "seed=${seed}"
+    echo "coarse_dir=${coarse_dir}"
+    echo "carpet_check_strict=${CARPET_CHECK_STRICT}"
+    echo "started_at=$(timestamp)"
+    echo "no-carpet check command:"
+    echo "$carpet_command"
+    echo
+  } > "$carpet_log"
+
+  if [[ "$DRY_RUN" == "1" ]]; then
+    CARPET_CHECK_STARTED_AT="$(timestamp)"
+    CARPET_CHECK_ENDED_AT="$CARPET_CHECK_STARTED_AT"
+    CARPET_CHECK_EXIT_CODE="0"
+    CARPET_CHECK_STATUS="skipped"
+    CARPET_OBJECT_COUNT=""
+    CARPET_UNKNOWN_COUNT=""
+    echo "DRY_RUN=1: no-carpet check skipped." >> "$carpet_log"
+    return 0
+  fi
+
+  if [[ "$GENERATE_STATUS" != "complete" && "$GENERATE_STATUS" != "skipped" ]]; then
+    CARPET_CHECK_STARTED_AT="$(timestamp)"
+    CARPET_CHECK_ENDED_AT="$CARPET_CHECK_STARTED_AT"
+    CARPET_CHECK_EXIT_CODE=""
+    CARPET_CHECK_STATUS="skipped"
+    CARPET_OBJECT_COUNT=""
+    CARPET_UNKNOWN_COUNT=""
+    echo "Skipping no-carpet check because coarse generation status is ${GENERATE_STATUS}." >> "$carpet_log"
+    return 0
+  fi
+
+  CARPET_CHECK_STARTED_AT="$(timestamp)"
+  set +e
+  "${CMD[@]}" >> "$carpet_log" 2>&1
+  exit_code=$?
+  set -e
+  CARPET_CHECK_ENDED_AT="$(timestamp)"
+  CARPET_CHECK_EXIT_CODE="$exit_code"
+
+  if [[ "$exit_code" == "0" ]]; then
+    CARPET_CHECK_STATUS="complete"
+  else
+    CARPET_CHECK_STATUS="failed"
+  fi
+
+  read -r CARPET_OBJECT_COUNT CARPET_UNKNOWN_COUNT < <(read_carpet_check_counts "$carpet_report")
+  if [[ "${CARPET_OBJECT_COUNT:-0}" != "0" ]]; then
+    if [[ "$CARPET_CHECK_STRICT" == "1" ]]; then
+      QUALITY_STATUS="quality_failed"
+    elif [[ "${QUALITY_STATUS:-not_requested}" == "not_requested" ]]; then
+      QUALITY_STATUS="warning"
+    fi
+  elif [[ "${CARPET_UNKNOWN_COUNT:-0}" != "0" ]]; then
+    if [[ "${QUALITY_STATUS:-not_requested}" != "quality_failed" ]]; then
+      QUALITY_STATUS="unknown"
+    fi
+  elif [[ "${QUALITY_STATUS:-not_requested}" == "not_requested" ]]; then
+    QUALITY_STATUS="pass"
+  fi
+
+  {
+    echo
+    echo "ended_at=${CARPET_CHECK_ENDED_AT}"
+    echo "exit_code=${CARPET_CHECK_EXIT_CODE}"
+    echo "status=${CARPET_CHECK_STATUS}"
+    echo "carpet_object_count=${CARPET_OBJECT_COUNT}"
+    echo "carpet_unknown_count=${CARPET_UNKNOWN_COUNT}"
+    echo "quality_status=${QUALITY_STATUS}"
+  } >> "$carpet_log"
 }
 
 run_light_blocker_check_seed() {
@@ -795,6 +976,18 @@ run_export_seed() {
     return 0
   fi
 
+  if [[ "$CARPET_CHECK_STRICT" == "1" && \
+    ( "${CARPET_CHECK_STATUS:-not_requested}" == "failed" || \
+      "${CARPET_OBJECT_COUNT:-0}" != "0" || \
+      "${CARPET_UNKNOWN_COUNT:-0}" != "0" ) ]]; then
+    EXPORT_STARTED_AT="$(timestamp)"
+    EXPORT_ENDED_AT="$EXPORT_STARTED_AT"
+    EXPORT_EXIT_CODE=""
+    EXPORT_STATUS="skipped"
+    echo "Skipping export because CARPET_CHECK_STRICT=1, carpet_check_status=${CARPET_CHECK_STATUS}, carpet_object_count=${CARPET_OBJECT_COUNT}, and carpet_unknown_count=${CARPET_UNKNOWN_COUNT}." >> "$export_log"
+    return 0
+  fi
+
   if [[ "$BEDROOM_BED_CHECK_STRICT" == "1" && "$QUALITY_STATUS" == "quality_failed" ]]; then
     EXPORT_STARTED_AT="$(timestamp)"
     EXPORT_ENDED_AT="$EXPORT_STARTED_AT"
@@ -864,7 +1057,6 @@ run_bed_check_seed() {
   BED_CHECK_STARTED_AT=""
   BED_CHECK_ENDED_AT=""
   BEDROOM_DOUBLE_BED_COUNT=""
-  QUALITY_STATUS="not_requested"
 
   if [[ "$CHECK_BEDROOM_BED_COUNT" != "1" ]]; then
     echo "CHECK_BEDROOM_BED_COUNT=${CHECK_BEDROOM_BED_COUNT}: bed check not requested." > "$bed_check_log"
@@ -892,7 +1084,9 @@ run_bed_check_seed() {
     BED_CHECK_EXIT_CODE="0"
     BED_CHECK_STATUS="skipped"
     BEDROOM_DOUBLE_BED_COUNT=""
-    QUALITY_STATUS="skipped"
+    if [[ "${QUALITY_STATUS:-not_requested}" == "not_requested" ]]; then
+      QUALITY_STATUS="skipped"
+    fi
     echo "DRY_RUN=1: bedroom bed check skipped." >> "$bed_check_log"
     return 0
   fi
@@ -903,7 +1097,9 @@ run_bed_check_seed() {
     BED_CHECK_EXIT_CODE=""
     BED_CHECK_STATUS="skipped"
     BEDROOM_DOUBLE_BED_COUNT=""
-    QUALITY_STATUS="skipped"
+    if [[ "${QUALITY_STATUS:-not_requested}" == "not_requested" ]]; then
+      QUALITY_STATUS="skipped"
+    fi
     echo "Skipping bed check because coarse generation status is ${GENERATE_STATUS}." >> "$bed_check_log"
     return 0
   fi
@@ -923,10 +1119,15 @@ run_bed_check_seed() {
   fi
 
   read -r BEDROOM_DOUBLE_BED_COUNT unknown_count < <(read_bed_check_counts "$bed_check_report")
+  local previous_quality="${QUALITY_STATUS:-not_requested}"
   if [[ "${BEDROOM_DOUBLE_BED_COUNT:-0}" != "0" ]]; then
+    QUALITY_STATUS="quality_failed"
+  elif [[ "$previous_quality" == "quality_failed" ]]; then
     QUALITY_STATUS="quality_failed"
   elif [[ "${unknown_count:-0}" != "0" ]]; then
     QUALITY_STATUS="unknown"
+  elif [[ "$previous_quality" == "unknown" || "$previous_quality" == "warning" ]]; then
+    QUALITY_STATUS="$previous_quality"
   elif [[ "$exit_code" == "0" ]]; then
     QUALITY_STATUS="pass"
   else
@@ -1043,6 +1244,12 @@ run_seed() {
   GENERATE_EXIT_CODE=""
   GENERATE_STARTED_AT=""
   GENERATE_ENDED_AT=""
+  CARPET_CHECK_STATUS="not_requested"
+  CARPET_CHECK_EXIT_CODE=""
+  CARPET_CHECK_STARTED_AT=""
+  CARPET_CHECK_ENDED_AT=""
+  CARPET_OBJECT_COUNT=""
+  CARPET_UNKNOWN_COUNT=""
   LIGHT_BLOCKER_CHECK_STATUS="not_requested"
   LIGHT_BLOCKER_CHECK_EXIT_CODE=""
   LIGHT_BLOCKER_CHECK_STARTED_AT=""
@@ -1067,11 +1274,16 @@ run_seed() {
   LIGHTING_ENDED_AT=""
   DOME_LIGHT_ADDED="no"
 
-  local generate_cmd_text export_cmd_text lighting_cmd_text bed_check_cmd_text light_blocker_check_cmd_text
+  local generate_cmd_text export_cmd_text lighting_cmd_text bed_check_cmd_text light_blocker_check_cmd_text carpet_check_cmd_text
   build_generate_cmd "$seed" "$cpu_set" "$coarse_dir"
   generate_cmd_text="$(quote_command "${CMD[@]}")"
   build_export_cmd "$cpu_set" "$coarse_dir" "$usd_dir"
   export_cmd_text="$(quote_command "${CMD[@]}")"
+  carpet_check_cmd_text=""
+  if [[ "$CHECK_NO_CARPETS" == "1" ]]; then
+    build_carpet_check_cmd "$cpu_set" "$coarse_dir" "$log_dir"
+    carpet_check_cmd_text="$(quote_command "${CMD[@]}")"
+  fi
   light_blocker_check_cmd_text=""
   if [[ "$CHECK_ROOM_LIGHT_BLOCKERS" == "1" ]]; then
     build_light_blocker_check_cmd "$cpu_set" "$coarse_dir" "$log_dir"
@@ -1089,9 +1301,10 @@ run_seed() {
   fi
   write_seed_env "$seed" "$worker_id" "$cpu_set" "$coarse_dir" "$usd_dir" \
     "$env_file" "$generate_cmd_text" "$export_cmd_text" "$lighting_cmd_text" \
-    "$bed_check_cmd_text" "$light_blocker_check_cmd_text"
+    "$bed_check_cmd_text" "$light_blocker_check_cmd_text" "$carpet_check_cmd_text"
 
   run_generate_seed "$worker_id" "$cpu_set" "$seed" "$coarse_dir" "$log_dir"
+  run_carpet_check_seed "$worker_id" "$cpu_set" "$seed" "$coarse_dir" "$log_dir"
   run_light_blocker_check_seed "$worker_id" "$cpu_set" "$seed" "$coarse_dir" "$log_dir"
   run_bed_check_seed "$worker_id" "$cpu_set" "$seed" "$coarse_dir" "$log_dir"
   run_export_seed "$worker_id" "$cpu_set" "$seed" "$coarse_dir" "$usd_dir" "$log_dir"
@@ -1128,7 +1341,7 @@ worker_main() {
       mark_seed_stopped "$worker_id" "$cpu_set" "$seed"
       continue
     fi
-    echo "worker${worker_id}: seed ${seed} coarse -> light_blocker_check -> bed_check -> export -> lighting -> next" >> "$worker_log"
+    echo "worker${worker_id}: seed ${seed} coarse -> carpet_check -> light_blocker_check -> bed_check -> export -> lighting -> next" >> "$worker_log"
     run_seed "$worker_id" "$cpu_set" "$seed" >> "$worker_log" 2>&1
   done
   echo "ended_at=$(timestamp)" >> "$worker_log"
@@ -1206,6 +1419,9 @@ write_run_info() {
     echo "OMIT_CEILINGS_FOR_DOME_LIGHT=${OMIT_CEILINGS_FOR_DOME_LIGHT}"
     echo "OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT=${OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT}"
     echo "OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=${OMIT_ROOM_PILLARS_FOR_DOME_LIGHT}"
+    echo "OMIT_CARPETS_FOR_ISAAC=${OMIT_CARPETS_FOR_ISAAC}"
+    echo "CHECK_NO_CARPETS=${CHECK_NO_CARPETS}"
+    echo "CARPET_CHECK_STRICT=${CARPET_CHECK_STRICT}"
     echo "ENFORCE_ONE_BED_PER_BEDROOM=${ENFORCE_ONE_BED_PER_BEDROOM}"
     echo "CHECK_BEDROOM_BED_COUNT=${CHECK_BEDROOM_BED_COUNT}"
     echo "BEDROOM_BED_CHECK_STRICT=${BEDROOM_BED_CHECK_STRICT}"
@@ -1227,6 +1443,9 @@ print_worker_assignments() {
   echo "JOBS=${JOBS}"
   echo "CPU_SETS=${CPU_SETS}"
   echo "Seeds: $(join_by_comma "${SEED_LIST[@]}")"
+  echo "omit_carpets_for_isaac=${OMIT_CARPETS_FOR_ISAAC}"
+  echo "check_no_carpets=${CHECK_NO_CARPETS}"
+  echo "carpet_check_strict=${CARPET_CHECK_STRICT}"
   echo
   for (( worker_id = 0; worker_id < JOBS; worker_id++ )); do
     echo "worker${worker_id} CPU_SET=${CPU_SET_LIST[$worker_id]} seeds=$(assigned_seeds_for_worker "$worker_id")"
@@ -1251,6 +1470,18 @@ print_dry_run_plan() {
       build_generate_cmd "$seed" "$cpu_set" "$coarse_dir"
       echo "seed${seed} coarse:"
       quote_command "${CMD[@]}"
+      if [[ "$CHECK_NO_CARPETS" == "1" ]]; then
+        build_carpet_check_cmd "$cpu_set" "$coarse_dir" "$(seed_log_dir "$seed")"
+        echo "seed${seed} no-carpet check:"
+        quote_command "${CMD[@]}"
+        if [[ "$CARPET_CHECK_STRICT" == "1" ]]; then
+          echo "seed${seed} export gate: no-carpet strict failures skip export"
+        else
+          echo "seed${seed} export gate: no-carpet failures warn only"
+        fi
+      else
+        echo "seed${seed} no-carpet check: not requested"
+      fi
       if [[ "$CHECK_ROOM_LIGHT_BLOCKERS" == "1" ]]; then
         build_light_blocker_check_cmd "$cpu_set" "$coarse_dir" "$(seed_log_dir "$seed")"
         echo "seed${seed} light blocker check:"

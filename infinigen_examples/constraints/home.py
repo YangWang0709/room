@@ -500,6 +500,13 @@ def home_furniture_constraints():
 
     """
 
+    omit_carpets = _env_flag_enabled("OMIT_CARPETS_FOR_ISAAC")
+    if omit_carpets:
+        print(
+            "[carpet_omit] disabled carpet/rug generation because "
+            "OMIT_CARPETS_FOR_ISAAC=1"
+        )
+
     used_as = home_asset_usage()
     usage_lookup.initialize_from_dict(used_as)
 
@@ -635,13 +642,21 @@ def home_furniture_constraints():
     mirror = walldec[wall_decorations.MirrorFactory]
     rugs = obj[elements.RugFactory].related_to(rooms, cu.on_floor)
 
-    constraints["rugs"] = rooms.all(
-        lambda r: (cl.min_distance_internal(rugs.related_to(r)) >= 1)
-    )
+    def rug_count_limit(room, max_count):
+        if omit_carpets:
+            return cl.constant(True)
+        return rugs.related_to(room).count().in_range(0, max_count)
 
-    score_terms["rugs"] = rooms.all(
-        lambda r: (cl.center_stable_surface_dist(rugs.related_to(r)).minimize(weight=1))
-    )
+    if not omit_carpets:
+        constraints["rugs"] = rooms.all(
+            lambda r: (cl.min_distance_internal(rugs.related_to(r)) >= 1)
+        )
+
+        score_terms["rugs"] = rooms.all(
+            lambda r: (
+                cl.center_stable_surface_dist(rugs.related_to(r)).minimize(weight=1)
+            )
+        )
 
     def vertical_diff(o, r):
         return (o.distance(r, cu.floortags) - o.distance(r, cu.ceilingtags)).abs()
@@ -673,12 +688,13 @@ def home_furniture_constraints():
         )
     )
 
-    score_terms["floor_covering"] = rugs.mean(
-        lambda rug: (
-            rug.distance(rooms, cu.walltags).maximize(weight=3)
-            + cl.angle_alignment_cost(rug, rooms, cu.walltags).minimize(weight=3)
+    if not omit_carpets:
+        score_terms["floor_covering"] = rugs.mean(
+            lambda rug: (
+                rug.distance(rooms, cu.walltags).maximize(weight=3)
+                + cl.angle_alignment_cost(rug, rooms, cu.walltags).minimize(weight=3)
+            )
         )
-    )
     # endregion
 
     # region PLANTS
@@ -861,7 +877,7 @@ def home_furniture_constraints():
         lambda r: (
             beds.related_to(r).count().in_range(*bed_count)
             * sidetables.related_to(beds.related_to(r)).count().in_range(0, 2)
-            * rugs.related_to(r).count().in_range(0, 1)
+            * rug_count_limit(r, 1)
             * desks.related_to(r).count().in_range(0, 1)
             * storage_freestanding.related_to(r).count().in_range(2, 5)
             * floor_lamps.related_to(r).count().in_range(0, 1)
@@ -1228,10 +1244,7 @@ def home_furniture_constraints():
                 )
             )
             * (
-                rugs.related_to(r)
-                # .related_to(furniture.related_to(r), cu.side_by_side)
-                .count()
-                .in_range(0, 2)
+                rug_count_limit(r, 2)
             )
         )
     )

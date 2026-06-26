@@ -20,6 +20,20 @@
 
 First, follow our [Installation Instructions](docs/Installation.md).
 
+### Isaac Sim optimized indoor scene generation
+
+This fork includes a production path for generating 10-room indoor static scenes
+for Isaac Sim and exporting them as USDC. Start with
+[Reproduce Isaac Sim Indoor Speedup](docs/REPRODUCE_ISAAC_SPEEDUP.md) for the
+full command and environment notes, and see
+[Final Current Plan](docs/FINAL_CURRENT_PLAN.md) for the current recommended
+flags.
+
+The main queue entry point is
+`scripts/run_9950x3d_production_scene_queue.sh`, with summaries from
+`scripts/analyze_9950x3d_production_queue.py`. Generated `outputs`, `.blend`,
+`.usd`, `.usdc`, logs, profiles, and caches are not tracked.
+
 ### Hello Room: Getting Started with Infinigen Indoors
 
 <p align="center">

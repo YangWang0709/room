@@ -10,7 +10,7 @@ Blender / `bpy` process.
 Each worker keeps a fixed CPU set and processes its own queue serially:
 
 ```text
-worker: coarse -> optional light blocker check -> optional bed check -> export USD/USDC -> optional lighting -> next seed
+worker: coarse -> no-carpet check -> optional light blocker check -> optional bed check -> export USD/USDC -> optional lighting -> next seed
 ```
 
 Current default candidate:
@@ -18,6 +18,9 @@ Current default candidate:
 ```text
 JOBS=4
 CPU_SETS="0-3,16-19;4-7,20-23;8-11,24-27;12-15,28-31"
+OMIT_CARPETS_FOR_ISAAC=1
+CHECK_NO_CARPETS=1
+CARPET_CHECK_STRICT=1
 ```
 
 Correct observed 9950X3D CCD / L3 groups:
@@ -39,16 +42,27 @@ EXPORT_AFTER_GENERATE=1 \
 bash scripts/run_9950x3d_production_scene_queue.sh
 ```
 
-Run the seed 1-40 production validation shape:
+Run the current final seed 1-40 Isaac production shape:
 
 ```bash
 CLEAN=1 \
 SEEDS=1-40 \
 JOBS=4 \
+CPU_SETS="0-3,16-19;4-7,20-23;8-11,24-27;12-15,28-31" \
 EXPORT_AFTER_GENERATE=1 \
 EXPORT_FORMAT=usdc \
 EXPORT_RESOLUTION=512 \
-OUTPUT_ROOT=outputs/production_9950x3d_isaac_queue_seed1_40 \
+OMIT_CEILINGS_FOR_DOME_LIGHT=1 \
+OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT=1 \
+OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=0 \
+OMIT_CARPETS_FOR_ISAAC=1 \
+CHECK_NO_CARPETS=1 \
+CARPET_CHECK_STRICT=1 \
+ENFORCE_ONE_BED_PER_BEDROOM=1 \
+CHECK_BEDROOM_BED_COUNT=1 \
+BEDROOM_BED_CHECK_STRICT=1 \
+ADD_ISAAC_DOME_LIGHT=0 \
+OUTPUT_ROOT=outputs/production_final_seed1_40 \
 bash scripts/run_9950x3d_production_scene_queue.sh
 ```
 
@@ -80,13 +94,35 @@ Wheat template reuse is default-off. It is only enabled when explicitly set:
 ENABLE_WHEAT_REUSE=1 bash scripts/run_9950x3d_production_scene_queue.sh
 ```
 
-Isaac quality switches are also default-off. Use them only when explicitly
+The current production queue defaults to no carpet/rug generation for Isaac
+Sim review and clearer visible/navigation areas:
+
+```text
+OMIT_CARPETS_FOR_ISAAC=1
+CHECK_NO_CARPETS=1
+CARPET_CHECK_STRICT=1
+```
+
+This removes `RugFactory` from the generation path and checks the resulting
+coarse scene. It does not remove floors, walls, beds, sofas, tables, normal
+furniture, or clutter. To restore carpets/rugs for a special run:
+
+```bash
+OMIT_CARPETS_FOR_ISAAC=0 \
+CHECK_NO_CARPETS=0 \
+bash scripts/run_9950x3d_production_scene_queue.sh
+```
+
+Other Isaac quality switches are default-off. Use them only when explicitly
 running an Isaac quality batch:
 
 ```bash
 OMIT_CEILINGS_FOR_DOME_LIGHT=1 \
 OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT=1 \
 OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=0 \
+OMIT_CARPETS_FOR_ISAAC=1 \
+CHECK_NO_CARPETS=1 \
+CARPET_CHECK_STRICT=1 \
 ENFORCE_ONE_BED_PER_BEDROOM=1 \
 CHECK_BEDROOM_BED_COUNT=1 \
 BEDROOM_BED_CHECK_STRICT=1 \
@@ -252,6 +288,18 @@ python scripts/check_bedroom_bed_count.py \
   outputs/production_9950x3d_isaac_queue_seed1_40 \
   --allow-fail
 ```
+
+Check that a coarse scene or production output root contains no carpet/rug
+objects:
+
+```bash
+python scripts/check_no_carpets.py \
+  outputs/production_final_seed1_40
+```
+
+The checker writes `no_carpet_report.csv` and `no_carpet_report.md`. It
+prioritizes `solve_state.json` factory/tags metadata and does not treat
+generic material names as carpets.
 
 Inspect room objects that may still block Dome Light:
 

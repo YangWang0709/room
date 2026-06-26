@@ -23,6 +23,9 @@ EXPORT_RESOLUTION=512 \
 OMIT_CEILINGS_FOR_DOME_LIGHT=1 \
 OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT=1 \
 OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=0 \
+OMIT_CARPETS_FOR_ISAAC=1 \
+CHECK_NO_CARPETS=1 \
+CARPET_CHECK_STRICT=1 \
 ENFORCE_ONE_BED_PER_BEDROOM=1 \
 CHECK_BEDROOM_BED_COUNT=1 \
 BEDROOM_BED_CHECK_STRICT=1 \
@@ -49,9 +52,11 @@ CPU sets:
 - Remove ceilings.
 - Delete the `room_exterior` frame.
 - Keep pillars.
+- Do not generate carpet/rug floor-covering objects for Isaac Sim review and clearer visible/navigation areas.
 - Enforce and check one bed per bedroom.
 - Do not generate door panels; keep door openings only.
 - Manually add a Dome Light in Isaac Sim.
+- Do not delete floors, walls, beds, sofas, tables, or normal furniture/clutter.
 
 ## Defaults Currently Disabled
 
@@ -61,9 +66,17 @@ CPU sets:
 - `JOBS=5`, `JOBS=6`, and `JOBS=8`.
 - Parallel export.
 
+To restore carpet/rug generation for a special run, explicitly set:
+
+```text
+OMIT_CARPETS_FOR_ISAAC=0
+CHECK_NO_CARPETS=0
+```
+
 ## Known Issues
 
 - The current conda environment does not have `pxr`, so automatic Dome Light USD authoring is not available.
 - A small number of seeds may still hit long-tail `NatureShelf`, `KitchenIsland`, or `BookStack` behavior.
 - A small number of exports may timeout or exit with signal 11.
 - `outputs` has been cleaned and now preserves only `outputs/production_9950x3d_no_ceiling_no_exterior_smoke_seed201`.
+- The current production queue defaults to `OMIT_CARPETS_FOR_ISAAC=1`, `CHECK_NO_CARPETS=1`, and `CARPET_CHECK_STRICT=1`.

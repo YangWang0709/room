@@ -3,6 +3,8 @@
 
 # Authors: Alexander Raistrick
 
+import os
+
 import infinigen.assets.static_assets as static_assets
 from infinigen.assets.objects import (
     appliances,
@@ -20,6 +22,15 @@ from infinigen.assets.objects import (
     windows,
 )
 from infinigen.core.tags import Semantics
+
+
+def _env_flag_enabled(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _remove_factories(used_as: dict, factories: set[type]) -> None:
+    for factory_set in used_as.values():
+        factory_set.difference_update(factories)
 
 
 def home_asset_usage():
@@ -331,5 +342,8 @@ def home_asset_usage():
     }
 
     # endregion
+
+    if _env_flag_enabled("OMIT_CARPETS_FOR_ISAAC"):
+        _remove_factories(used_as, {elements.RugFactory})
 
     return used_as

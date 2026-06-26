@@ -1,5 +1,60 @@
 # Profile Results
 
+## No-Carpet Isaac Production Queue Tooling - 2026-06-26
+
+Profile type: source/tooling update for the current 9950X3D Isaac production
+queue. This is not a throughput tuning run and does not test `JOBS=5/6/8`.
+
+Goal: make the production scene generation path default to no carpet/rug
+floor-covering objects in final USDC scenes, while preserving the original
+Infinigen behavior unless `OMIT_CARPETS_FOR_ISAAC=1` is enabled.
+
+Source finding:
+
+```text
+factory: elements.RugFactory
+constraint domain: obj[elements.RugFactory].related_to(rooms, cu.on_floor)
+room usage: optional bedroom and living-room rugs
+solve_state signal: *_RugFactory names, RugFactory(...) generator,
+FromGenerator(RugFactory) tag
+```
+
+Implementation summary:
+
+```text
+OMIT_CARPETS_FOR_ISAAC=1 removes RugFactory from home asset usage and skips
+rug/floor-covering constraints and score terms.
+CHECK_NO_CARPETS=1 runs scripts/check_no_carpets.py after coarse generation.
+CARPET_CHECK_STRICT=1 marks quality_status=quality_failed and skips export if
+carpet/rug objects are found.
+```
+
+The checker prioritizes `solve_state.json` metadata and avoids generic
+material-name `mat` matching. It does not remove floors, walls, beds, sofas,
+tables, normal furniture, or clutter.
+
+Validation:
+
+```text
+bash -n scripts/run_9950x3d_production_scene_queue.sh: pass
+py_compile checker/queue analyzer/source files: pass
+git diff --check: pass
+seed201 preserved coarse checker sanity: carpet_object_count=5 RugFactory rows
+seed301 production queue dry-run: pass
+```
+
+Dry-run confirmation:
+
+```text
+omit_carpets_for_isaac=1
+check_no_carpets=1
+carpet_check_strict=1
+generate command includes OMIT_CARPETS_FOR_ISAAC=1
+no-carpet check command runs after coarse generation
+strict no-carpet failures skip export
+Wheat reuse remains unset
+```
+
 ## 9950X3D Isaac Quality Smoke Seed 201 - 2026-06-25
 
 Profile type: single-seed Isaac quality smoke for ceiling omission, room

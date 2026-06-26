@@ -1,5 +1,95 @@
 # Worklog
 
+## 2026-06-26 - Default no-carpet Isaac production queue
+
+### Round Goal
+
+Make the current 9950X3D Isaac production queue omit carpet/rug floor-covering
+objects by default. This is for Isaac Sim review and clearer visible/navigation
+areas in the exported USDC scenes. This round only touches Infinigen scene
+generation, production queue quality checks, and documentation; it does not
+handle Oracle route annotation, manual trajectory, ROS2, or SLAM work.
+
+### Source Findings
+
+The indoor carpet/rug object is `elements.RugFactory` in
+`infinigen/assets/objects/elements/rug.py`. It is introduced through
+`infinigen_examples/constraints/home.py` as:
+
+```text
+rugs = obj[elements.RugFactory].related_to(rooms, cu.on_floor)
+```
+
+The room constraints allow rugs in bedrooms and living rooms with optional
+counts (`0..1` and `0..2`), and floor-covering score terms use the same rug
+domain. `RugFactory` is registered in `home_asset_usage()` as an object,
+real placeholder, no-collision object, and no-children object. Existing
+`solve_state.json` files identify generated rugs with object names like
+`*_RugFactory`, generator strings such as `RugFactory(...)`, and
+`FromGenerator(RugFactory)` tags.
+
+No separate `CarpetFactory`, `DoormatFactory`, or floor-covering factory was
+found in the indoor path. Generic `mat` text is unsafe because it can refer to
+material or matrix concepts; no-carpet detection therefore does not use
+generic material-name matching.
+
+### Implementation
+
+Added `OMIT_CARPETS_FOR_ISAAC`. When enabled, `home_asset_usage()` removes
+`RugFactory` from the home factory registry and `home_furniture_constraints()`
+skips rug/floor-covering constraints and score terms. It logs:
+
+```text
+[carpet_omit] disabled carpet/rug generation because OMIT_CARPETS_FOR_ISAAC=1
+```
+
+The production queue now defaults to:
+
+```text
+OMIT_CARPETS_FOR_ISAAC=1
+CHECK_NO_CARPETS=1
+CARPET_CHECK_STRICT=1
+```
+
+`scripts/check_no_carpets.py` checks a coarse directory or production root,
+preferring `solve_state.json` factory/tags metadata and using Blender
+background inspection only when necessary. It writes
+`no_carpet_report.csv` and `no_carpet_report.md`. The production queue runs
+this checker after coarse generation; strict failures set
+`quality_status=quality_failed` and skip export. Setting
+`CARPET_CHECK_STRICT=0` leaves the finding as a warning and still exports.
+
+This path does not delete floors, walls, beds, sofas, tables, normal
+furniture, or clutter, and it does not reduce room count or general furniture
+complexity. To restore rugs for a special run, explicitly set
+`OMIT_CARPETS_FOR_ISAAC=0 CHECK_NO_CARPETS=0`.
+
+### Validation
+
+Static checks passed:
+
+```text
+bash -n scripts/run_9950x3d_production_scene_queue.sh
+python -m py_compile scripts/check_no_carpets.py scripts/check_bedroom_bed_count.py scripts/check_room_light_blockers.py scripts/analyze_9950x3d_production_queue.py infinigen_examples/constraints/home.py infinigen_examples/constraints/semantics.py
+git diff --check
+```
+
+Read-only checker sanity on the preserved seed201 coarse output found the
+existing historical rugs:
+
+```text
+carpet_object_count=5
+factory class: RugFactory
+source: solve_state
+```
+
+The requested seed301 dry-run passed. It printed
+`omit_carpets_for_isaac=1`, `check_no_carpets=1`, and
+`carpet_check_strict=1`; the coarse command included
+`OMIT_CARPETS_FOR_ISAAC=1`; the no-carpet checker would run after generation;
+and the dry-run printed that no-carpet strict failures skip export. Wheat
+reuse remained unset.
+
 ## 2026-06-25 - Seed201 no-ceiling no-exterior Isaac smoke
 
 ### Round Goal

@@ -1,5 +1,41 @@
 # Isaac Lighting And Room Quality
 
+## No-Carpet Production Default
+
+The current 9950X3D Isaac production queue defaults to no carpet/rug
+floor-covering objects:
+
+```text
+OMIT_CARPETS_FOR_ISAAC=1
+CHECK_NO_CARPETS=1
+CARPET_CHECK_STRICT=1
+```
+
+This is for Isaac Sim review and clearer visible/navigation areas in the
+exported USDC scene. The implementation removes `RugFactory` from the home
+generation factory registry and skips rug/floor-covering constraints when the
+environment variable is enabled. It is not a post-export blind mesh deletion
+path.
+
+The no-carpet path does not delete floors, walls, beds, sofas, tables, normal
+furniture, or clutter, and it does not reduce room count. To restore rugs for
+a special run:
+
+```text
+OMIT_CARPETS_FOR_ISAAC=0
+CHECK_NO_CARPETS=0
+```
+
+Use the checker on a coarse scene or production root:
+
+```bash
+python scripts/check_no_carpets.py outputs/production_final_seed1_40
+```
+
+It writes `no_carpet_report.csv` and `no_carpet_report.md`, prioritizes
+`solve_state.json` factory/tags metadata, and does not treat generic material
+names as carpet evidence.
+
 ## Dome Light Blockers
 
 User feedback from Isaac Sim: after removing room ceilings, rooms still showed

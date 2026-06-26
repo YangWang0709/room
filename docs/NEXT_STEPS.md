@@ -26,6 +26,22 @@ ADD_ISAAC_FILL_LIGHT=1
 FILL_LIGHT_INTENSITY=1000
 ```
 
+The current 9950X3D Isaac production queue is the exception for carpet/rug
+objects: it now defaults to no-carpet generation and strict checking for Isaac
+Sim review and clearer visible/navigation areas:
+
+```text
+OMIT_CARPETS_FOR_ISAAC=1
+CHECK_NO_CARPETS=1
+CARPET_CHECK_STRICT=1
+```
+
+This excludes `RugFactory` during generation and runs
+`scripts/check_no_carpets.py` after coarse generation. It does not delete
+floors, walls, beds, sofas, tables, normal furniture, or clutter. To restore
+carpets/rugs for a special run, explicitly set
+`OMIT_CARPETS_FOR_ISAAC=0 CHECK_NO_CARPETS=0`.
+
 Seed200 smoke status:
 
 ```text
@@ -88,8 +104,9 @@ Isaac open directory: outputs/production_9950x3d_no_ceiling_no_exterior_smoke_se
 
 The next action is visual inspection in Isaac Sim. If that still leaves a
 visible frame blocking Dome Light, run a second one-seed test with
-`OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=1`. Do not default either new omit behavior;
-do not delete walls, floors, doors, furniture, or clutter.
+`OMIT_ROOM_PILLARS_FOR_DOME_LIGHT=1`. Do not default room exterior/pillar
+omit behavior outside the explicit Isaac quality command; do not delete walls,
+floors, doors, furniture, or clutter.
 
 Immediate validation path:
 
@@ -172,7 +189,7 @@ scripts/run_9950x3d_production_scene_queue.sh
 Each worker keeps a fixed CPU set and serially runs:
 
 ```text
-coarse -> export USD/USDC -> next seed
+coarse -> no-carpet check -> export USD/USDC -> next seed
 ```
 
 This remains scene-level multiprocessing. Each seed is an independent
@@ -191,6 +208,9 @@ compose_indoors.terrain_enabled=False
 home_room_constraints.has_fewer_rooms=False
 restrict_solving.solve_max_rooms=10
 populate_doors.door_chance=0
+OMIT_CARPETS_FOR_ISAAC=1
+CHECK_NO_CARPETS=1
+CARPET_CHECK_STRICT=1
 ```
 
 Wheat reuse remains default-off. Only `ENABLE_WHEAT_REUSE=1` should set

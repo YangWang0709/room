@@ -19,6 +19,9 @@ FIELDNAMES = [
     "cpu_set",
     "omit_room_exterior_for_dome_light",
     "omit_room_pillars_for_dome_light",
+    "omit_carpets_for_isaac",
+    "check_no_carpets",
+    "carpet_check_strict",
     "check_room_light_blockers",
     "generate_status",
     "generate_exit_code",
@@ -27,6 +30,10 @@ FIELDNAMES = [
     "generate_user_time",
     "generate_system_time",
     "scene_blend_exists",
+    "carpet_check_status",
+    "carpet_check_exit_code",
+    "carpet_object_count",
+    "carpet_unknown_count",
     "light_blocker_check_status",
     "light_blocker_check_exit_code",
     "suspected_light_blocker_count",
@@ -259,6 +266,9 @@ def collect_rows(root: Path) -> list[dict[str, str]]:
                 "omit_room_pillars_for_dome_light": status.get(
                     "omit_room_pillars_for_dome_light", ""
                 ),
+                "omit_carpets_for_isaac": status.get("omit_carpets_for_isaac", ""),
+                "check_no_carpets": status.get("check_no_carpets", ""),
+                "carpet_check_strict": status.get("carpet_check_strict", ""),
                 "check_room_light_blockers": status.get(
                     "check_room_light_blockers", ""
                 ),
@@ -269,6 +279,12 @@ def collect_rows(root: Path) -> list[dict[str, str]]:
                 "generate_user_time": generate_time["user_time"],
                 "generate_system_time": generate_time["system_time"],
                 "scene_blend_exists": bool_text((output_folder / "scene.blend").exists()),
+                "carpet_check_status": status.get(
+                    "carpet_check_status", "not_requested"
+                ),
+                "carpet_check_exit_code": status.get("carpet_check_exit_code", ""),
+                "carpet_object_count": status.get("carpet_object_count", ""),
+                "carpet_unknown_count": status.get("carpet_unknown_count", ""),
                 "light_blocker_check_status": status.get(
                     "light_blocker_check_status", "not_requested"
                 ),
@@ -354,6 +370,9 @@ def recommendation(rows: list[dict[str, str]], elapsed: float | None) -> str:
     bed_check_statuses = Counter(
         row.get("bed_check_status", "not_requested") for row in rows
     )
+    carpet_check_statuses = Counter(
+        row.get("carpet_check_status", "not_requested") for row in rows
+    )
     light_blocker_statuses = Counter(
         row.get("light_blocker_check_status", "not_requested") for row in rows
     )
@@ -361,7 +380,9 @@ def recommendation(rows: list[dict[str, str]], elapsed: float | None) -> str:
     if fatal_count or generate_statuses.get("failed") or export_statuses.get("failed"):
         return "Inspect failed seeds and fatal markers before increasing the production batch."
     if any(row.get("quality_status") == "quality_failed" for row in rows):
-        return "Quality gate failed; inspect bedroom bed-count reports before exporting more scenes."
+        return "Quality gate failed; inspect no-carpet and bedroom bed-count reports before exporting more scenes."
+    if carpet_check_statuses.get("failed"):
+        return "No-carpet check failures occurred; inspect carpet_check.log and no_carpet_report files."
     if bed_check_statuses.get("failed"):
         return "Bedroom bed-count check failures occurred; inspect bed_check.log and reports."
     if light_blocker_statuses.get("failed"):
@@ -391,6 +412,9 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
     bed_check_statuses = Counter(
         row.get("bed_check_status", "not_requested") for row in rows
     )
+    carpet_check_statuses = Counter(
+        row.get("carpet_check_status", "not_requested") for row in rows
+    )
     light_blocker_statuses = Counter(
         row.get("light_blocker_check_status", "not_requested") for row in rows
     )
@@ -413,6 +437,7 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
         if row.get("generate_status") in {"failed", "timeout"}
         or row.get("export_status") in {"failed", "timeout"}
         or row.get("quality_status") == "quality_failed"
+        or row.get("carpet_check_status") == "failed"
         or row.get("bed_check_status") == "failed"
         or row.get("lighting_status") == "failed"
         or row.get("fatal_marker") == "yes"
@@ -464,6 +489,14 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
                     export_statuses.get("not_requested", 0),
                 ],
                 [
+                    "carpet_check",
+                    carpet_check_statuses.get("complete", 0),
+                    carpet_check_statuses.get("failed", 0),
+                    carpet_check_statuses.get("timeout", 0),
+                    carpet_check_statuses.get("skipped", 0),
+                    carpet_check_statuses.get("not_requested", 0),
+                ],
+                [
                     "bed_check",
                     bed_check_statuses.get("complete", 0),
                     bed_check_statuses.get("failed", 0),
@@ -499,11 +532,15 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
                 "cpu_set",
                 "omit_ext",
                 "omit_pillars",
+                "omit_carpets",
                 "generate",
                 "gen_exit",
                 "gen_wall_s",
                 "gen_rss_kb",
                 "scene",
+                "carpet_check",
+                "carpets",
+                "carpet_unknown",
                 "blocker_check",
                 "blockers",
                 "exterior",
@@ -532,11 +569,15 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
                     row.get("cpu_set", ""),
                     row.get("omit_room_exterior_for_dome_light", ""),
                     row.get("omit_room_pillars_for_dome_light", ""),
+                    row.get("omit_carpets_for_isaac", ""),
                     row.get("generate_status", ""),
                     row.get("generate_exit_code", ""),
                     row.get("generate_wall_time", ""),
                     row.get("generate_max_rss", ""),
                     row.get("scene_blend_exists", ""),
+                    row.get("carpet_check_status", ""),
+                    row.get("carpet_object_count", ""),
+                    row.get("carpet_unknown_count", ""),
                     row.get("light_blocker_check_status", ""),
                     row.get("suspected_light_blocker_count", ""),
                     row.get("exterior_object_count", ""),
@@ -589,6 +630,9 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
                     "worker",
                     "generate",
                     "export",
+                    "carpet_check",
+                    "carpets",
+                    "carpet_unknown",
                     "bed_check",
                     "double_beds",
                     "quality",
@@ -601,11 +645,19 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
                         row.get("worker_id", ""),
                         row.get("generate_status", ""),
                         row.get("export_status", ""),
+                        row.get("carpet_check_status", ""),
+                        row.get("carpet_object_count", ""),
+                        row.get("carpet_unknown_count", ""),
                         row.get("bed_check_status", ""),
                         row.get("bedroom_double_bed_count", ""),
                         row.get("quality_status", ""),
                         row.get("lighting_status", ""),
                         row.get("fatal_marker_detail", "")
+                        or (
+                            "no-carpet check failed"
+                            if row.get("carpet_check_status") == "failed"
+                            else ""
+                        )
                         or (
                             "bed check failed"
                             if row.get("bed_check_status") == "failed"
