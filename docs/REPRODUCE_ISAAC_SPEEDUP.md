@@ -48,6 +48,29 @@ the local CPU topology. The current CPU placement is specific to this 9950X3D:
 12-15,28-31
 ```
 
+The current CPU sets were derived from Linux sysfs:
+
+```text
+/sys/devices/system/cpu/cpu*/topology/thread_siblings_list
+/sys/devices/system/cpu/cpu*/cache/index3/shared_cpu_list
+```
+
+The measured SMT sibling pairs are `0,16`, `1,17`, through `15,31`. The measured
+L3 / CCD groups are:
+
+```text
+0-7,16-23
+8-15,24-31
+```
+
+Each worker CPU set stays inside one half of a single L3/CCD group. This keeps
+the current scene-level multiprocessing path local to L3/CCD groups. The
+current scheduler does not yet distinguish which CCD has the larger 3D V-Cache;
+future tuning can read
+`/sys/devices/system/cpu/cpu*/cache/index3/size` before adding cache-aware
+placement. Do not try to parallelize one Blender/`bpy` process with Python
+threads for this workload.
+
 ## 4. Environment Notes
 
 Use the normal Infinigen dependency environment. The active Python environment
@@ -114,6 +137,7 @@ PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python \
 CLEAN=1 \
 SEEDS=1-40 \
 JOBS=4 \
+QUEUE_MODE=dynamic \
 CPU_SETS="0-3,16-19;4-7,20-23;8-11,24-27;12-15,28-31" \
 EXPORT_AFTER_GENERATE=1 \
 EXPORT_FORMAT=usdc \
@@ -142,9 +166,19 @@ INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1
 INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1
 ```
 
+The production queue defaults to `QUEUE_MODE=dynamic`. In this mode every seed
+enters one shared pending pool, and workers claim the next available seed after
+finishing their current seed. The worker's CPU set remains fixed. To reproduce
+the older round-robin behavior for comparison or rollback, use:
+
+```bash
+QUEUE_MODE=static CLEAN=1 bash scripts/run_final_40_scene_production.sh
+```
+
 ## 6. What Each Flag Means
 
 - `JOBS` / `CPU_SETS`: run independent scene processes in parallel and bind each worker to a fixed CPU set. The recommended `JOBS=4` placement is for the 9950X3D validation machine.
+- `QUEUE_MODE`: default `dynamic`; workers claim seeds from a shared pool. Set `QUEUE_MODE=static` to restore old round-robin seed assignment.
 - `EXPORT_AFTER_GENERATE`: export each seed after its coarse generation completes in the same worker.
 - `OMIT_CEILINGS_FOR_DOME_LIGHT`: omit room ceiling meshes for Isaac Dome Light visibility.
 - `OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT`: delete the split-room exterior shell/frame meshes after room splitting.

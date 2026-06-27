@@ -15,6 +15,7 @@ EXPORT_RESOLUTION="${EXPORT_RESOLUTION:-512}"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-14400}"
 EXPORT_TIMEOUT_SECONDS="${EXPORT_TIMEOUT_SECONDS:-7200}"
 DRY_RUN="${DRY_RUN:-0}"
+QUEUE_MODE="${QUEUE_MODE:-dynamic}"
 
 EXPORT_FORMAT="usdc"
 EXPORT_AFTER_GENERATE="1"
@@ -205,6 +206,7 @@ write_run_info() {
     echo "CLEAN=${CLEAN}"
     echo "RESUME=${RESUME}"
     echo "DRY_RUN=${DRY_RUN}"
+    echo "QUEUE_MODE=${QUEUE_MODE}"
     echo "TIMEOUT_SECONDS=${TIMEOUT_SECONDS}"
     echo "EXPORT_TIMEOUT_SECONDS=${EXPORT_TIMEOUT_SECONDS}"
     echo "EXPORT_AFTER_GENERATE=${EXPORT_AFTER_GENERATE}"
@@ -287,6 +289,7 @@ build_queue_command() {
     "CLEAN=${CLEAN}"
     "RESUME=${RESUME}"
     "DRY_RUN=${DRY_RUN}"
+    "QUEUE_MODE=${QUEUE_MODE}"
     bash scripts/run_9950x3d_production_scene_queue.sh
   )
 }
@@ -347,6 +350,7 @@ generate_final_reports() {
     REPORT_CLEAN="$CLEAN" \
     REPORT_RESUME="$RESUME" \
     REPORT_DRY_RUN="$DRY_RUN" \
+    REPORT_QUEUE_MODE="$QUEUE_MODE" \
     REPORT_ANALYZER_LOG="$ANALYZER_LOG" \
     "$REPORT_PYTHON" - "$OUTPUT_ROOT" <<'PY'
 from __future__ import annotations
@@ -596,6 +600,7 @@ lines = [
     f"- clean: `{os.environ['REPORT_CLEAN']}`",
     f"- resume: `{os.environ['REPORT_RESUME']}`",
     f"- dry_run: `{os.environ['REPORT_DRY_RUN']}`",
+    f"- queue_mode: `{os.environ['REPORT_QUEUE_MODE']}`",
     "- speed flags: `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1`, `INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1`, `INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1`",
     "- Wheat reuse: disabled (`ENABLE_WHEAT_REUSE=0`, no `INFINIGEN_REUSE_PLANT_TEMPLATE_GEOMETRY`)",
     "- auto Dome Light: disabled (`ADD_ISAAC_DOME_LIGHT=0`); add Dome Light manually in Isaac Sim",
@@ -780,6 +785,7 @@ main() {
   echo "run_final_40_scene_production started at $(timestamp)"
   echo "Output root: ${OUTPUT_ROOT}"
   echo "Dry-run: ${DRY_RUN}"
+  echo "Queue mode: ${QUEUE_MODE}"
   echo
 
   check_python_bin

@@ -19,6 +19,7 @@ SEEDS=1-40
 OUTPUT_ROOT=outputs/final_40_scene_production
 PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python
 JOBS=4
+QUEUE_MODE=dynamic
 CPU_SETS="0-3,16-19;4-7,20-23;8-11,24-27;12-15,28-31"
 EXPORT_FORMAT=usdc
 EXPORT_RESOLUTION=512
@@ -43,8 +44,15 @@ Dry-run the final command shape without real generation/export:
 ```bash
 DRY_RUN=1 \
 SEEDS=1-4 \
+QUEUE_MODE=dynamic \
 OUTPUT_ROOT=outputs/final_40_scene_production_dryrun \
 bash scripts/run_final_40_scene_production.sh
+```
+
+Return to the old round-robin worker assignment if needed:
+
+```bash
+QUEUE_MODE=static CLEAN=1 bash scripts/run_final_40_scene_production.sh
 ```
 
 Review the final report and path list:
@@ -83,7 +91,13 @@ split coarse benchmark. This is scene-level multiprocessing: each seed runs in
 an independent Python-Blender process. It is not Python threading inside one
 Blender / `bpy` process.
 
-Each worker keeps a fixed CPU set and processes its own queue serially:
+By default the queue uses `QUEUE_MODE=dynamic`: every requested seed enters a
+shared pending pool, and each worker claims the next available seed after it
+finishes its current seed. Each worker still keeps a fixed CPU set and never
+migrates across CPU sets. Use `QUEUE_MODE=static` to restore the old
+round-robin seed assignment.
+
+For each claimed seed, the worker still processes stages serially:
 
 ```text
 worker: coarse -> bed check -> no-carpet check -> optional light blocker check -> export USD/USDC -> optional lighting -> next seed
@@ -93,6 +107,7 @@ Current default candidate:
 
 ```text
 JOBS=4
+QUEUE_MODE=dynamic
 CPU_SETS="0-3,16-19;4-7,20-23;8-11,24-27;12-15,28-31"
 PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python
 OMIT_CARPETS_FOR_ISAAC=1
@@ -107,14 +122,57 @@ CCD0 / L3: 0-7,16-23
 CCD1 / L3: 8-15,24-31
 ```
 
+These were checked from Linux sysfs:
+
+```text
+/sys/devices/system/cpu/cpu*/topology/thread_siblings_list
+/sys/devices/system/cpu/cpu*/cache/index3/shared_cpu_list
+```
+
+The measured SMT sibling pairs are `0,16`, `1,17`, through `15,31`. The current
+four `CPU_SETS` each stay inside one half of a single L3/CCD group, preserving
+L3/CCD locality. The current implementation does not distinguish which CCD is
+the larger 3D V-Cache CCD. Future cache-aware scheduling can read
+`/sys/devices/system/cpu/cpu*/cache/index3/size`. Do not use Python
+multithreading inside one Blender/`bpy` process for this workload.
+
 Do not use `0-15;16-31` as the default CPU split.
 
-Dry-run the default worker assignment and commands:
+Dynamic queue state is written under:
+
+```text
+<OUTPUT_ROOT>/queue/
+  pending_seeds.txt
+  claimed/seed_<SEED>.txt
+  completed/seed_<SEED>.txt
+  failed/seed_<SEED>.txt
+  queue.log
+  queue_state.md
+  worker_sequences.md
+```
+
+`queue.log` records claim, finish, stop, and empty-queue events. The analyzer
+also reports `queue_mode`, claim source, queue order, and each worker's actual
+seed sequence.
+
+Dry-run the default dynamic queue and commands:
 
 ```bash
 DRY_RUN=1 \
 SEEDS=100,101,102,103,104,105,106,107 \
 JOBS=4 \
+QUEUE_MODE=dynamic \
+EXPORT_AFTER_GENERATE=1 \
+bash scripts/run_9950x3d_production_scene_queue.sh
+```
+
+Dry-run the static round-robin fallback:
+
+```bash
+DRY_RUN=1 \
+SEEDS=100,101,102,103,104,105,106,107 \
+JOBS=4 \
+QUEUE_MODE=static \
 EXPORT_AFTER_GENERATE=1 \
 bash scripts/run_9950x3d_production_scene_queue.sh
 ```
@@ -126,6 +184,7 @@ PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python \
 CLEAN=1 \
 SEEDS=1-40 \
 JOBS=4 \
+QUEUE_MODE=dynamic \
 CPU_SETS="0-3,16-19;4-7,20-23;8-11,24-27;12-15,28-31" \
 EXPORT_AFTER_GENERATE=1 \
 EXPORT_FORMAT=usdc \

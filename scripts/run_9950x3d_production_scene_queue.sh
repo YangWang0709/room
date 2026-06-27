@@ -33,10 +33,17 @@ RESUME="${RESUME:-1}"
 CLEAN="${CLEAN:-0}"
 DRY_RUN="${DRY_RUN:-0}"
 KEEP_GOING="${KEEP_GOING:-1}"
+QUEUE_MODE="${QUEUE_MODE:-dynamic}"
 
 SEED_LIST=()
 CPU_SET_LIST=()
-STOP_FILE="${OUTPUT_ROOT}/.stop_requested"
+QUEUE_DIR="${OUTPUT_ROOT}/queue"
+QUEUE_PENDING_FILE="${QUEUE_DIR}/pending_seeds.txt"
+QUEUE_ORDER_FILE="${QUEUE_DIR}/next_order_index"
+QUEUE_LOCK_FILE="${QUEUE_DIR}/lock"
+QUEUE_LOCK_DIR="${QUEUE_DIR}/lock.d"
+QUEUE_LOG="${QUEUE_DIR}/queue.log"
+STOP_FILE="${QUEUE_DIR}/stop_requested"
 RUN_STARTED_AT=""
 
 PROFILE_ENV_VARS=(
@@ -132,6 +139,17 @@ validate_jobs() {
   fi
 }
 
+validate_queue_mode() {
+  case "$QUEUE_MODE" in
+    dynamic|static)
+      ;;
+    *)
+      echo "Invalid QUEUE_MODE='${QUEUE_MODE}'. Use QUEUE_MODE=dynamic or QUEUE_MODE=static." >&2
+      exit 2
+      ;;
+  esac
+}
+
 parse_cpu_sets() {
   local raw_cpu_sets=()
   local raw item
@@ -166,6 +184,33 @@ require_tools() {
     echo "PYTHON_BIN is not executable: ${PYTHON_BIN}" >&2
     exit 2
   fi
+}
+
+queue_lock_acquire() {
+  if command -v flock >/dev/null 2>&1; then
+    exec {QUEUE_LOCK_FD}>"$QUEUE_LOCK_FILE"
+    flock "$QUEUE_LOCK_FD"
+  else
+    while ! mkdir "$QUEUE_LOCK_DIR" 2>/dev/null; do
+      sleep 0.1
+    done
+  fi
+}
+
+queue_lock_release() {
+  if [[ -n "${QUEUE_LOCK_FD:-}" ]]; then
+    flock -u "$QUEUE_LOCK_FD" || true
+    eval "exec ${QUEUE_LOCK_FD}>&-"
+    unset QUEUE_LOCK_FD
+  else
+    rmdir "$QUEUE_LOCK_DIR" 2>/dev/null || true
+  fi
+}
+
+queue_log_event() {
+  local message="$1"
+  mkdir -p "$QUEUE_DIR"
+  printf "%s %s\n" "$(timestamp)" "$message" >> "$QUEUE_LOG"
 }
 
 validate_output_root() {
@@ -503,6 +548,11 @@ write_seed_env() {
     echo "clean=${CLEAN}"
     echo "dry_run=${DRY_RUN}"
     echo "keep_going=${KEEP_GOING}"
+    echo "queue_mode=${QUEUE_MODE}"
+    echo "seed_claimed_at=${STATUS_SEED_CLAIMED_AT:-}"
+    echo "seed_finished_at=${STATUS_SEED_FINISHED_AT:-}"
+    echo "queue_order_index=${STATUS_QUEUE_ORDER_INDEX:-}"
+    echo "claim_source=${STATUS_CLAIM_SOURCE:-}"
     echo "INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1"
     echo "INFINIGEN_REUSE_LARGESHELF_CHILD_NODEGROUPS=1"
     echo "INFINIGEN_FAST_NATURE_TRINKET_STABLE_POSE=1"
@@ -610,6 +660,11 @@ write_status_file() {
     echo "lighting_started_at=${LIGHTING_STARTED_AT:-}"
     echo "lighting_ended_at=${LIGHTING_ENDED_AT:-}"
     echo "dome_light_added=${DOME_LIGHT_ADDED:-}"
+    echo "queue_mode=${STATUS_QUEUE_MODE:-${QUEUE_MODE}}"
+    echo "seed_claimed_at=${STATUS_SEED_CLAIMED_AT:-}"
+    echo "seed_finished_at=${STATUS_SEED_FINISHED_AT:-}"
+    echo "queue_order_index=${STATUS_QUEUE_ORDER_INDEX:-}"
+    echo "claim_source=${STATUS_CLAIM_SOURCE:-}"
     echo "output_folder=${STATUS_OUTPUT_FOLDER:-}"
     echo "usd_folder=${STATUS_USD_FOLDER:-}"
   } > "$status_file"
@@ -630,6 +685,11 @@ mark_seed_stopped() {
   STATUS_CPU_SET="$cpu_set"
   STATUS_OUTPUT_FOLDER="$coarse_dir"
   STATUS_USD_FOLDER="$usd_dir"
+  STATUS_QUEUE_MODE="$QUEUE_MODE"
+  STATUS_SEED_CLAIMED_AT="${CURRENT_SEED_CLAIMED_AT:-$now}"
+  STATUS_SEED_FINISHED_AT="$now"
+  STATUS_QUEUE_ORDER_INDEX="${CURRENT_QUEUE_ORDER_INDEX:-}"
+  STATUS_CLAIM_SOURCE="${CURRENT_CLAIM_SOURCE:-static_assignment}"
   GENERATE_STATUS="skipped"
   GENERATE_EXIT_CODE=""
   GENERATE_STARTED_AT="$now"
@@ -1235,6 +1295,196 @@ run_lighting_seed() {
   } >> "$lighting_log"
 }
 
+queue_lock_backend() {
+  if command -v flock >/dev/null 2>&1; then
+    echo "flock"
+  else
+    echo "mkdir"
+  fi
+}
+
+init_queue_state() {
+  mkdir -p "$QUEUE_DIR"
+  rm -rf "${QUEUE_DIR}/claimed" "${QUEUE_DIR}/completed" "${QUEUE_DIR}/failed"
+  mkdir -p "${QUEUE_DIR}/claimed" "${QUEUE_DIR}/completed" "${QUEUE_DIR}/failed"
+  rm -f "$QUEUE_PENDING_FILE" "$QUEUE_ORDER_FILE" "$QUEUE_LOG" "$STOP_FILE" \
+    "${QUEUE_DIR}/worker_sequences.md" "${QUEUE_DIR}"/worker_*_sequence.txt
+
+  local seed
+  for seed in "${SEED_LIST[@]}"; do
+    echo "$seed" >> "$QUEUE_PENDING_FILE"
+  done
+  echo "0" > "$QUEUE_ORDER_FILE"
+
+  {
+    echo "# Production Queue State"
+    echo
+    echo "- initialized_at: $(timestamp)"
+    echo "- queue_mode: ${QUEUE_MODE}"
+    echo "- lock_backend: $(queue_lock_backend)"
+    echo "- jobs: ${JOBS}"
+    echo "- cpu_sets: ${CPU_SETS}"
+    echo "- seed_count: ${#SEED_LIST[@]}"
+    echo "- pending_seeds_file: ${QUEUE_PENDING_FILE}"
+    echo
+    echo "## Initial Seed Pool"
+    echo
+    for seed in "${SEED_LIST[@]}"; do
+      echo "- ${seed}"
+    done
+  } > "${QUEUE_DIR}/queue_state.md"
+  queue_log_event "[queue] initialized mode=${QUEUE_MODE} seeds=$(join_by_comma "${SEED_LIST[@]}") jobs=${JOBS} lock=$(queue_lock_backend)"
+}
+
+seed_has_failure() {
+  [[ "${GENERATE_STATUS:-}" == "failed" || "${GENERATE_STATUS:-}" == "timeout" \
+    || "${EXPORT_STATUS:-}" == "failed" || "${EXPORT_STATUS:-}" == "timeout" \
+    || "${QUALITY_STATUS:-}" == "quality_failed" \
+    || "${BED_CHECK_STATUS:-}" == "failed" \
+    || "${CARPET_CHECK_STATUS:-}" == "failed" \
+    || "${LIGHTING_STATUS:-}" == "failed" ]]
+}
+
+queue_record_claim_locked() {
+  local worker_id="$1"
+  local cpu_set="$2"
+  local seed="$3"
+  local claimed_at="$4"
+  local queue_order_index="$5"
+  local claim_source="$6"
+  {
+    echo "seed=${seed}"
+    echo "worker_id=${worker_id}"
+    echo "cpu_set=${cpu_set}"
+    echo "claimed_at=${claimed_at}"
+    echo "pid=$$"
+    echo "queue_order_index=${queue_order_index}"
+    echo "claim_source=${claim_source}"
+  } > "${QUEUE_DIR}/claimed/seed_${seed}.txt"
+  echo "$seed" >> "${QUEUE_DIR}/worker_${worker_id}_sequence.txt"
+  queue_log_event "[queue] worker ${worker_id} claimed seed ${seed} cpu_set=${cpu_set} queue_order_index=${queue_order_index} claim_source=${claim_source}"
+}
+
+queue_claim_dynamic_seed() {
+  local worker_id="$1"
+  local cpu_set="$2"
+  local seed claimed_at queue_order_index tmp
+  CLAIMED_SEED=""
+  CLAIMED_AT=""
+  CLAIMED_QUEUE_ORDER_INDEX=""
+  CLAIMED_SOURCE="dynamic_pool"
+
+  queue_lock_acquire
+  if [[ "$KEEP_GOING" != "1" && -f "$STOP_FILE" ]]; then
+    queue_lock_release
+    return 1
+  fi
+  seed="$(sed -n '1p' "$QUEUE_PENDING_FILE" 2>/dev/null || true)"
+  if [[ -z "$seed" ]]; then
+    queue_lock_release
+    return 1
+  fi
+  tmp="${QUEUE_PENDING_FILE}.$$"
+  tail -n +2 "$QUEUE_PENDING_FILE" > "$tmp" 2>/dev/null || true
+  mv "$tmp" "$QUEUE_PENDING_FILE"
+  queue_order_index="$(cat "$QUEUE_ORDER_FILE" 2>/dev/null || echo 0)"
+  queue_order_index=$(( queue_order_index + 1 ))
+  echo "$queue_order_index" > "$QUEUE_ORDER_FILE"
+  claimed_at="$(timestamp)"
+  queue_record_claim_locked "$worker_id" "$cpu_set" "$seed" "$claimed_at" "$queue_order_index" "dynamic_pool"
+  queue_lock_release
+
+  CLAIMED_SEED="$seed"
+  CLAIMED_AT="$claimed_at"
+  CLAIMED_QUEUE_ORDER_INDEX="$queue_order_index"
+  CLAIMED_SOURCE="dynamic_pool"
+  return 0
+}
+
+queue_record_static_claim() {
+  local worker_id="$1"
+  local cpu_set="$2"
+  local seed="$3"
+  local queue_order_index="$4"
+  local claimed_at
+  claimed_at="$(timestamp)"
+  queue_lock_acquire
+  queue_record_claim_locked "$worker_id" "$cpu_set" "$seed" "$claimed_at" "$queue_order_index" "static_assignment"
+  queue_lock_release
+  CURRENT_SEED_CLAIMED_AT="$claimed_at"
+  CURRENT_QUEUE_ORDER_INDEX="$queue_order_index"
+  CURRENT_CLAIM_SOURCE="static_assignment"
+}
+
+queue_mark_seed_finished() {
+  local worker_id="$1"
+  local cpu_set="$2"
+  local seed="$3"
+  local finished_at="$4"
+  local final_dir final_status final_file
+  final_status="completed"
+  final_dir="${QUEUE_DIR}/completed"
+  if seed_has_failure; then
+    final_status="failed"
+    final_dir="${QUEUE_DIR}/failed"
+  fi
+  final_file="${final_dir}/seed_${seed}.txt"
+  {
+    echo "seed=${seed}"
+    echo "worker_id=${worker_id}"
+    echo "cpu_set=${cpu_set}"
+    echo "queue_mode=${QUEUE_MODE}"
+    echo "claim_source=${STATUS_CLAIM_SOURCE:-}"
+    echo "queue_order_index=${STATUS_QUEUE_ORDER_INDEX:-}"
+    echo "claimed_at=${STATUS_SEED_CLAIMED_AT:-}"
+    echo "finished_at=${finished_at}"
+    echo "final_status=${final_status}"
+    echo "generate_status=${GENERATE_STATUS:-}"
+    echo "export_status=${EXPORT_STATUS:-}"
+    echo "quality_status=${QUALITY_STATUS:-}"
+    echo "bed_check_status=${BED_CHECK_STATUS:-}"
+    echo "carpet_check_status=${CARPET_CHECK_STATUS:-}"
+    echo "light_blocker_check_status=${LIGHT_BLOCKER_CHECK_STATUS:-}"
+  } > "$final_file"
+  queue_log_event "[queue] worker ${worker_id} finished seed ${seed} generate_status=${GENERATE_STATUS:-} export_status=${EXPORT_STATUS:-} quality_status=${QUALITY_STATUS:-} final_status=${final_status}"
+  if [[ "$KEEP_GOING" != "1" && "$final_status" == "failed" ]]; then
+    echo "seed=${seed} worker=${worker_id} requested stop at ${finished_at}" > "$STOP_FILE"
+    queue_log_event "[queue] stop requested by worker ${worker_id} seed ${seed}"
+  fi
+}
+
+write_worker_sequences() {
+  local sequences_file="${QUEUE_DIR}/worker_sequences.md"
+  local worker_id sequence_file sequence item
+  {
+    echo "# Worker Seed Sequences"
+    echo
+    echo "- generated_at: $(timestamp)"
+    echo "- queue_mode: ${QUEUE_MODE}"
+    echo
+    for (( worker_id = 0; worker_id < JOBS; worker_id++ )); do
+      sequence_file="${QUEUE_DIR}/worker_${worker_id}_sequence.txt"
+      if [[ -f "$sequence_file" ]]; then
+        sequence=""
+        while IFS= read -r item; do
+          if [[ -z "$sequence" ]]; then
+            sequence="seed${item}"
+          else
+            sequence="${sequence} -> seed${item}"
+          fi
+        done < "$sequence_file"
+      else
+        sequence=""
+      fi
+      if [[ -n "$sequence" ]]; then
+        echo "worker${worker_id}: ${sequence}"
+      else
+        echo "worker${worker_id}:"
+      fi
+    done
+  } > "$sequences_file"
+}
+
 run_seed() {
   local worker_id="$1"
   local cpu_set="$2"
@@ -1252,6 +1502,11 @@ run_seed() {
   STATUS_CPU_SET="$cpu_set"
   STATUS_OUTPUT_FOLDER="$coarse_dir"
   STATUS_USD_FOLDER="$usd_dir"
+  STATUS_QUEUE_MODE="$QUEUE_MODE"
+  STATUS_SEED_CLAIMED_AT="${CURRENT_SEED_CLAIMED_AT:-$(timestamp)}"
+  STATUS_SEED_FINISHED_AT=""
+  STATUS_QUEUE_ORDER_INDEX="${CURRENT_QUEUE_ORDER_INDEX:-}"
+  STATUS_CLAIM_SOURCE="${CURRENT_CLAIM_SOURCE:-static_assignment}"
   GENERATE_STATUS=""
   GENERATE_EXIT_CODE=""
   GENERATE_STARTED_AT=""
@@ -1321,14 +1576,11 @@ run_seed() {
   run_light_blocker_check_seed "$worker_id" "$cpu_set" "$seed" "$coarse_dir" "$log_dir"
   run_export_seed "$worker_id" "$cpu_set" "$seed" "$coarse_dir" "$usd_dir" "$log_dir"
   run_lighting_seed "$worker_id" "$cpu_set" "$seed" "$usd_dir" "$log_dir"
+  STATUS_SEED_FINISHED_AT="$(timestamp)"
   write_status_file "$status_file"
+  queue_mark_seed_finished "$worker_id" "$cpu_set" "$seed" "$STATUS_SEED_FINISHED_AT"
 
-  if [[ "$KEEP_GOING" != "1" ]]; then
-    if [[ "$GENERATE_STATUS" == "failed" || "$GENERATE_STATUS" == "timeout" \
-       || "$EXPORT_STATUS" == "failed" || "$EXPORT_STATUS" == "timeout" ]]; then
-      echo "seed=${seed} worker=${worker_id} requested stop at $(timestamp)" > "$STOP_FILE"
-    fi
-  fi
+  echo "[queue] worker ${worker_id} finished seed ${seed} generate_status=${GENERATE_STATUS:-} export_status=${EXPORT_STATUS:-} quality_status=${QUALITY_STATUS:-}"
 }
 
 worker_main() {
@@ -1338,24 +1590,54 @@ worker_main() {
   local assigned
   assigned="$(assigned_seeds_for_worker "$worker_id")"
   {
-    echo "worker${worker_id} CPU_SET=${cpu_set} seeds=${assigned}"
+    echo "worker${worker_id} CPU_SET=${cpu_set} QUEUE_MODE=${QUEUE_MODE}"
+    if [[ "$QUEUE_MODE" == "static" ]]; then
+      echo "worker${worker_id} static seeds=${assigned}"
+    else
+      echo "worker${worker_id} dynamic shared seed pool"
+    fi
     echo "started_at=$(timestamp)"
   } > "$worker_log"
 
   local idx seed
-  for idx in "${!SEED_LIST[@]}"; do
-    if (( idx % JOBS != worker_id )); then
-      continue
-    fi
-    seed="${SEED_LIST[$idx]}"
-    if [[ "$KEEP_GOING" != "1" && -f "$STOP_FILE" ]]; then
-      echo "worker${worker_id}: stop requested before seed ${seed}" >> "$worker_log"
-      mark_seed_stopped "$worker_id" "$cpu_set" "$seed"
-      continue
-    fi
-    echo "worker${worker_id}: seed ${seed} coarse -> bed_check -> carpet_check -> light_blocker_check -> export -> lighting -> next" >> "$worker_log"
-    run_seed "$worker_id" "$cpu_set" "$seed" >> "$worker_log" 2>&1
-  done
+  if [[ "$QUEUE_MODE" == "dynamic" ]]; then
+    while true; do
+      if ! queue_claim_dynamic_seed "$worker_id" "$cpu_set"; then
+        echo "[queue] worker ${worker_id} no pending seeds; exiting" >> "$worker_log"
+        queue_log_event "[queue] worker ${worker_id} no pending seeds; exiting"
+        break
+      fi
+      seed="$CLAIMED_SEED"
+      CURRENT_SEED_CLAIMED_AT="$CLAIMED_AT"
+      CURRENT_QUEUE_ORDER_INDEX="$CLAIMED_QUEUE_ORDER_INDEX"
+      CURRENT_CLAIM_SOURCE="$CLAIMED_SOURCE"
+      echo "[queue] worker ${worker_id} claimed seed ${seed}" >> "$worker_log"
+      echo "worker${worker_id}: seed ${seed} coarse -> bed_check -> carpet_check -> light_blocker_check -> export -> lighting -> next" >> "$worker_log"
+      if [[ "$DRY_RUN" == "1" ]]; then
+        sleep 0.05
+      fi
+      run_seed "$worker_id" "$cpu_set" "$seed" >> "$worker_log" 2>&1
+    done
+  else
+    for idx in "${!SEED_LIST[@]}"; do
+      if (( idx % JOBS != worker_id )); then
+        continue
+      fi
+      seed="${SEED_LIST[$idx]}"
+      CURRENT_QUEUE_ORDER_INDEX=$(( idx + 1 ))
+      CURRENT_CLAIM_SOURCE="static_assignment"
+      if [[ "$KEEP_GOING" != "1" && -f "$STOP_FILE" ]]; then
+        CURRENT_SEED_CLAIMED_AT="$(timestamp)"
+        echo "worker${worker_id}: stop requested before seed ${seed}" >> "$worker_log"
+        mark_seed_stopped "$worker_id" "$cpu_set" "$seed"
+        continue
+      fi
+      queue_record_static_claim "$worker_id" "$cpu_set" "$seed" "$CURRENT_QUEUE_ORDER_INDEX"
+      echo "[queue] worker ${worker_id} claimed seed ${seed}" >> "$worker_log"
+      echo "worker${worker_id}: seed ${seed} coarse -> bed_check -> carpet_check -> light_blocker_check -> export -> lighting -> next" >> "$worker_log"
+      run_seed "$worker_id" "$cpu_set" "$seed" >> "$worker_log" 2>&1
+    done
+  fi
   echo "ended_at=$(timestamp)" >> "$worker_log"
 }
 
@@ -1370,6 +1652,7 @@ safe_clean_involved_seeds() {
   done
   rm -f "${OUTPUT_ROOT}/summary.csv" "${OUTPUT_ROOT}/summary.md" \
     "${OUTPUT_ROOT}/run_info.txt" "${OUTPUT_ROOT}/worker_"*.log "$STOP_FILE"
+  rm -rf "$QUEUE_DIR"
 }
 
 write_run_info() {
@@ -1446,6 +1729,7 @@ write_run_info() {
     echo "CLEAN=${CLEAN}"
     echo "DRY_RUN=${DRY_RUN}"
     echo "KEEP_GOING=${KEEP_GOING}"
+    echo "QUEUE_MODE=${QUEUE_MODE}"
   } > "$run_info" 2>&1
 }
 
@@ -1455,14 +1739,22 @@ print_worker_assignments() {
   echo "PYTHON_BIN=${PYTHON_BIN}"
   echo "JOBS=${JOBS}"
   echo "CPU_SETS=${CPU_SETS}"
+  echo "QUEUE_MODE=${QUEUE_MODE}"
   echo "Seeds: $(join_by_comma "${SEED_LIST[@]}")"
   echo "omit_carpets_for_isaac=${OMIT_CARPETS_FOR_ISAAC}"
   echo "check_no_carpets=${CHECK_NO_CARPETS}"
   echo "carpet_check_strict=${CARPET_CHECK_STRICT}"
   echo
-  for (( worker_id = 0; worker_id < JOBS; worker_id++ )); do
-    echo "worker${worker_id} CPU_SET=${CPU_SET_LIST[$worker_id]} seeds=$(assigned_seeds_for_worker "$worker_id")"
-  done
+  if [[ "$QUEUE_MODE" == "dynamic" ]]; then
+    echo "dynamic pending seed pool count=${#SEED_LIST[@]}"
+    for (( worker_id = 0; worker_id < JOBS; worker_id++ )); do
+      echo "worker${worker_id} CPU_SET=${CPU_SET_LIST[$worker_id]} dynamic_pool"
+    done
+  else
+    for (( worker_id = 0; worker_id < JOBS; worker_id++ )); do
+      echo "worker${worker_id} CPU_SET=${CPU_SET_LIST[$worker_id]} seeds=$(assigned_seeds_for_worker "$worker_id")"
+    done
+  fi
 }
 
 print_dry_run_plan() {
@@ -1470,6 +1762,15 @@ print_dry_run_plan() {
   echo
   echo "DRY_RUN=1: commands printed; generation/export skipped."
   echo
+  if [[ "$QUEUE_MODE" == "dynamic" ]]; then
+    echo "QUEUE_MODE=dynamic: all ${#SEED_LIST[@]} seeds are placed in ${QUEUE_PENDING_FILE}."
+    echo "Workers claim one seed at a time from the shared pool; worker logs and ${QUEUE_LOG} record actual claims."
+    for (( worker_id = 0; worker_id < JOBS; worker_id++ )); do
+      echo "== worker${worker_id} CPU_SET=${CPU_SET_LIST[$worker_id]} dynamic shared queue =="
+    done
+    echo
+    return
+  fi
   for (( worker_id = 0; worker_id < JOBS; worker_id++ )); do
     cpu_set="${CPU_SET_LIST[$worker_id]}"
     echo "== worker${worker_id} CPU_SET=${cpu_set} seeds=$(assigned_seeds_for_worker "$worker_id") =="
@@ -1541,6 +1842,7 @@ write_summary() {
 main() {
   parse_seeds
   validate_jobs
+  validate_queue_mode
   parse_cpu_sets
   require_tools
   validate_output_root
@@ -1548,8 +1850,8 @@ main() {
   RUN_STARTED_AT="$(timestamp)"
   mkdir -p "$OUTPUT_ROOT"
   safe_clean_involved_seeds
-  rm -f "$STOP_FILE"
   mkdir -p "${OUTPUT_ROOT}/logs"
+  init_queue_state
   write_run_info
   print_worker_assignments
   if [[ "$DRY_RUN" == "1" ]]; then
@@ -1568,6 +1870,7 @@ main() {
 
   echo
   echo "Workers finished. Writing summary."
+  write_worker_sequences
   write_summary
 
   if [[ -f "$STOP_FILE" && "$KEEP_GOING" != "1" ]]; then

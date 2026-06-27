@@ -15,8 +15,14 @@ from typing import Iterable
 
 FIELDNAMES = [
     "seed",
+    "queue_mode",
+    "seed_claimed_at",
+    "seed_finished_at",
+    "queue_order_index",
+    "claim_source",
     "worker_id",
     "cpu_set",
+    "worker_seed_sequence",
     "omit_room_exterior_for_dome_light",
     "omit_room_pillars_for_dome_light",
     "omit_carpets_for_isaac",
@@ -258,8 +264,14 @@ def collect_rows(root: Path) -> list[dict[str, str]]:
         rows.append(
             {
                 "seed": seed,
+                "queue_mode": status.get("queue_mode", ""),
+                "seed_claimed_at": status.get("seed_claimed_at", ""),
+                "seed_finished_at": status.get("seed_finished_at", ""),
+                "queue_order_index": status.get("queue_order_index", ""),
+                "claim_source": status.get("claim_source", ""),
                 "worker_id": status.get("worker_id", ""),
                 "cpu_set": status.get("cpu_set", ""),
+                "worker_seed_sequence": "",
                 "omit_room_exterior_for_dome_light": status.get(
                     "omit_room_exterior_for_dome_light", ""
                 ),
@@ -322,6 +334,105 @@ def collect_rows(root: Path) -> list[dict[str, str]]:
             }
         )
     return rows
+
+
+def row_order_key(row: dict[str, str]) -> tuple[int, int]:
+    queue_index = parse_int(row.get("queue_order_index", ""))
+    seed = parse_int(row.get("seed", "")) or 0
+    if queue_index is None:
+        return (1, seed)
+    return (0, queue_index)
+
+
+def apply_worker_sequences(rows: list[dict[str, str]]) -> dict[str, list[str]]:
+    sequences: dict[str, list[str]] = {}
+    for row in sorted(rows, key=row_order_key):
+        worker_id = row.get("worker_id", "")
+        seed = row.get("seed", "")
+        if not worker_id or not seed:
+            continue
+        sequences.setdefault(worker_id, []).append(seed)
+    for row in rows:
+        worker_id = row.get("worker_id", "")
+        sequence = sequences.get(worker_id, [])
+        row["worker_seed_sequence"] = " -> ".join(f"seed{seed}" for seed in sequence)
+    return sequences
+
+
+def row_duration(row: dict[str, str]) -> float:
+    return (row_wall(row, "generate") or 0.0) + (row_wall(row, "export") or 0.0)
+
+
+def worker_summary_rows(rows: list[dict[str, str]]) -> list[list[object]]:
+    summary_rows: list[list[object]] = []
+    worker_ids = sorted(
+        {row.get("worker_id", "") for row in rows if row.get("worker_id", "")},
+        key=lambda value: parse_int(value) if parse_int(value) is not None else 9999,
+    )
+    for worker_id in worker_ids:
+        worker_rows = [row for row in rows if row.get("worker_id") == worker_id]
+        worker_rows.sort(key=row_order_key)
+        complete_count = sum(
+            1
+            for row in worker_rows
+            if row.get("generate_status") == "complete"
+            and row.get("export_status") in {"complete", "skipped", "not_requested"}
+            and row.get("quality_status") != "quality_failed"
+        )
+        failed_count = sum(
+            1
+            for row in worker_rows
+            if row.get("generate_status") in {"failed", "timeout"}
+            or row.get("export_status") in {"failed", "timeout"}
+            or row.get("quality_status") == "quality_failed"
+        )
+        busy_wall = sum(row_duration(row) for row in worker_rows)
+        claimed_times = [
+            parse_dt(row.get("seed_claimed_at", "")) for row in worker_rows
+        ]
+        finished_times = [
+            parse_dt(row.get("seed_finished_at", "")) for row in worker_rows
+        ]
+        claimed_times = [value for value in claimed_times if value is not None]
+        finished_times = [value for value in finished_times if value is not None]
+        span = None
+        idle_estimate = None
+        if claimed_times and finished_times:
+            span = max((max(finished_times) - min(claimed_times)).total_seconds(), 0.0)
+            idle_estimate = max(span - busy_wall, 0.0)
+        summary_rows.append(
+            [
+                worker_id,
+                worker_rows[0].get("cpu_set", "") if worker_rows else "",
+                len(worker_rows),
+                complete_count,
+                failed_count,
+                fmt_seconds(busy_wall),
+                fmt_seconds(span),
+                fmt_seconds(idle_estimate),
+                " -> ".join(f"seed{row.get('seed', '')}" for row in worker_rows),
+            ]
+        )
+    return summary_rows
+
+
+def write_worker_sequences(root: Path, rows: list[dict[str, str]]) -> None:
+    sequences = apply_worker_sequences(rows)
+    queue_dir = root / "queue"
+    queue_dir.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "# Worker Seed Sequences",
+        "",
+        f"- generated_at: {datetime.now().isoformat(timespec='seconds')}",
+        "",
+    ]
+    for worker_id in sorted(
+        sequences,
+        key=lambda value: parse_int(value) if parse_int(value) is not None else 9999,
+    ):
+        sequence = " -> ".join(f"seed{seed}" for seed in sequences[worker_id])
+        lines.append(f"worker{worker_id}: {sequence}")
+    (queue_dir / "worker_sequences.md").write_text("\n".join(lines) + "\n")
 
 
 def markdown_table(headers: list[str], body: Iterable[list[object]]) -> str:
@@ -406,6 +517,7 @@ def recommendation(rows: list[dict[str, str]], elapsed: float | None) -> str:
 
 
 def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
+    apply_worker_sequences(rows)
     elapsed = total_elapsed(rows)
     generate_statuses = Counter(row.get("generate_status", "") for row in rows)
     export_statuses = Counter(row.get("export_status", "") for row in rows)
@@ -423,6 +535,9 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
     )
     generated = generate_statuses.get("complete", 0)
     exported = export_statuses.get("complete", 0)
+    queue_modes = Counter(row.get("queue_mode", "") or "unknown" for row in rows)
+    queue_mode = queue_modes.most_common(1)[0][0] if queue_modes else "unknown"
+    dynamic_enabled = "yes" if queue_mode == "dynamic" else "no"
     coarse_scenes_hour = None
     usd_scenes_hour = None
     if elapsed and elapsed > 0:
@@ -453,6 +568,8 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
         "# 9950X3D Production Scene Queue Summary",
         "",
         f"- output root: `{root}`",
+        f"- queue mode: `{queue_mode}`",
+        f"- dynamic queue enabled: `{dynamic_enabled}`",
         f"- total seeds: `{len(rows)}`",
         f"- generated scene count: `{generated}`",
         f"- exported USD count: `{exported}`",
@@ -466,6 +583,25 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
         f"- slowest seed: `{slowest.get('seed', '')}`",
         f"- fastest seed: `{fastest.get('seed', '')}`",
         f"- recommended next action: {recommendation(rows, elapsed)}",
+        "",
+        "## Worker Load Balance",
+        "",
+        markdown_table(
+            [
+                "worker",
+                "cpu_set",
+                "seed_count",
+                "complete_count",
+                "failed_count",
+                "busy_wall_estimate",
+                "active_span",
+                "idle_estimate",
+                "actual_seed_sequence",
+            ],
+            worker_summary_rows(rows),
+        )
+        if rows
+        else "No worker rows found.",
         "",
         "## Status Counts",
         "",
@@ -528,6 +664,9 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
         markdown_table(
             [
                 "seed",
+                "queue_mode",
+                "queue_order",
+                "claim_source",
                 "worker",
                 "cpu_set",
                 "omit_ext",
@@ -565,6 +704,9 @@ def render_markdown(root: Path, rows: list[dict[str, str]]) -> str:
             [
                 [
                     row.get("seed", ""),
+                    row.get("queue_mode", ""),
+                    row.get("queue_order_index", ""),
+                    row.get("claim_source", ""),
                     row.get("worker_id", ""),
                     row.get("cpu_set", ""),
                     row.get("omit_room_exterior_for_dome_light", ""),
@@ -701,6 +843,7 @@ def main() -> None:
     rows = collect_rows(args.output_root)
     markdown = render_markdown(args.output_root, rows)
     if args.write_summaries:
+        write_worker_sequences(args.output_root, rows)
         write_csv(args.output_root / "summary.csv", rows)
         (args.output_root / "summary.md").write_text(markdown)
     print(markdown)

@@ -34,9 +34,13 @@ CLEAN=1 bash scripts/run_final_40_scene_production.sh
 Use `SEEDS=41-80` for another 40-scene range, or
 `OUTPUT_ROOT=outputs/my_40_scenes` for a custom output folder. The launcher
 writes `summary.csv`, `summary.md`, `FINAL_RUN_REPORT.md`, and
-`launcher_logs/final_paths.txt` under the output root. Open each
-`seed_<SEED>/usd/export_scene.blend/` directory in Isaac Sim and add Dome Light
-manually.
+`launcher_logs/final_paths.txt` under the output root. By default it uses the
+dynamic production queue: workers keep fixed CPU sets, but each worker claims
+the next seed from a shared pool after it finishes its current seed. To return
+to the old round-robin assignment, run
+`QUEUE_MODE=static CLEAN=1 bash scripts/run_final_40_scene_production.sh`.
+Open each `seed_<SEED>/usd/export_scene.blend/` directory in Isaac Sim and add
+Dome Light manually.
 
 Start with [Reproduce Isaac Sim Indoor Speedup](docs/REPRODUCE_ISAAC_SPEEDUP.md)
 for the full command and environment notes, and see

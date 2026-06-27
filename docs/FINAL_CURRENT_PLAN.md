@@ -33,6 +33,7 @@ SEEDS=1-40
 OUTPUT_ROOT=outputs/final_40_scene_production
 PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python
 JOBS=4
+QUEUE_MODE=dynamic
 EXPORT_FORMAT=usdc
 EXPORT_RESOLUTION=512
 ADD_ISAAC_DOME_LIGHT=0
@@ -68,6 +69,7 @@ PYTHON_BIN=/home/ubuntu22/miniconda3/envs/infinigen/bin/python \
 CLEAN=1 \
 SEEDS=1-40 \
 JOBS=4 \
+QUEUE_MODE=dynamic \
 CPU_SETS="0-3,16-19;4-7,20-23;8-11,24-27;12-15,28-31" \
 EXPORT_AFTER_GENERATE=1 \
 EXPORT_FORMAT=usdc \
@@ -92,6 +94,12 @@ bash scripts/run_9950x3d_production_scene_queue.sh
 
 Use `JOBS=4`.
 
+The queue defaults to `QUEUE_MODE=dynamic`. All requested seeds are placed into
+a shared pool, and each worker claims the next pending seed after finishing its
+current seed. Worker CPU affinity is still fixed, so a worker never leaves its
+assigned CPU set. Use `QUEUE_MODE=static` to restore the old round-robin
+assignment.
+
 CPU sets:
 
 ```text
@@ -100,6 +108,29 @@ CPU sets:
 8-11,24-27
 12-15,28-31
 ```
+
+These CPU sets come from the current 9950X3D Linux topology checks:
+
+```text
+/sys/devices/system/cpu/cpu*/topology/thread_siblings_list
+/sys/devices/system/cpu/cpu*/cache/index3/shared_cpu_list
+```
+
+The measured SMT sibling pairs are `0,16`, `1,17`, through `15,31`. The measured
+L3 / CCD groups are:
+
+```text
+0-7,16-23
+8-15,24-31
+```
+
+The current four workers each stay within one half of a single L3/CCD group,
+which preserves L3/CCD locality and avoids cross-CCD CPU sets. The current
+implementation does not distinguish which CCD has the larger 3D V-Cache. A
+future refinement can read
+`/sys/devices/system/cpu/cpu*/cache/index3/size` to identify L3 size per group
+before adding cache-aware scheduling. Do not use Python multithreading inside a
+single Blender/`bpy` process for this workload.
 
 ## Quality Plan
 
