@@ -217,6 +217,41 @@ def test_room_constants_rejects_mismatched_explicit_levels():
         )
 
 
+@pytest.mark.parametrize(
+    "minimum,maximum,message",
+    [
+        (7, None, "both be set"),
+        (None, 8, "both be set"),
+        (True, 8, "must be an integer"),
+        (7.5, 8, "must be an integer"),
+        (0, 8, "must be positive"),
+        (9, 8, "cannot exceed"),
+    ],
+)
+def test_room_constants_validate_optional_per_floor_room_range(
+    minimum, maximum, message
+):
+    with pytest.raises(ValueError, match=message):
+        RoomConstants(
+            n_stories=4,
+            fixed_contour=False,
+            min_rooms_per_floor=minimum,
+            max_rooms_per_floor=maximum,
+        )
+
+
+def test_room_constants_accept_optional_per_floor_room_range():
+    constants = RoomConstants(
+        n_stories=4,
+        fixed_contour=False,
+        min_rooms_per_floor=7,
+        max_rooms_per_floor=8,
+    )
+
+    assert constants.min_rooms_per_floor == 7
+    assert constants.max_rooms_per_floor == 8
+
+
 def test_room_constants_accepts_mapping_level_specs():
     constants = RoomConstants(
         n_stories=2,

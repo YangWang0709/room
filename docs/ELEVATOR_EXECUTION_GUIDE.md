@@ -208,7 +208,42 @@ python -m infinigen_examples.generate_indoors \
 井道截短。固定 smoke blueprint 仍是每层大厅/门洞，express 整楼拓扑应走随机
 vertical-core 路径。
 
-### 3.4 非均匀标高、地下层和自定义 level ID
+### 3.4 每层 7–8 个普通房间的完整内容场景
+
+`RoomConstants.min_rooms_per_floor/max_rooms_per_floor` 是 opt-in 的户型约束。
+这里的普通房间包括卧室、客厅、厨房、卫生间、走廊、储藏室等可布置空间，
+不计 `StaircaseRoom`、`ElevatorLobby`、`ElevatorRoom` 或井道占位。两项保持未设置
+时继续使用原生 `4..15` 图约束及其旧统计口径，不改变默认生成路径。
+
+多层随机户型可用 `home_room_constraints.fixed_contour=True` 请求所有楼层共享
+外轮廓，从而提高楼梯和电梯核心拥有公共 XY 区域的成功率。下面的命令不包含
+`disable/no_objects.gin`、`fast_solve.gin` 或 `restrict_solving.solve_max_rooms`；
+`coarse` 会执行完整室内家具/小物件/门窗/材质/灯光/相机阶段，`fine_terrain`
+继续细化启用的室外地形。
+
+```bash
+N=4
+SEED=305
+ROOT="$PWD/outputs/elevator_full_${N}f_seed${SEED}"
+SCENE="$ROOT/coarse"
+
+python -m infinigen_examples.generate_indoors \
+  --seed "$SEED" \
+  --task coarse fine_terrain \
+  --output_folder "$SCENE" \
+  -g elevator.gin \
+  -p RoomConstants.n_stories="$N" \
+     RoomConstants.min_rooms_per_floor=7 \
+     RoomConstants.max_rooms_per_floor=8 \
+     home_room_constraints.fixed_contour=True \
+     "compose_indoors.elevator_mode='animated'"
+```
+
+参数解析、默认兼容约束和随机房间图样例为 `PASS`；完整高内容 N 层运行仍为
+`NOT RUN`，应预留显著长于轻内容 smoke 的运行时间和磁盘空间。对 indoor，
+单独再跑 `--task populate` 没有作用，因为当前 `populate_scene_func=None`。
+
+### 3.5 非均匀标高、地下层和自定义 level ID
 
 `BuildingLevels` 支持任意严格递增的物理标高。建议新增一个项目配置，例如
 `infinigen_examples/configs_indoor/custom_elevator_levels.gin`：

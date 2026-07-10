@@ -226,7 +226,7 @@ OpenUSD 绑定是延迟导入的；实际 USD authoring 需要在 Isaac Sim/Omni
 | `infinigen_examples/configs_indoor/four_story_elevator_fixed.gin` | 在四层配置上改用确定性固定蓝图 |
 | `infinigen_examples/configs_indoor/eight_story_elevator_fixed.gin` | 复用通用 N 层蓝图的八层结构验收配置 |
 
-`RoomConstants` 还支持 `n_elevators`、服务层子集、井道/轿厢/门尺寸、核心间距、大厅深度、核心覆盖阈值和放置重试次数。`compose_indoors` override 支持模式、初始层、动画 route/FPS、轿厢速度/加速度、开关门时间、停留时间以及静态门是否打开。
+`RoomConstants` 还支持 `n_elevators`、服务层子集、井道/轿厢/门尺寸、核心间距、大厅深度、核心覆盖阈值和放置重试次数。可选的 `min_rooms_per_floor/max_rooms_per_floor` 约束每层普通可布置房间数量，明确排除楼梯房、电梯厅和井道；两项不设置时保持原生 `4..15` 约束不变。`home_room_constraints.fixed_contour=True` 可让随机多层户型共享外轮廓。`compose_indoors` override 支持模式、初始层、动画 route/FPS、轿厢速度/加速度、开关门时间、停留时间以及静态门是否打开。
 
 ## 默认禁用质量门
 
@@ -241,6 +241,7 @@ OpenUSD 绑定是延迟导入的；实际 USD authoring 需要在 Isaac Sim/Omni
 已有自动化覆盖分别位于：
 
 - `tests/solver/test_building_levels.py`：任意楼层标签、实际标高、地下层和旧 `RoomConstants` 随机序列；
+- `tests/constraints/test_room_count_configuration.py`：默认房间数约束兼容、普通房间计数域和 7–8 范围；
 - `tests/constraints/test_vertical_core.py`：16 层、快速停靠、多核心确定性、间距、候选归属和禁用图路径；
 - `tests/constraints/test_predefined_elevator_floor_plan.py`：4/8 层固定蓝图、逐层 tile、核心对齐和 portal level；
 - `tests/assets/test_elevator_model.py`：规格校验、FIFO、门联锁、故障、确定性轨迹和加速度/限速；

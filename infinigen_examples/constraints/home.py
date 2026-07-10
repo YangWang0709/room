@@ -59,13 +59,15 @@ def sample_home_constraint_params():
 
 
 @gin.configurable
-def home_room_constraints(has_fewer_rooms=False):
+def home_room_constraints(has_fewer_rooms=False, fixed_contour=False):
     constraints = OrderedDict()
     score_terms = OrderedDict()
 
     # region ROOM SCENE GRAPH CONSTRAINTS/GRAMMAR
 
-    constants = RoomConstants(fixed_contour=False)
+    # Keep the native default unchanged while allowing multi-floor callers to
+    # request one shared exterior footprint for more reliable vertical cores.
+    constants = RoomConstants(fixed_contour=fixed_contour)
     rooms = cl.scene()[Semantics.RoomContour]
     rg = rooms[Semantics.GroundFloor]
     ru = rooms[-Semantics.GroundFloor]
@@ -302,8 +304,30 @@ def home_room_constraints(has_fewer_rooms=False):
             >= 1
         )
 
+    if constants.min_rooms_per_floor is None:
+        # Preserve the original graph constraint byte-for-byte unless the new
+        # opt-in range is explicitly configured.  The historical count includes
+        # StaircaseRoom and is kept as the compatibility baseline.
+        room_count_constraint = (
+            rooms[-Semantics.Exterior][-Semantics.Entrance].count().in_range(4, 15)
+        )
+    else:
+        # A user-facing "room" means an ordinary functional room that can be
+        # furnished.  Vertical circulation/core rooms are structural and must
+        # not consume the requested per-floor room budget.  Elevator nodes are
+        # currently injected after this graph solve, but exclude their tags here
+        # as part of the stable configuration contract.
+        ordinary_rooms = rooms[-Semantics.Exterior][-Semantics.Entrance][
+            -Semantics.StaircaseRoom
+        ][-Semantics.ElevatorRoom][-Semantics.ElevatorLobby][-Semantics.ElevatorShaft]
+        room_count_constraint = ordinary_rooms.count().in_range(
+            constants.min_rooms_per_floor,
+            constants.max_rooms_per_floor,
+            mean=(constants.min_rooms_per_floor + constants.max_rooms_per_floor) / 2,
+        )
+
     node_constraint = (
-        (rooms[-Semantics.Exterior][-Semantics.Entrance].count().in_range(4, 15))
+        room_count_constraint
         * ((rg[Semantics.LivingRoom].count() >= 1) + (rg.count() == 0))
         * ((rg[Semantics.Entrance].count() >= 1) + (rg.count() == 0))
         * ((ru[Semantics.Bedroom].count() >= 2) + (ru.count() == 0))

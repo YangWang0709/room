@@ -4,6 +4,11 @@ RoomConstants.elevator_enabled = True
 RoomConstants.n_elevators = 1
 RoomConstants.elevator_served_levels = 'all'
 
+# Optional command-line settings RoomConstants.min_rooms_per_floor and
+# RoomConstants.max_rooms_per_floor count ordinary furnishable rooms only;
+# stair rooms, elevator lobbies, and shafts do not consume this budget.  They
+# remain unset here so the native 4-15 graph constraint stays the default.
+
 RoomConstants.elevator_shaft_width = 2.5
 RoomConstants.elevator_shaft_depth = 2.5
 RoomConstants.elevator_car_width = 1.8

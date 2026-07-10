@@ -27,6 +27,8 @@ class RoomConstants:
         room_type=None,
         aspect_ratio_range=(0.7, 1.0),
         fixed_contour=("bool", 0.5),
+        min_rooms_per_floor=None,
+        max_rooms_per_floor=None,
         building_levels=None,
         elevator_enabled=False,
         n_elevators=1,
@@ -65,6 +67,32 @@ class RoomConstants:
             self.room_types = room_type
         self.aspect_ratio_range = aspect_ratio_range
         self.fixed_contour = rg(fixed_contour)
+        if (min_rooms_per_floor is None) != (max_rooms_per_floor is None):
+            raise ValueError(
+                "RoomConstants.min_rooms_per_floor and max_rooms_per_floor "
+                "must either both be set or both be omitted"
+            )
+        if min_rooms_per_floor is None:
+            self.min_rooms_per_floor = None
+            self.max_rooms_per_floor = None
+        else:
+            for name, value in (
+                ("min_rooms_per_floor", min_rooms_per_floor),
+                ("max_rooms_per_floor", max_rooms_per_floor),
+            ):
+                if isinstance(value, (bool, np.bool_)) or not isinstance(
+                    value, (int, np.integer)
+                ):
+                    raise ValueError(f"RoomConstants.{name} must be an integer")
+                if int(value) < 1:
+                    raise ValueError(f"RoomConstants.{name} must be positive")
+            self.min_rooms_per_floor = int(min_rooms_per_floor)
+            self.max_rooms_per_floor = int(max_rooms_per_floor)
+            if self.min_rooms_per_floor > self.max_rooms_per_floor:
+                raise ValueError(
+                    "RoomConstants.min_rooms_per_floor cannot exceed "
+                    "max_rooms_per_floor"
+                )
         building_levels_explicit = building_levels is not None
         if building_levels is None:
             self.building_levels = BuildingLevels.uniform(
