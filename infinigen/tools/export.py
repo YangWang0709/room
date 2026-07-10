@@ -641,11 +641,12 @@ def remove_params(mat, node_tree):
 
 
 def process_interfering_params(obj):
+    paramDict = {}
     for slot in obj.material_slots:
         mat = slot.material
         if mat is None or not mat.use_nodes:
             continue
-        paramDict = remove_params(mat, mat.node_tree)
+        paramDict.update(remove_params(mat, mat.node_tree))
     return paramDict
 
 
@@ -1263,14 +1264,31 @@ def main(args):
 
     targets = sorted(list(args.input_folder.iterdir()))
     for blendfile in targets:
-        if blendfile.stem == "solve_state":
-            shutil.copy(blendfile, args.output_folder / "solve_state.json")
+        if blendfile.name in {
+            "solve_state.json",
+            "elevator_manifest.json",
+            "vertical_core_manifest.json",
+        }:
+            shutil.copy(blendfile, args.output_folder / blendfile.name)
 
         if not blendfile.suffix == ".blend":
             print(f"Skipping non-blend file {blendfile}")
             continue
 
         bpy.ops.wm.open_mainfile(filepath=str(blendfile))
+
+        if getattr(args, "exclude_elevators", False):
+            elevator_objects = [
+                obj for obj in bpy.data.objects if obj.get("elevator_role") is not None
+            ]
+            # Export's bake pass deliberately unhides every mesh, so visibility
+            # flags cannot guarantee exclusion.  Delete role-tagged elevator
+            # visuals from this in-memory copy; the source blend is never saved.
+            butil.delete(elevator_objects)
+            logging.info(
+                "Excluded %d elevator-role objects from static export",
+                len(elevator_objects),
+            )
 
         folder = export_scene(
             blendfile,
@@ -1299,6 +1317,14 @@ def make_args():
     parser.add_argument("-r", "--resolution", default=1024, type=int)
     parser.add_argument("-i", "--individual", action="store_true")
     parser.add_argument("-o", "--omniverse", action="store_true")
+    parser.add_argument(
+        "--exclude_elevators",
+        action="store_true",
+        help=(
+            "Exclude Blender elevator visuals from the static building layer; "
+            "use this before composing the independent articulation USD"
+        ),
+    )
 
     args = parser.parse_args()
 

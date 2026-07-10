@@ -1,0 +1,31 @@
+# Generic opt-in elevator feature.  The caller chooses RoomConstants.n_stories;
+# no floor count is encoded in the implementation.
+RoomConstants.elevator_enabled = True
+RoomConstants.n_elevators = 1
+RoomConstants.elevator_served_levels = 'all'
+
+RoomConstants.elevator_shaft_width = 2.5
+RoomConstants.elevator_shaft_depth = 2.5
+RoomConstants.elevator_car_width = 1.8
+RoomConstants.elevator_car_depth = 1.7
+RoomConstants.elevator_car_height = 2.3
+RoomConstants.elevator_door_width = 1.1
+RoomConstants.elevator_door_height = 2.1
+RoomConstants.elevator_wall_thickness = 0.12
+RoomConstants.elevator_core_clearance = 0.75
+RoomConstants.elevator_staircase_core_width = 8.0
+RoomConstants.elevator_staircase_core_depth = 8.0
+RoomConstants.elevator_lobby_depth = 2.0
+RoomConstants.elevator_overlap_threshold = 0.98
+RoomConstants.elevator_placement_attempts = 100
+
+compose_indoors.elevator_mode = 'static'
+compose_indoors.elevator_initial_level = None
+compose_indoors.elevator_animation_route = 'all'
+compose_indoors.elevator_animation_fps = 24.0
+compose_indoors.elevator_car_speed = 1.0
+compose_indoors.elevator_car_acceleration = 1.0
+compose_indoors.elevator_door_open_time = 0.8
+compose_indoors.elevator_door_close_time = 0.8
+compose_indoors.elevator_dwell_time = 1.5
+compose_indoors.elevator_static_doors_open = False

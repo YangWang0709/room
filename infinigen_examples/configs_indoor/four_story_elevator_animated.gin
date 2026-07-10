@@ -1,0 +1,4 @@
+include 'infinigen_examples/configs_indoor/four_story_elevator.gin'
+
+compose_indoors.elevator_mode = 'animated'
+compose_indoors.elevator_animation_route = 'all'

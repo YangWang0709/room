@@ -35,6 +35,7 @@ from infinigen.core.constraints.example_solver import (
     state_def,
 )
 from infinigen.core.constraints.example_solver.room import decorate as room_dec
+from infinigen.core.constraints.example_solver.room import elevator as room_elevator
 from infinigen.core.constraints.example_solver.solve import Solver
 from infinigen.core.placement import camera_trajectories as cam_traj
 from infinigen.core.util import blender as butil
@@ -188,6 +189,16 @@ def compose_indoors(output_folder: Path, scene_seed: int, **overrides):
 
     state: state_def.State = p.run_stage("solve_rooms", solve_rooms, use_chance=False)
 
+    if constants.elevator_enabled:
+        p.run_stage(
+            "elevator_clearance",
+            room_elevator.install_elevator_clearance_proxies,
+            state,
+            constants,
+            use_chance=False,
+            default=(),
+        )
+
     def solve_stage_name(stage_name: str, group: str, **kwargs):
         assigments = greedy.iterate_assignments(
             stages[stage_name], state, all_vars, limits
@@ -232,7 +243,10 @@ def compose_indoors(output_folder: Path, scene_seed: int, **overrides):
     camera_rigs = placement.camera.spawn_camera_rigs()
 
     nonroom_objs = [
-        o.obj for o in state.objs.values() if t.Semantics.Room not in o.tags
+        o.obj
+        for o in state.objs.values()
+        if t.Semantics.Room not in o.tags
+        and t.Semantics.ElevatorClearance not in o.tags
     ]
     room_objs = [o.obj for o in state.objs.values() if t.Semantics.Room in o.tags]
     scene_objs = solved_rooms + nonroom_objs
@@ -334,7 +348,10 @@ def compose_indoors(output_folder: Path, scene_seed: int, **overrides):
 
     p.run_stage("floating_objs", place_floating, use_chance=False, default=state)
 
-    door_filter = r.Domain({t.Semantics.Door}, [(cl.AnyRelation(), stages["rooms"])])
+    door_filter = r.Domain(
+        {t.Semantics.Door, -t.Semantics.ElevatorLandingDoor},
+        [(cl.AnyRelation(), stages["rooms"])],
+    )
     window_filter = r.Domain(
         {t.Semantics.Window}, [(cl.AnyRelation(), stages["rooms"])]
     )
@@ -352,18 +369,63 @@ def compose_indoors(output_folder: Path, scene_seed: int, **overrides):
     )
 
     room_meshes = solver.get_bpy_objects(r.Domain({t.Semantics.Room}))
+    if constants.elevator_enabled:
+        p.run_stage(
+            "room_elevator_structure",
+            lambda: (
+                room_elevator.open_elevator_room_shells(state, constants),
+                room_elevator.build_scene_elevators(
+                    state,
+                    constants,
+                    output_folder=output_folder,
+                    scene_seed=scene_seed,
+                    mode=overrides.get("elevator_mode", "static"),
+                    initial_level=overrides.get("elevator_initial_level"),
+                    animation_route=overrides.get("elevator_animation_route", "all"),
+                    animation_fps=overrides.get("elevator_animation_fps", 24.0),
+                    car_speed=overrides.get("elevator_car_speed", 1.0),
+                    car_acceleration=overrides.get("elevator_car_acceleration", 1.0),
+                    door_open_time=overrides.get("elevator_door_open_time", 0.8),
+                    door_close_time=overrides.get("elevator_door_close_time", 0.8),
+                    dwell_time=overrides.get("elevator_dwell_time", 1.5),
+                    static_doors_open=overrides.get(
+                        "elevator_static_doors_open", False
+                    ),
+                ),
+            )[1],
+            use_chance=False,
+            default=None,
+        )
     p.run_stage(
         "room_stairs",
         lambda: room_dec.room_stairs(constants, state, room_meshes),
         use_chance=False,
     )
+    skirting_room_meshes = (
+        [
+            obj_state.obj
+            for obj_state in state.objs.values()
+            if t.Semantics.Room in obj_state.tags
+            and t.Semantics.ElevatorRoom not in obj_state.tags
+        ]
+        if constants.elevator_enabled
+        else room_meshes
+    )
     p.run_stage(
         "skirting_floor",
-        lambda: make_skirting_board(constants, room_meshes, t.Subpart.SupportSurface),
+        lambda: make_skirting_board(
+            constants,
+            skirting_room_meshes,
+            t.Subpart.SupportSurface,
+        ),
     )
     p.run_stage(
         "skirting_ceiling",
-        lambda: make_skirting_board(constants, room_meshes, t.Subpart.Ceiling),
+        lambda: make_skirting_board(
+            constants,
+            skirting_room_meshes,
+            t.Subpart.Ceiling,
+        ),
     )
 
     rooms_meshed = butil.get_collection("placeholders:room_meshes")

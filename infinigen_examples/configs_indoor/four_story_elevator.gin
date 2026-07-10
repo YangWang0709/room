@@ -1,0 +1,6 @@
+include 'infinigen_examples/configs_indoor/elevator.gin'
+
+# Four stories are the first end-to-end acceptance profile, not a code limit.
+RoomConstants.n_stories = 4
+RoomConstants.fixed_contour = True
+compose_indoors.elevator_mode = 'static'

@@ -1,0 +1,8 @@
+include 'infinigen_examples/configs_indoor/elevator.gin'
+
+# Eight stories exercise the generic N-floor implementation and blueprint.
+RoomConstants.n_stories = 8
+RoomConstants.fixed_contour = True
+compose_indoors.elevator_mode = 'static'
+
+Solver.floor_plan = 'infinigen_examples.configs_indoor.floor_plans.elevator.fixed_eight_story_elevator'

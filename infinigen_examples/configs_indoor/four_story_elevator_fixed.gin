@@ -1,0 +1,3 @@
+include 'infinigen_examples/configs_indoor/four_story_elevator.gin'
+
+Solver.floor_plan = 'infinigen_examples.configs_indoor.floor_plans.elevator.fixed_four_story_elevator'
