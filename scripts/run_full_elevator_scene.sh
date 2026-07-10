@@ -7,9 +7,9 @@ cd "$ROOT_DIR"
 N_STORIES="${N_STORIES:-4}"
 MIN_ROOMS="${MIN_ROOMS:-7}"
 MAX_ROOMS="${MAX_ROOMS:-8}"
-SEED="${SEED:-305}"
+SEED="${SEED:-5}"
 ELEVATOR_MODE="${ELEVATOR_MODE:-animated}"
-FINE_TERRAIN="${FINE_TERRAIN:-1}"
+FINE_TERRAIN="${FINE_TERRAIN:-0}"
 EXPORT_RESOLUTION="${EXPORT_RESOLUTION:-1024}"
 DRY_RUN="${DRY_RUN:-0}"
 CONDA_ENV="${CONDA_ENV:-infinigen}"
@@ -89,6 +89,12 @@ GENERATE_CMD=(
   home_room_constraints.fixed_contour=True
   "compose_indoors.elevator_mode='${ELEVATOR_MODE}'"
 )
+if [[ "$FINE_TERRAIN" == "0" ]]; then
+  # The elevator project is an indoor workflow.  Keep all native indoor
+  # furniture/material/lighting/camera stages, but avoid optional LandLab
+  # terrain dependencies unless the caller explicitly requests them.
+  GENERATE_CMD+=(compose_indoors.terrain_enabled=False)
+fi
 
 VALIDATE_CMD=(
   "$PYTHON_BIN"
@@ -149,7 +155,6 @@ if [[ "$OUTPUT_ROOT_EXPLICIT" == "1" && -e "$OUTPUT_ROOT" ]]; then
   die "Explicit OUTPUT_ROOT already exists; choose a new directory: ${OUTPUT_ROOT}"
 fi
 [[ ! -e "$OUTPUT_ROOT" ]] || die "Output root already exists: ${OUTPUT_ROOT}"
-mkdir -p "$OUTPUT_ROOT"
 
 "$PYTHON_BIN" - <<'PY'
 import bpy
@@ -159,12 +164,22 @@ if bpy.app.version_string != "4.2.0":
 print(f"Blender Python preflight PASS: {bpy.app.version_string}")
 PY
 
+if [[ "$FINE_TERRAIN" == "1" ]] && ! "$PYTHON_BIN" - <<'PY'
+import landlab  # noqa: F401
+import pkg_resources  # noqa: F401
+PY
+then
+  die "FINE_TERRAIN=1 requires working terrain dependencies (landlab and pkg_resources). The current environment cannot import them. Use the default FINE_TERRAIN=0 for a complete indoor scene, or repair the optional terrain environment first."
+fi
+
 if ! PYTHONPATH="${PXR_DIR}${PYTHONPATH:+:${PYTHONPATH}}" \
   "$PYTHON_BIN" -c 'from pxr import Usd; print("OpenUSD", Usd.GetVersion())'; then
   echo "Installing isolated OpenUSD 25.5.1 into ${PXR_DIR}"
   mkdir -p "$PXR_DIR"
   "$PYTHON_BIN" -m pip install --upgrade --target "$PXR_DIR" 'usd-core==25.5.1'
 fi
+
+mkdir -p "$OUTPUT_ROOT"
 
 echo
 echo "[1/5] Generating the complete scene. This is the long-running stage."

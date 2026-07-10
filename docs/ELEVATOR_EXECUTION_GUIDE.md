@@ -210,7 +210,7 @@ vertical-core 路径。
 
 ### 3.4 每层 7–8 个普通房间的完整内容场景
 
-仓库提供一键脚本，默认执行本节的四层、每层 7–8 个普通房间、完整内容、
+仓库提供一键脚本，默认执行本节的四层、每层 7–8 个普通房间、完整室内内容、
 校验、USDC 导出和 articulation 组合流程：
 
 ```bash
@@ -219,7 +219,10 @@ vertical-core 路径。
 
 例如生成 8 层时使用 `N_STORIES=8 ./scripts/run_full_elevator_scene.sh`；脚本还接受
 `SEED`、`MIN_ROOMS`、`MAX_ROOMS`、`ELEVATOR_MODE`、`FINE_TERRAIN`、
-`OUTPUT_ROOT`、`EXPORT_RESOLUTION` 和 `DRY_RUN` 环境变量。
+`OUTPUT_ROOT`、`EXPORT_RESOLUTION` 和 `DRY_RUN` 环境变量。`FINE_TERRAIN` 默认
+为 `0`：它只关闭可选室外地形，完整室内家具、材质、灯光、相机、楼梯和电梯
+仍全部生成。设置 `FINE_TERRAIN=1` 前，脚本会预检 `landlab/pkg_resources`，
+避免在耗时生成已经开始后才因地形依赖失败。
 
 `RoomConstants.min_rooms_per_floor/max_rooms_per_floor` 是 opt-in 的户型约束。
 这里的普通房间包括卧室、客厅、厨房、卫生间、走廊、储藏室等可布置空间，
@@ -229,8 +232,8 @@ vertical-core 路径。
 多层随机户型可用 `home_room_constraints.fixed_contour=True` 请求所有楼层共享
 外轮廓，从而提高楼梯和电梯核心拥有公共 XY 区域的成功率。下面的命令不包含
 `disable/no_objects.gin`、`fast_solve.gin` 或 `restrict_solving.solve_max_rooms`；
-`coarse` 会执行完整室内家具/小物件/门窗/材质/灯光/相机阶段，`fine_terrain`
-继续细化启用的室外地形。
+`coarse` 会执行完整室内家具/小物件/门窗/材质/灯光/相机阶段；可选的
+`fine_terrain` 只负责继续细化启用的室外地形。
 
 ```bash
 N=4
@@ -240,14 +243,15 @@ SCENE="$ROOT/coarse"
 
 python -m infinigen_examples.generate_indoors \
   --seed "$SEED" \
-  --task coarse fine_terrain \
+  --task coarse \
   --output_folder "$SCENE" \
   -g elevator.gin \
   -p RoomConstants.n_stories="$N" \
      RoomConstants.min_rooms_per_floor=7 \
      RoomConstants.max_rooms_per_floor=8 \
      home_room_constraints.fixed_contour=True \
-     "compose_indoors.elevator_mode='animated'"
+     "compose_indoors.elevator_mode='animated'" \
+     compose_indoors.terrain_enabled=False
 ```
 
 参数解析、默认兼容约束和随机房间图样例为 `PASS`；完整高内容 N 层运行仍为
