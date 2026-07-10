@@ -210,6 +210,17 @@ vertical-core 路径。
 
 ### 3.4 每层 7–8 个普通房间的完整内容场景
 
+仓库提供一键脚本，默认执行本节的四层、每层 7–8 个普通房间、完整内容、
+校验、USDC 导出和 articulation 组合流程：
+
+```bash
+./scripts/run_full_elevator_scene.sh
+```
+
+例如生成 8 层时使用 `N_STORIES=8 ./scripts/run_full_elevator_scene.sh`；脚本还接受
+`SEED`、`MIN_ROOMS`、`MAX_ROOMS`、`ELEVATOR_MODE`、`FINE_TERRAIN`、
+`OUTPUT_ROOT`、`EXPORT_RESOLUTION` 和 `DRY_RUN` 环境变量。
+
 `RoomConstants.min_rooms_per_floor/max_rooms_per_floor` 是 opt-in 的户型约束。
 这里的普通房间包括卧室、客厅、厨房、卫生间、走廊、储藏室等可布置空间，
 不计 `StaircaseRoom`、`ElevatorLobby`、`ElevatorRoom` 或井道占位。两项保持未设置
