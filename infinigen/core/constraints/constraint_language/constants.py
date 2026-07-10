@@ -15,6 +15,7 @@ from infinigen.assets.utils.shapes import (
     simplify_polygon,
 )
 from infinigen.core import tags as t
+from infinigen.core.constraints.constraint_language.levels import BuildingLevels
 from infinigen.core.util.random import random_general as rg
 
 
@@ -26,6 +27,24 @@ class RoomConstants:
         room_type=None,
         aspect_ratio_range=(0.7, 1.0),
         fixed_contour=("bool", 0.5),
+        building_levels=None,
+        elevator_enabled=False,
+        n_elevators=1,
+        elevator_served_levels=None,
+        elevator_shaft_width=2.5,
+        elevator_shaft_depth=2.5,
+        elevator_car_width=1.8,
+        elevator_car_depth=1.7,
+        elevator_car_height=2.3,
+        elevator_door_width=1.1,
+        elevator_door_height=2.1,
+        elevator_wall_thickness=0.12,
+        elevator_core_clearance=0.75,
+        elevator_staircase_core_width=8.0,
+        elevator_staircase_core_depth=8.0,
+        elevator_lobby_depth=2.0,
+        elevator_overlap_threshold=0.98,
+        elevator_placement_attempts=100,
     ):
         self.n_stories = rg(n_stories)
         self.unit, self.segment_margin, self.wall_thickness, self.wall_height = (
@@ -46,6 +65,93 @@ class RoomConstants:
             self.room_types = room_type
         self.aspect_ratio_range = aspect_ratio_range
         self.fixed_contour = rg(fixed_contour)
+        building_levels_explicit = building_levels is not None
+        if building_levels is None:
+            self.building_levels = BuildingLevels.uniform(
+                int(self.n_stories), self.wall_height
+            )
+        else:
+            self.building_levels = BuildingLevels.coerce(building_levels)
+            if len(self.building_levels) != self.n_stories:
+                raise ValueError(
+                    "RoomConstants.n_stories must match the provided BuildingLevels; "
+                    f"got {self.n_stories} and {len(self.building_levels)}"
+                )
+        self.elevator_enabled = bool(elevator_enabled)
+        # Keep the native one-to-three-story path's tag sets exactly unchanged.
+        # Dynamic floor metadata is opt-in for elevators/custom stacks and is
+        # mandatory only once the legacy three semantic floor tags run out.
+        self.dynamic_level_tags_enabled = (
+            self.elevator_enabled
+            or building_levels_explicit
+            or self.n_stories > len(t.Semantics.floors)
+        )
+        self.n_elevators = int(n_elevators)
+        if self.n_elevators < 1:
+            raise ValueError("RoomConstants.n_elevators must be at least one")
+        if elevator_served_levels in (None, "all"):
+            self.elevator_served_levels = None
+        else:
+            self.elevator_served_levels = tuple(int(i) for i in elevator_served_levels)
+            if (
+                tuple(sorted(set(self.elevator_served_levels)))
+                != self.elevator_served_levels
+            ):
+                raise ValueError("elevator_served_levels must be sorted and unique")
+            if not self.elevator_served_levels:
+                raise ValueError("elevator_served_levels cannot be empty")
+            if self.elevator_enabled and len(self.elevator_served_levels) < 2:
+                raise ValueError(
+                    "An enabled moving elevator must serve at least two levels"
+                )
+            if (
+                self.elevator_served_levels[0] < 0
+                or self.elevator_served_levels[-1] >= self.n_stories
+            ):
+                raise ValueError(
+                    "elevator_served_levels must reference existing building levels"
+                )
+        positive_dimensions = {
+            "elevator_shaft_width": elevator_shaft_width,
+            "elevator_shaft_depth": elevator_shaft_depth,
+            "elevator_car_width": elevator_car_width,
+            "elevator_car_depth": elevator_car_depth,
+            "elevator_car_height": elevator_car_height,
+            "elevator_door_width": elevator_door_width,
+            "elevator_door_height": elevator_door_height,
+            "elevator_wall_thickness": elevator_wall_thickness,
+            "elevator_staircase_core_width": elevator_staircase_core_width,
+            "elevator_staircase_core_depth": elevator_staircase_core_depth,
+            "elevator_lobby_depth": elevator_lobby_depth,
+        }
+        for name, value in positive_dimensions.items():
+            value = float(value)
+            if value <= 0:
+                raise ValueError(f"{name} must be positive, got {value}")
+            setattr(self, name, value)
+        self.elevator_core_clearance = float(elevator_core_clearance)
+        if self.elevator_core_clearance < 0:
+            raise ValueError("elevator_core_clearance must be non-negative")
+        self.elevator_overlap_threshold = float(elevator_overlap_threshold)
+        if not 0 < self.elevator_overlap_threshold <= 1:
+            raise ValueError("elevator_overlap_threshold must be in (0, 1]")
+        self.elevator_placement_attempts = int(elevator_placement_attempts)
+        if self.elevator_placement_attempts < 1:
+            raise ValueError("elevator_placement_attempts must be positive")
+        inner_shaft_width = self.elevator_shaft_width - 2 * self.elevator_wall_thickness
+        inner_shaft_depth = self.elevator_shaft_depth - 2 * self.elevator_wall_thickness
+        if self.elevator_car_width >= inner_shaft_width:
+            raise ValueError(
+                "elevator_car_width must fit inside shaft width after both walls"
+            )
+        if self.elevator_car_depth >= inner_shaft_depth:
+            raise ValueError(
+                "elevator_car_depth must fit inside shaft depth after both walls"
+            )
+        if self.elevator_door_width >= inner_shaft_width:
+            raise ValueError(
+                "elevator_door_width must fit inside shaft width after both walls"
+            )
 
     @gin.configurable(module="RoomConstants")
     def global_params(
@@ -176,8 +282,31 @@ class RoomConstants:
 
     @property
     def floors(self):
-        return [
+        legacy = [
             t.Semantics.GroundFloor,
             t.Semantics.SecondFloor,
             t.Semantics.ThirdFloor,
         ]
+        return legacy + [t.FloorIndex(i) for i in range(3, self.n_stories)]
+
+    def level_spec(self, index):
+        return self.building_levels.by_index(index)
+
+    def floor_tags(self, index):
+        if self.dynamic_level_tags_enabled:
+            return self.building_levels.tags_for(index)
+        return frozenset({self.floors[index]})
+
+    def solidifier_floor_tags(self, index):
+        """Tags added to emitted room/cutter states on new level-aware paths.
+
+        Legacy solidified states never carried a floor tag.  Returning an empty
+        set on that path is required for behavior-preserving default output.
+        """
+
+        if not self.dynamic_level_tags_enabled:
+            return frozenset()
+        return self.building_levels.tags_for(index)
+
+    def floor_tag(self, index):
+        return self.building_levels.primary_tag(index)

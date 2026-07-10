@@ -71,7 +71,11 @@ class ContourFactory:
                 slope = uniform(0.05, 0.2)
                 indices = set()
                 for k, obj_st in state.objs.items():
-                    if room_type(k) not in [Semantics.StaircaseRoom]:
+                    if room_type(k) not in [
+                        Semantics.StaircaseRoom,
+                        Semantics.ElevatorRoom,
+                        Semantics.ElevatorLobby,
+                    ]:
                         p = obj_st.polygon
                         x, y = np.array(p.exterior.coords).T
                         y -= np.where(np.abs(x) < 0.1, slope * x, 0)
@@ -109,7 +113,12 @@ class ContourFactory:
                     for k, obj_st in state.objs.items():
                         if (
                             room_type(k)
-                            not in [Semantics.Staircase, Semantics.Exterior]
+                            not in [
+                                Semantics.Staircase,
+                                Semantics.ElevatorShaft,
+                                Semantics.ElevatorRoom,
+                                Semantics.Exterior,
+                            ]
                             and room_level(k) == i
                         ):
                             l = self.get_length(obj_st.polygon, p)

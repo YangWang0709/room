@@ -31,12 +31,26 @@ class PredefinedBlueprintSolidifier(BlueprintSolidifier):
         super().__init__(consgraph, None, level)
         self.config = config
 
+    def _portal_on_level(self, portal):
+        """Versioned multi-floor portal filtering with legacy level-0 fallback."""
+
+        return int(portal.get("level", 0)) == self.level
+
+    def _rooms_on_level(self):
+        return {
+            name: room
+            for name, room in self.config["rooms"].items()
+            if room_level(name) == self.level
+        }
+
     def make_interior_cutters(self, neighbours, shared_edges, segments, exterior):
         open_cutters = defaultdict(list)
         opens = self.config.get("opens", {})
         for o, open in opens.items():
+            if not self._portal_on_level(open):
+                continue
             open_cutter = self.make_open_cutter(open["shape"])
-            for r, room in self.config["rooms"].items():
+            for r, room in self._rooms_on_level().items():
                 if (
                     shapely.intersection(
                         room["shape"],
@@ -48,10 +62,12 @@ class PredefinedBlueprintSolidifier(BlueprintSolidifier):
         interior_cutters = defaultdict(list)
         interiors = self.config.get("interiors", {})
         for i, interior in interiors.items():
+            if not self._portal_on_level(interior):
+                continue
             interior_cutter = self.make_window_cutter(
                 interior["shape"], interior.get("is_panoramic", False)
             )
-            for r, room in self.config["rooms"].items():
+            for r, room in self._rooms_on_level().items():
                 if (
                     shapely.intersection(
                         room["shape"],
@@ -65,8 +81,20 @@ class PredefinedBlueprintSolidifier(BlueprintSolidifier):
         door_cutters = defaultdict(list)
         doors = self.config.get("doors", {})
         for d, door in doors.items():
-            door_cutter = self.make_door_cutter(door["shape"], (0, 0, 0))
-            for r, room in self.config["rooms"].items():
+            if not self._portal_on_level(door):
+                continue
+            if door.get("semantic") == "elevator_landing":
+                elevator_id = str(door.get("elevator_id", "elevator_0"))
+                elevator_index = int(elevator_id.rsplit("_", 1)[1])
+                door_cutter = self.make_elevator_door_cutter(
+                    door["shape"],
+                    (0, 0, 0),
+                    room_name(Semantics.ElevatorRoom, self.level, elevator_index),
+                )
+            else:
+                door_cutter = self.make_door_cutter(door["shape"], (0, 0, 0))
+                door_cutter.name = d
+            for r, room in self._rooms_on_level().items():
                 if (
                     shapely.intersection(
                         room["shape"],
@@ -81,10 +109,12 @@ class PredefinedBlueprintSolidifier(BlueprintSolidifier):
         window_cutters = defaultdict(list)
         windows = self.config.get("windows", {})
         for w, window in windows.items():
+            if not self._portal_on_level(window):
+                continue
             window_cutter = self.make_window_cutter(
                 window["shape"], window.get("is_panoramic", False)
             )
-            for r, room in self.config["rooms"].items():
+            for r, room in self._rooms_on_level().items():
                 if (
                     shapely.intersection(
                         room["shape"],
@@ -96,8 +126,10 @@ class PredefinedBlueprintSolidifier(BlueprintSolidifier):
         entrance_cutters = defaultdict(list)
         entrances = self.config.get("entrance", {})
         for e, entrance in entrances.items():
+            if not self._portal_on_level(entrance):
+                continue
             entrance_cutter = self.make_door_cutter(entrance["shape"], (0, 0, 0))
-            for r, room in self.config["rooms"].items():
+            for r, room in self._rooms_on_level().items():
                 if (
                     shapely.intersection(
                         room["shape"],
@@ -135,7 +167,18 @@ class PredefinedFloorPlanSolver:
             else:
                 floor_plan = import_item(floor_plan)(factory_seed)
             self.floor_plan = floor_plan
-            for _, objs in floor_plan.items():
+            schema_version = int(floor_plan.get("schema_version", 1))
+            if schema_version not in {1, 2}:
+                raise ValueError(
+                    f"Unsupported predefined floor-plan schema {schema_version}"
+                )
+            for group_name, objs in floor_plan.items():
+                if group_name == "schema_version":
+                    continue
+                if not isinstance(objs, dict):
+                    raise TypeError(
+                        f"Predefined floor-plan group {group_name!r} must be a mapping"
+                    )
                 for _, info in objs.items():
                     if isinstance(info["shape"], str):
                         info["shape"] = eval(info["shape"])
@@ -174,6 +217,8 @@ class PredefinedFloorPlanSolver:
         dimensions = (
             bbox[2] - bbox[0],
             bbox[3] - bbox[1],
-            self.constants.wall_height * self.n_stories,
+            self.constants.building_levels[-1].elevation
+            + self.constants.building_levels[-1].height
+            - self.constants.building_levels[0].elevation,
         )
         return State(obj_states), unique_roomtypes, dimensions

@@ -52,7 +52,15 @@ class GraphMaker:
 
     @property
     def semantics_floor(self):
-        return Semantics.floors[self.level]
+        """Primary floor tag, preserving legacy tags for the first floors."""
+
+        return self.constants.floor_tag(self.level)
+
+    @property
+    def floor_tags(self):
+        """Dynamic floor index plus any compatible legacy floor semantic."""
+
+        return self.constants.floor_tags(self.level)
 
     def inject(self, node, on=False):
         match node:
@@ -104,11 +112,9 @@ class GraphMaker:
                 state = State(
                     {
                         name: ObjectState(
-                            tags={
-                                Semantics.Root,
-                                Semantics.RoomContour,
-                                self.semantics_floor,
-                            }
+                            tags={Semantics.Root, Semantics.RoomContour}.union(
+                                self.floor_tags
+                            )
                         )
                     }
                 )
@@ -142,8 +148,7 @@ class GraphMaker:
                                         t,
                                         Semantics.RoomContour,
                                         Semantics.New,
-                                        self.semantics_floor,
-                                    },
+                                    }.union(self.floor_tags),
                                     relations=[RelationState(cl.Traverse(), n)],
                                 )
                                 st[n].relations.append(
@@ -184,7 +189,90 @@ class GraphMaker:
                         state[n].tags.add(Semantics.Visited)
                 _, viol = evaluate_problem(self.consgraph, state)
                 if viol == 0:
-                    return self.state2graph(state)
+                    return self.add_vertical_core_nodes(self.state2graph(state))
+
+    def add_vertical_core_nodes(self, graph):
+        """Inject mandatory shaft/lobby topology after the legacy graph solve.
+
+        Keeping this deterministic post-step outside the stochastic grammar is
+        important: disabled generation consumes exactly the original random
+        stream, while an enabled elevator is guaranteed rather than merely
+        encouraged by room-count scores.
+        """
+
+        if not getattr(self.constants, "elevator_enabled", False):
+            return graph
+        if self.constants.n_stories <= 1:
+            return graph
+
+        served = self.constants.elevator_served_levels
+        is_served = served is None or self.level in served
+        names = list(graph.names)
+        children = [list(neighbours) for neighbours in graph.ns]
+
+        public_indices = (
+            graph[Semantics.Hallway]
+            or graph[Semantics.LivingRoom]
+            or graph[Semantics.DiningRoom]
+        )
+        if not public_indices:
+            public_indices = [
+                index
+                for index, name in enumerate(names)
+                if room_type(name) not in {Semantics.Exterior, Semantics.StaircaseRoom}
+            ]
+        if is_served and not public_indices:
+            raise ValueError(
+                f"Level {self.level} has no public room for an elevator lobby"
+            )
+
+        for elevator_index in range(self.constants.n_elevators):
+            shaft_name = room_name(Semantics.ElevatorRoom, self.level, elevator_index)
+            if shaft_name in names:
+                raise ValueError(f"Duplicate elevator room node {shaft_name!r}")
+
+            if is_served:
+                lobby_name = room_name(
+                    Semantics.ElevatorLobby, self.level, elevator_index
+                )
+                public_index = public_indices[elevator_index % len(public_indices)]
+                lobby_index = len(names)
+                shaft_index = lobby_index + 1
+                names.extend((lobby_name, shaft_name))
+                children.append([public_index, shaft_index])
+                children.append([lobby_index])
+                children[public_index].append(lobby_index)
+            else:
+                names.append(shaft_name)
+                children.append([])
+
+        # ``RoomGraph.__len__`` and ``SegmentMaker`` intentionally preserve the
+        # legacy invariant that the sole Exterior node is the final entry.  The
+        # post-solve core injection above appends valid rooms, so rebuild the
+        # index space with Exterior last before handing the graph back to the
+        # unchanged segment assignment recursion.
+        exterior_indices = [
+            index
+            for index, name in enumerate(names)
+            if room_type(name) == Semantics.Exterior
+        ]
+        if len(exterior_indices) != 1:
+            raise ValueError(
+                "A room graph must contain exactly one Exterior node before "
+                f"vertical-core injection, got {exterior_indices}"
+            )
+        exterior_index = exterior_indices[0]
+        order = [index for index in range(len(names)) if index != exterior_index]
+        order.append(exterior_index)
+        old_to_new = {old: new for new, old in enumerate(order)}
+        remapped_names = [names[old] for old in order]
+        remapped_children = [
+            [old_to_new[neighbour] for neighbour in children[old]] for old in order
+        ]
+        remapped_entrance = (
+            None if graph._entrance is None else old_to_new[graph._entrance]
+        )
+        return RoomGraph(remapped_children, remapped_names, remapped_entrance)
 
     def state2graph(self, state):
         state = self.merge_exterior(state)
@@ -220,7 +308,7 @@ class GraphMaker:
             ]
             state[k].relations.append(RelationState(cl.Traverse(), exterior_name))
         state[exterior_name] = ObjectState(
-            tags={Semantics.Exterior, Semantics.RoomContour, self.semantics_floor},
+            tags={Semantics.Exterior, Semantics.RoomContour}.union(self.floor_tags),
             relations=[RelationState(cl.Traverse(), k) for k in exterior_connected],
         )
         return state
@@ -254,11 +342,9 @@ class GraphMaker:
             )
             if exterior_name not in state.objs:
                 state[exterior_name] = ObjectState(
-                    tags={
-                        Semantics.Exterior,
-                        Semantics.RoomContour,
-                        self.semantics_floor,
-                    }
+                    tags={Semantics.Exterior, Semantics.RoomContour}.union(
+                        self.floor_tags
+                    )
                 )
             state[exterior_name].relations.append(
                 RelationState(cl.Traverse(), entrance)
@@ -271,7 +357,7 @@ class GraphMaker:
         area = (
             sum(
                 [
-                    self.typical_areas[room_type(r)]
+                    self._typical_area(room_type(r))
                     for r in graph.names
                     if room_type(r) != Semantics.Exterior
                 ]
@@ -285,6 +371,19 @@ class GraphMaker:
         width = self.constants.unit_cast(np.sqrt(area * aspect_ratio).item())
         height = self.constants.unit_cast(np.sqrt(area / aspect_ratio).item())
         return width, height
+
+    def _typical_area(self, semantic):
+        if semantic == Semantics.ElevatorRoom:
+            return (
+                self.constants.elevator_shaft_width
+                * self.constants.elevator_shaft_depth
+            )
+        if semantic == Semantics.ElevatorLobby:
+            return (
+                self.constants.elevator_shaft_width
+                * self.constants.elevator_lobby_depth
+            )
+        return self.typical_areas[semantic]
 
     def draw(self, state):
         graph = self.state2graph(state)
@@ -301,21 +400,19 @@ class GraphMaker:
             state = State(
                 {
                     name: ObjectState(
-                        tags={Semantics.RoomContour, t, self.semantics_floor}
+                        tags={Semantics.RoomContour, t}.union(self.floor_tags)
                     ),
                     holder: ObjectState(
-                        tags={
-                            Semantics.RoomContour,
-                            Semantics.Staircase,
-                            self.semantics_floor,
-                        }
+                        tags={Semantics.RoomContour, Semantics.Staircase}.union(
+                            self.floor_tags
+                        )
                     ),
                     exterior: ObjectState(
                         tags={
                             Semantics.RoomContour,
                             Semantics.Exterior,
                             Semantics.Garage,
-                        },
+                        }.union(self.floor_tags),
                         relations=[RelationState(cl.SharedEdge(), name)],
                     ),
                 },

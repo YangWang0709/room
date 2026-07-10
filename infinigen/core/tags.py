@@ -9,6 +9,7 @@ from __future__ import annotations
 from abc import ABCMeta
 from dataclasses import dataclass
 from enum import Enum, EnumMeta
+from numbers import Integral
 
 
 class ABCEnumMeta(EnumMeta, ABCMeta):
@@ -26,7 +27,53 @@ class StringTag(Tag):
 
 
 class EnumTag(Tag, Enum, metaclass=ABCEnumMeta):
-    pass
+    def __lt__(self, other):
+        if isinstance(other, self.__class__):
+            return self.name < other.name
+        if isinstance(other, Tag):
+            return _tag_sort_key(self) < _tag_sort_key(other)
+        return NotImplemented
+
+
+@dataclass(frozen=True)
+class FloorIndex(Tag):
+    """Dynamic, zero-based floor tag for arbitrary-height buildings.
+
+    The index is a continuous internal sequence counted from the lowest level
+    upwards. Physical elevation and user-facing IDs belong to ``LevelSpec`` so
+    basement levels never require negative room-name indices.
+    """
+
+    index: int
+
+    def __post_init__(self):
+        if isinstance(self.index, bool) or not isinstance(self.index, Integral):
+            raise TypeError(f"Floor index must be an integer, got {self.index!r}")
+        if self.index < 0:
+            raise ValueError(f"Floor index must be non-negative, got {self.index}")
+        object.__setattr__(self, "index", int(self.index))
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}({self.index})"
+
+    __str__ = __repr__
+
+    def __lt__(self, other):
+        if isinstance(other, FloorIndex):
+            return self.index < other.index
+        if isinstance(other, Tag):
+            return _tag_sort_key(self) < _tag_sort_key(other)
+        return NotImplemented
+
+
+def _tag_sort_key(tag: Tag):
+    """Return a stable key for mixed tag collections used in diagnostics."""
+
+    if isinstance(tag, Enum):
+        return tag.__class__.__name__, tag.name
+    if isinstance(tag, FloorIndex):
+        return tag.__class__.__name__, tag.index
+    return tag.__class__.__name__, repr(tag)
 
 
 class Semantics(EnumTag):
@@ -47,6 +94,8 @@ class Semantics(EnumTag):
     DiningRoom = "dining-room"
     Utility = "utility"
     StaircaseRoom = "staircase-room"
+    ElevatorRoom = "elevator-room"
+    ElevatorLobby = "elevator-lobby"
     Warehouse = "warehouse"
     Office = "office"
     MeetingRoom = "meeting-room"
@@ -63,6 +112,14 @@ class Semantics(EnumTag):
     ThirdFloor = "third-floor"
     Exterior = "exterior"
     Staircase = "staircase"
+    VerticalCore = "vertical-core"
+    ElevatorShaft = "elevator-shaft"
+    ElevatorCar = "elevator-car"
+    ElevatorDoor = "elevator-door"
+    ElevatorLandingDoor = "elevator-landing-door"
+    ElevatorCarDoor = "elevator-car-door"
+    ElevatorClearance = "elevator-clearance"
+    ElevatorControlPanel = "elevator-control-panel"
     Visited = "visited"
     RoomContour = "room-contour"
 
@@ -138,7 +195,11 @@ class Semantics(EnumTag):
         return f"{self.__class__.__name__}.{self.name}"
 
     def __lt__(self, other):
-        return self.name < other.name
+        if isinstance(other, Semantics):
+            return self.name < other.name
+        if isinstance(other, Tag):
+            return _tag_sort_key(self) < _tag_sort_key(other)
+        return NotImplemented
 
     @classmethod
     @property
@@ -234,6 +295,8 @@ def contradiction(tags: set[Tag]):
         return True
     if len([t for t in tags if isinstance(t, SpecificObject | Variable)]) > 1:
         return True
+    if len({t.index for t in pos if isinstance(t, FloorIndex)}) > 1:
+        return True
 
     return False
 
@@ -300,6 +363,18 @@ def to_tag(s: str | Tag | type, fac_context=None) -> Tag:
     except KeyError:
         pass
 
+    if s.startswith("floor-index-"):
+        try:
+            return FloorIndex(int(s.removeprefix("floor-index-")))
+        except ValueError:
+            pass
+
+    if s.startswith("FloorIndex(") and s.endswith(")"):
+        try:
+            return FloorIndex(int(s[len("FloorIndex(") : -1]))
+        except ValueError:
+            pass
+
     raise ValueError(
         f"to_tag got {s=} but could not resolve it. Please see tags.Semantics and tags.Subpart for available tag strings"
     )
@@ -312,6 +387,8 @@ def to_string(tag: Tag | str):
     match tag:
         case Semantics() | Subpart():
             return tag.value
+        case FloorIndex(index):
+            return f"floor-index-{index}"
         case StringTag():
             return tag.desc
         case FromGenerator():

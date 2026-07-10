@@ -92,7 +92,9 @@ def split_rooms(rooms_meshed: list[bpy.types.Object]):
         if exterior_objs:
             butil.delete(exterior_objs)
         meshes["exterior"] = []
-        print("[split_rooms] deleted room exterior because OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT=1")
+        print(
+            "[split_rooms] deleted room exterior because OMIT_ROOM_EXTERIOR_FOR_DOME_LIGHT=1"
+        )
 
     for n, objs in meshes.items():
         for o in objs:
@@ -188,8 +190,7 @@ def resolve_material_generator(obj, context="room_material"):
 def call_material_generator(material_gen, **kwargs):
     signature = inspect.signature(material_gen)
     if any(
-        p.kind == inspect.Parameter.VAR_KEYWORD
-        for p in signature.parameters.values()
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in signature.parameters.values()
     ):
         return material_gen(**kwargs)
 
@@ -564,6 +565,163 @@ def populate_windows(
         factory.finalize_assets(windows)
 
 
+def _staircase_mesh_penetrates(lower_mesh, upper_mesh):
+    """Return whether adjacent staircase placeholders have real penetration."""
+
+    from trimesh.collision import CollisionManager
+
+    manager = CollisionManager()
+    manager.add_object("lower", lower_mesh)
+    colliding, contacts = manager.in_collision_single(upper_mesh, return_data=True)
+    return colliding and any(contact.depth > 1e-4 for contact in contacts)
+
+
+def _sample_elevator_staircase_candidate(
+    j,
+    geom,
+    contours,
+    doors,
+    constants,
+    previous_mesh,
+    factory_attempts,
+):
+    """Find one feasible flight while conditioning only on the flight below.
+
+    The native algorithm samples every flight in a building simultaneously.
+    Its success probability therefore falls exponentially with floor count.
+    This opt-in elevator path solves the same local contour and adjacent-flight
+    constraints incrementally, making work scale approximately linearly in N.
+    """
+
+    for _ in range(factory_attempts):
+        fn = random_staircase_factory()(np.random.randint(1e7), False, constants)
+        placeholder = fn.create_placeholder(i=np.random.randint(1e7))
+        try:
+            polygon = shapely.intersection_all(
+                list(
+                    shapely.affinity.translate(geom, -x, -y)
+                    for x in [
+                        placeholder.bound_box[0][0],
+                        placeholder.bound_box[-1][0],
+                    ]
+                    for y in [
+                        placeholder.bound_box[0][1],
+                        placeholder.bound_box[-1][1],
+                    ]
+                )
+            )
+            mls = (
+                polygon.exterior
+                if polygon.geom_type == "Polygon"
+                else shapely.MultiLineString(
+                    [p.exterior for p in polygon.geoms if p.geom_type == "Polygon"]
+                )
+            )
+            if mls.is_empty:
+                continue
+
+            x_co, y_co, z_co = read_co(placeholder).T
+            lower = (
+                x_co[z_co < constants.wall_height],
+                y_co[z_co < constants.wall_height],
+            )
+            upper = (
+                x_co[z_co >= constants.wall_height],
+                y_co[z_co >= constants.wall_height],
+            )
+            # Convex hull is translation invariant and relatively expensive.
+            # Build it once per factory, then copy/translate it for candidate
+            # offsets instead of invoking QHull thousands of times.
+            base_mesh = trimesh.convex.convex_hull(obj2trimesh(placeholder))
+            bounds = mls.bounds
+            for _ in range(400):
+                x = uniform(bounds[0], bounds[2])
+                y = uniform(bounds[1], bounds[3])
+                point = Point(x, y)
+                projected = nearest_points(mls, point)[0]
+                if (
+                    max(abs(point.x - projected.x), abs(point.y - projected.y))
+                    < constants.staircase_snap
+                ):
+                    point = projected
+                    coords = (
+                        np.concatenate([line.coords for line in mls.geoms])
+                        if mls.geom_type == "MultiLineString"
+                        else mls.coords
+                    )
+                    projected = nearest_points(shapely.MultiPoint(coords), Point(x, y))[
+                        0
+                    ]
+                    if (
+                        max(abs(point.x - projected.x), abs(point.y - projected.y))
+                        <= constants.staircase_snap
+                    ):
+                        point = projected
+                x, y = point.x, point.y
+                contains_lower = shapely.contains_xy(
+                    contours[j], lower[0] + x, lower[1] + y
+                ).all()
+                contains_upper = shapely.contains_xy(
+                    contours[j + 1], upper[0] + x, upper[1] + y
+                ).all()
+                if not (
+                    contains_lower
+                    and contains_upper
+                    and fn.valid_contour((x, y), contours[j], doors[j])
+                    and fn.valid_contour((x, y), contours[j + 1], doors[j + 1], False)
+                ):
+                    continue
+
+                mesh = base_mesh.copy()
+                mesh.apply_transform(
+                    translation_matrix([x, y, constants.wall_height * j])
+                )
+                if previous_mesh is not None and _staircase_mesh_penetrates(
+                    previous_mesh, mesh
+                ):
+                    continue
+                return fn, (x, y), mesh
+        finally:
+            butil.delete(placeholder)
+    return None
+
+
+def _place_elevator_staircase_stack(geoms, contours, doors, constants):
+    """Place an arbitrary-N staircase stack with bounded local backtracking."""
+
+    if not geoms:
+        return [], []
+    restarts = min(8, max(2, len(geoms)))
+    attempts_per_level = max(25, 200 // restarts)
+    for _ in trange(restarts, desc="Generating staircase stack"):
+        fns, offsets, meshes = [], [], []
+        for j, geom in enumerate(geoms):
+            candidate = _sample_elevator_staircase_candidate(
+                j,
+                geom,
+                contours,
+                doors,
+                constants,
+                meshes[-1] if meshes else None,
+                attempts_per_level,
+            )
+            if candidate is None:
+                break
+            fn, offset, mesh = candidate
+            fns.append(fn)
+            offsets.append(offset)
+            meshes.append(mesh)
+            logger.info(
+                "Placed staircase flight %d/%d with %s",
+                j + 1,
+                len(geoms),
+                fn.__class__.__name__,
+            )
+        if len(offsets) == len(geoms):
+            return fns, offsets
+    return [], []
+
+
 def room_stairs(constants, state, rooms_meshed):
     col = butil.get_collection("unique_assets:staircases")
 
@@ -571,38 +729,56 @@ def room_stairs(constants, state, rooms_meshed):
         return
 
     contours, doors = [], []
-    for k, s in state.objs.items():
-        if k.startswith(t.Semantics.StaircaseRoom.value):
-            doors_ = [
-                bpy.data.objects[l]
-                for l, o in state.objs.items()
-                if any(
-                    r.relation == cl.CutFrom() and r.target_name == k
-                    for r in o.relations
-                )
-                and l.startswith("door")
-            ]
-            p = shapely.Polygon(s.polygon)
-            contour = shapely.simplify(
-                p.buffer(-constants.wall_thickness / 2, join_style="mitre"), 0.1
+    staircase_states = [
+        (k, s)
+        for k, s in state.objs.items()
+        if k.startswith(t.Semantics.StaircaseRoom.value)
+    ]
+    if getattr(constants, "elevator_enabled", False):
+        staircase_states = sorted(
+            staircase_states,
+            key=lambda item: room_level(item[0]),
+        )
+    for k, s in staircase_states:
+        doors_ = [
+            bpy.data.objects[l]
+            for l, o in state.objs.items()
+            if any(
+                r.relation == cl.CutFrom() and r.target_name == k for r in o.relations
             )
-            for door in doors_:
-                dw = constants.door_width
-                box = shapely.box(-dw / 2, -dw * 1.5, dw / 2, dw * 1.5)
-                box = shapely.affinity.translate(
-                    shapely.affinity.rotate(box, door.rotation_euler[-1]),
-                    *door.location,
-                )
-                contour = contour.difference(box)
-            doors.append(doors_)
-            contours.append(contour)
+            and l.startswith("door")
+        ]
+        p = shapely.Polygon(s.polygon)
+        contour = shapely.simplify(
+            p.buffer(-constants.wall_thickness / 2, join_style="mitre"), 0.1
+        )
+        for door in doors_:
+            dw = constants.door_width
+            box = shapely.box(-dw / 2, -dw * 1.5, dw / 2, dw * 1.5)
+            box = shapely.affinity.translate(
+                shapely.affinity.rotate(box, door.rotation_euler[-1]),
+                *door.location,
+            )
+            contour = contour.difference(box)
+        doors.append(doors_)
+        contours.append(contour)
 
     geoms = []
     for c, c_ in zip(contours[:-1], contours[1:]):
         geoms.append(c.intersection(c_).buffer(0))
 
-    placeholders, offsets, fns = [], [], []
-    for _ in trange(200, desc="Generating staircases: "):
+    elevator_enabled = getattr(constants, "elevator_enabled", False)
+    placeholders = []
+    if elevator_enabled:
+        fns, offsets = _place_elevator_staircase_stack(
+            geoms, contours, doors, constants
+        )
+    else:
+        fns, offsets = [], []
+    for _ in trange(
+        0 if elevator_enabled else 200,
+        desc="Generating staircases: ",
+    ):
         butil.delete(placeholders)
         fns = [
             random_staircase_factory()(np.random.randint(1e7), False, constants)
@@ -689,12 +865,40 @@ def room_stairs(constants, state, rooms_meshed):
                     )
                     for j, (ph, o) in enumerate(zip(placeholders, offsets))
                 )
-                if all(t.intersection(t_).is_empty for t, t_ in zip(ts[:-1], ts[1:])):
+                if getattr(constants, "elevator_enabled", False):
+                    # The production environment already uses python-fcl for
+                    # solver validity, while trimesh boolean backends are
+                    # optional.  Contact depth reproduces the intended
+                    # interpenetration test and allows exact surface touching.
+                    from trimesh.collision import CollisionManager
+
+                    clear = True
+                    for lower_mesh, upper_mesh in zip(ts[:-1], ts[1:]):
+                        manager = CollisionManager()
+                        manager.add_object("lower", lower_mesh)
+                        colliding, contacts = manager.in_collision_single(
+                            upper_mesh, return_data=True
+                        )
+                        if colliding and any(
+                            contact.depth > 1e-4 for contact in contacts
+                        ):
+                            clear = False
+                            break
+                else:
+                    clear = all(
+                        t.intersection(t_).is_empty for t, t_ in zip(ts[:-1], ts[1:])
+                    )
+                if clear:
                     break
         if len(offsets) == len(geoms):
             break
     butil.delete(placeholders)
     if len(offsets) != len(geoms):
+        if getattr(constants, "elevator_enabled", False):
+            raise RuntimeError(
+                "Staircase placement failed in an elevator-enabled building; "
+                "refusing to emit a scene with a missing vertical core"
+            )
         return
     for j, fn in enumerate(tqdm(fns)):
         s = fn(i=np.random.randint(1e7))

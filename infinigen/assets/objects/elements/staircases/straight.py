@@ -686,10 +686,13 @@ class StraightStaircaseFactory(AssetFactory):
         butil.select_none()
         obj = join_objects(parts)
         self.make_spiral(obj)
-        self.handrail_surface.apply(obj, selection="handrails")
-        self.post_surface.apply(obj, selection="posts")
+        # The joined guardrail starts without a material slot.  Establish the
+        # handrail material as the base, then layer post/glass selections using
+        # the same surface utility already used by finalized stair assets.
+        surface.assign_material(obj, self.handrail_surface())
+        surface.assign_material(obj, self.post_surface(), selection="posts")
         if self.has_glasses:
-            self.glass_surface.apply(obj, selection="glasses")
+            surface.assign_material(obj, self.glass_surface(), selection="glasses")
         obj.name = name
         return obj
 

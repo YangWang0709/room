@@ -20,20 +20,47 @@ from infinigen.core.tags import Semantics
 
 from .base import room_level, room_name, room_type, valid_rooms
 from .utils import update_contour, update_exterior, update_shared
+from .vertical_core import VerticalCoreRegistry
 
 _eps = 1e-3
 
 
 class FloorPlanMoves:
-    def __init__(self, constants: RoomConstants):
+    def __init__(
+        self,
+        constants: RoomConstants,
+        vertical_cores: VerticalCoreRegistry | None = None,
+    ):
         self.constants = constants
         self.max_stride = 5
+        self.vertical_cores = vertical_cores
+        self.protected_room_keys = set()
+        self.protected_placeholder_keys = set()
+        if vertical_cores is not None:
+            for placement in vertical_cores:
+                for level in placement.spec.span_levels:
+                    self.protected_room_keys.add(placement.spec.room_key(level))
+                    lobby_key = placement.spec.lobby_key(level)
+                    if lobby_key is not None:
+                        self.protected_room_keys.add(lobby_key)
+                    self.protected_placeholder_keys.add(
+                        placement.spec.placeholder_key(level)
+                    )
 
     def perturb_state(self, state: state_def.State):
         while True:
-            k = np.random.choice(
-                [k for k in state.objs if room_type(k) != Semantics.Exterior]
-            )
+            candidates = [
+                k
+                for k in state.objs
+                if room_type(k) != Semantics.Exterior
+                and k not in self.protected_room_keys
+                and k not in self.protected_placeholder_keys
+            ]
+            if not candidates:
+                raise ValueError(
+                    "No movable rooms remain after protecting vertical cores"
+                )
+            k = np.random.choice(candidates)
             state_ = deepcopy(state)
             rn = uniform()
             try:
@@ -46,6 +73,11 @@ class FloorPlanMoves:
                 else:
                     indices = self.swap_room(state_, k)
             except NotImplementedError:
+                indices = set()
+            if self.protected_room_keys.intersection(indices):
+                # A neighbouring extrusion is allowed to inspect a core room,
+                # but never to change its footprint.  Core alignment is a hard
+                # structural invariant rather than a soft annealing score.
                 indices = set()
             if len(indices) > 0:
                 break
@@ -129,9 +161,14 @@ class FloorPlanMoves:
         return indices
 
     def swap_room(self, state, k):
-        j = np.random.choice(
-            [r.target_name for r in state[k].relations if r.value.length > 0]
-        )
+        candidates = [
+            r.target_name
+            for r in state[k].relations
+            if r.value.length > 0 and r.target_name not in self.protected_room_keys
+        ]
+        if not candidates:
+            raise NotImplementedError("No non-core room is available for swapping")
+        j = np.random.choice(candidates)
         state[k].polygon, state[j].polygon = state[j].polygon, state[k].polygon
         return {k, j}
 

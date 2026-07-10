@@ -23,6 +23,12 @@ from .graph import GraphMaker
 from .segment import SegmentMaker
 from .solidifier import BlueprintSolidifier
 from .solver import FloorPlanMoves
+from .vertical_core import (
+    VerticalCorePlacement,
+    VerticalCoreRegistry,
+    VerticalCoreSpec,
+    place_vertical_cores,
+)
 
 
 @gin.configurable
@@ -62,6 +68,7 @@ class FloorPlanSolver:
             ]
 
             self.solver = FloorPlanMoves(self.constants)
+            self.vertical_cores = None
             self.solidifiers = [
                 BlueprintSolidifier(consgraph, g, i) for i, g in enumerate(self.graphs)
             ]
@@ -121,8 +128,26 @@ class FloorPlanSolver:
     def solve(self):
         state = State(graphs=self.graphs)
         states = []
+        layout_attempts = 0
+        last_layout_failure = None
         while len(states) < self.n_stories:
+            if getattr(self.constants, "elevator_enabled", False):
+                layout_attempts += 1
+                if layout_attempts > self.constants.elevator_placement_attempts:
+                    raise ValueError(
+                        "Unable to solve a floor plan containing every requested "
+                        "vertical core after "
+                        f"{self.constants.elevator_placement_attempts} attempts; "
+                        f"last failure: {last_layout_failure}"
+                    )
             pholder = self.contour_factory.add_staircase(self.contours[-1])
+            try:
+                vertical_cores = self._build_vertical_cores(pholder)
+            except ValueError as exc:
+                # Try another legacy staircase position.  A requested elevator
+                # is structural and may never be silently omitted.
+                last_layout_failure = str(exc)
+                continue
             state.objs = {}
             states = []
             for j in range(self.n_stories):
@@ -130,13 +155,25 @@ class FloorPlanSolver:
                     self.n_divide_trials * (j + 1) ** 2,
                     desc=f"Dividing segments for {j}",
                 ):
-                    st = self.segment_makers[j].build_segments(pholder)
+                    if vertical_cores is None:
+                        st = self.segment_makers[j].build_segments(pholder)
+                    else:
+                        st = self.segment_makers[j].build_segments(
+                            vertical_cores=vertical_cores
+                        )
                     if st is not None:
                         states.append(st)
                         state.objs.update(st.objs)
                         break
                 else:
+                    last_layout_failure = (
+                        f"segment assignment failed on level {j} after "
+                        f"{self.n_divide_trials * (j + 1) ** 2} trials"
+                    )
                     break
+
+        self.vertical_cores = vertical_cores
+        self.solver = FloorPlanMoves(self.constants, vertical_cores)
 
         state = self.simulated_anneal(state)
         self.contour_factory.decorate(state)
@@ -155,9 +192,87 @@ class FloorPlanSolver:
         dimensions = (
             self.widths[0],
             self.heights[0],
-            self.constants.wall_height * self.n_stories,
+            self.constants.building_levels[-1].elevation
+            + self.constants.building_levels[-1].height
+            - self.constants.building_levels[0].elevation,
         )
-        return State(obj_states), unique_roomtypes, dimensions
+        result = State(obj_states)
+        result.vertical_cores = self.vertical_cores
+        return result, unique_roomtypes, dimensions
+
+    def _build_vertical_cores(self, staircase_polygon):
+        """Build an opt-in multi-core registry while preserving legacy RNG.
+
+        The disabled path returns ``None`` and the caller executes the original
+        single-placeholder code byte-for-byte.  Enabled placement uses a local
+        RNG stream and may retry with a different legacy staircase position if
+        the building has no valid elevator/lobby footprint.
+        """
+
+        if not getattr(self.constants, "elevator_enabled", False):
+            return None
+        if self.n_stories <= 1:
+            return None
+
+        levels = tuple(range(self.n_stories))
+        clearance = self.constants.elevator_core_clearance
+        x0, y0, x1, y1 = staircase_polygon.bounds
+        staircase_width = max(x1 - x0, self.constants.elevator_staircase_core_width)
+        staircase_depth = max(y1 - y0, self.constants.elevator_staircase_core_depth)
+        center_x, center_y = staircase_polygon.centroid.coords[0]
+        stair_x0 = self.constants.unit_cast(center_x - staircase_width / 2)
+        stair_y0 = self.constants.unit_cast(center_y - staircase_depth / 2)
+        staircase_polygon = shapely.box(
+            stair_x0,
+            stair_y0,
+            stair_x0 + staircase_width,
+            stair_y0 + staircase_depth,
+        )
+        staircase_spec = VerticalCoreSpec(
+            core_id="stairs_0",
+            room_type=Semantics.StaircaseRoom,
+            placeholder_tag=Semantics.Staircase,
+            instance_index=0,
+            width=staircase_width,
+            depth=staircase_depth,
+            span_levels=levels,
+            served_levels=levels,
+            overlap_threshold=self.constants.staircase_thresh,
+            clearance=clearance,
+            lobby_depth=0,
+            door_width=min(staircase_width, staircase_depth),
+        )
+        staircase = VerticalCorePlacement(staircase_spec, staircase_polygon, "-y")
+
+        served_levels = self.constants.elevator_served_levels
+        if served_levels is None:
+            served_levels = levels
+        served_levels = tuple(served_levels)
+        specs = [
+            VerticalCoreSpec(
+                core_id=f"elevator_{index}",
+                room_type=Semantics.ElevatorRoom,
+                placeholder_tag=Semantics.ElevatorShaft,
+                instance_index=index,
+                width=self.constants.elevator_shaft_width,
+                depth=self.constants.elevator_shaft_depth,
+                span_levels=levels,
+                served_levels=served_levels,
+                lobby_room_type=Semantics.ElevatorLobby,
+                overlap_threshold=self.constants.elevator_overlap_threshold,
+                clearance=clearance,
+                lobby_depth=self.constants.elevator_lobby_depth,
+                door_width=self.constants.elevator_door_width,
+            )
+            for index in range(self.constants.n_elevators)
+        ]
+        return place_vertical_cores(
+            self.contours,
+            specs,
+            seed=self.factory_seed + 0xE1E0,
+            unit=self.constants.unit,
+            preplaced=(staircase,),
+        )
 
     def simulated_anneal(self, state):
         consgraph = self.consgraph.filter("room")

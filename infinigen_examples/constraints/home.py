@@ -342,7 +342,9 @@ def home_room_constraints(has_fewer_rooms=False):
     constraints["node"] = node_constraint
 
     all_rooms = cl.scene()[Semantics.RoomContour]
-    rooms = all_rooms[-Semantics.Exterior][-Semantics.Staircase]
+    rooms = all_rooms[-Semantics.Exterior][-Semantics.Staircase][
+        -Semantics.ElevatorRoom
+    ][-Semantics.ElevatorLobby][-Semantics.ElevatorShaft]
 
     def exterior(r):
         return r.same_level()[Semantics.Exterior]
@@ -510,7 +512,14 @@ def home_furniture_constraints():
     used_as = home_asset_usage()
     usage_lookup.initialize_from_dict(used_as)
 
-    rooms = cl.scene()[{Semantics.Room, -Semantics.Object}]
+    rooms = cl.scene()[
+        {
+            Semantics.Room,
+            -Semantics.Object,
+            -Semantics.ElevatorRoom,
+            -Semantics.ElevatorLobby,
+        }
+    ]
     obj = cl.scene()[{Semantics.Object, -Semantics.Room}]
 
     cutters = cl.scene()[Semantics.Cutter]
@@ -778,7 +787,8 @@ def home_furniture_constraints():
     constraints["lighting"] = rooms.all(
         lambda r: (
             # dont put redundant lights close to eachother (including lamps, ceiling lights, etc)
-            cl.min_distance_internal(lights.related_to(r)) >= 1
+            cl.min_distance_internal(lights.related_to(r))
+            >= 1
         )
     )
 
@@ -1248,9 +1258,7 @@ def home_furniture_constraints():
                     .in_range(0, 3)
                 )
             )
-            * (
-                rug_count_limit(r, 2)
-            )
+            * (rug_count_limit(r, 2))
         )
     )
 

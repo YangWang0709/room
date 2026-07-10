@@ -3,12 +3,14 @@
 
 # Authors:
 # - Lingjie Mei
+from numbers import Integral
 from typing import List
 
 import networkx as nx
 from matplotlib import pyplot as plt
 
-from infinigen.core.tags import Semantics
+from infinigen.core.constraints.constraint_language.levels import LevelSpec
+from infinigen.core.tags import FloorIndex, Semantics
 from infinigen.core.util.math import int_hash
 
 
@@ -118,14 +120,36 @@ def room_type(name):
 
 
 def room_level(name):
-    return int(name.split("/")[0].split("_")[1])
+    level = int(name.split("/")[0].split("_")[1])
+    if level < 0:
+        raise ValueError(
+            "Room level indices must be non-negative internal indices; "
+            f"encode basements through LevelSpec elevation/level_id, got {name!r}"
+        )
+    return level
 
 
 def room_name(t, level, n=0):
+    if isinstance(level, FloorIndex):
+        level = level.index
+    elif isinstance(level, LevelSpec):
+        level = level.index
+    if isinstance(level, bool) or not isinstance(level, Integral):
+        raise TypeError(f"Room level must be an integer level index, got {level!r}")
+    level = int(level)
+    if level < 0:
+        raise ValueError(
+            "Room level indices must be non-negative; use LevelSpec elevation/level_id "
+            "for basement levels"
+        )
     return f"{t.value}_{level}/{n}"
 
 
 def valid_rooms(state):
     for name, obj_st in state.objs.items():
-        if room_type(name) not in [Semantics.Exterior, Semantics.Staircase]:
+        if room_type(name) not in [
+            Semantics.Exterior,
+            Semantics.Staircase,
+            Semantics.ElevatorShaft,
+        ]:
             yield name, obj_st

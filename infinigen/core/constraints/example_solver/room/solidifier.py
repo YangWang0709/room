@@ -184,23 +184,86 @@ class BlueprintSolidifier:
         self.graph = graph
         self.level = level
         self.enable_open = enable_open
+        self.level_aware_path = bool(
+            getattr(self.constants, "dynamic_level_tags_enabled", False)
+        )
+        building_levels = getattr(self.constants, "building_levels", None)
+        if building_levels is None:
+            self.level_spec = None
+            self.elevation = self.constants.wall_height * level
+            self.wall_height = self.constants.wall_height
+            self.floor_tags = frozenset()
+            self.is_ground_level = level == 0
+        else:
+            self.level_spec = building_levels.by_index(level)
+            self.elevation = self.level_spec.elevation
+            self.wall_height = self.level_spec.height
+            self.floor_tags = self.constants.solidifier_floor_tags(level)
+            self.is_ground_level = level == building_levels.ground_index
+        if self.wall_height == self.constants.wall_height:
+            # Preserve exact legacy floating-point values on the default path.
+            self.window_top = self.constants.window_top
+            self.window_size = self.constants.window_size
+        else:
+            self.window_top = max(
+                self.constants.wall_thickness / 2,
+                self.wall_height
+                - self.constants.wall_thickness
+                - self.constants.window_height
+                - self.constants.window_size,
+            )
+            self.window_size = (
+                self.wall_height
+                - self.constants.wall_thickness
+                - self.window_top
+                - self.constants.window_height
+            )
+        if self.window_size <= 0:
+            raise ValueError(
+                f"Level {level} height {self.wall_height} is too small for configured windows"
+            )
 
     @staticmethod
     def unroll(x):
+        """Yield each cutter once, aggregating every room it cuts.
+
+        Predefined portals store the same Blender cutter in the lists of both
+        adjacent rooms.  The old generator yielded that object twice, which
+        applied the level elevation twice and left one overwritten ``CutFrom``
+        relation.  Identity-based aggregation preserves the existing mapping
+        formats while making a shared cutter a single multi-target operation.
+        """
+
+        entries = []
         for k, cs in x.items():
             if isinstance(cs, Mapping):
                 for l, c in cs.items():
                     if k < l:
                         if isinstance(c, Iterable):
                             for cc in c:
-                                yield (k, l), cc
+                                entries.append(((k, l), cc))
                         else:
-                            yield (k, l), c
+                            entries.append(((k, l), c))
             elif isinstance(cs, Iterable):
                 for c in cs:
-                    yield (k,), c
+                    entries.append(((k,), c))
             else:
-                yield (k,), cs
+                entries.append(((k,), cs))
+
+        aggregated = {}
+        order = []
+        for keys, cutter in entries:
+            identity = id(cutter)
+            if identity not in aggregated:
+                aggregated[identity] = [[], cutter]
+                order.append(identity)
+            targets = aggregated[identity][0]
+            for key in keys:
+                if key not in targets:
+                    targets.append(key)
+        for identity in order:
+            targets, cutter = aggregated[identity]
+            yield tuple(targets), cutter
 
     def solidify(self, state):
         wt = self.constants.wall_thickness
@@ -235,13 +298,15 @@ class BlueprintSolidifier:
             window_cutters,
             entrance_cutters,
         ]
+        level_cutters = [
+            cutter for cutters in all_cutter_lists for _, cutter in self.unroll(cutters)
+        ]
 
-        w = self.constants.wall_height
         for k, r in rooms.items():
-            r.location[-1] += w * self.level
+            r.location[-1] += self.elevation
         for cutters in all_cutter_lists:
             for k, c in self.unroll(cutters):
-                c.location[-1] += w * self.level
+                c.location[-1] += self.elevation
 
         butil.put_in_collection(rooms.values(), "placeholders:room_shells")
         rooms_ = rooms
@@ -296,21 +361,28 @@ class BlueprintSolidifier:
             co = read_co(obj)
             m = wt / 2 + _snap
             low = np.abs(co[:, -1] - m) < _eps
-            high = np.abs(co[:, -1] - self.constants.wall_height + m) < _eps
+            high = np.abs(co[:, -1] - self.wall_height + m) < _eps
             co[:, -1] = np.where(low, wt / 2, co[:, -1])
-            co[:, -1] = np.where(high, self.constants.wall_height - wt / 2, co[:, -1])
+            co[:, -1] = np.where(high, self.wall_height - wt / 2, co[:, -1])
             write_co(obj, co)
             tagging.tag_object(obj)
 
-        for obj in cutter_col.objects:
+        # The level-aware path must only normalize current-level cutters: the
+        # shared collection also contains completed lower-level portals.  Keep
+        # the native 1-3 story path's historical iteration unchanged for strict
+        # behavior-preserving default generation.
+        cutters_to_normalize = (
+            level_cutters if self.level_aware_path else cutter_col.objects
+        )
+        for obj in cutters_to_normalize:
             offset = np.array(obj.location)[np.newaxis, :]
-            offset[:, 2] -= w * self.level
+            offset[:, 2] -= self.elevation
             co = read_co(obj) + offset
             m = wt / 2 + _snap
             low = np.abs(co[:, -1] - m) < _eps
-            high = np.abs(co[:, -1] - self.constants.wall_height + m) < _eps
+            high = np.abs(co[:, -1] - self.wall_height + m) < _eps
             co[:, -1] = np.where(low, wt / 2, co[:, -1])
-            co[:, -1] = np.where(high, self.constants.wall_height - wt / 2, co[:, -1])
+            co[:, -1] = np.where(high, self.wall_height - wt / 2, co[:, -1])
             write_co(obj, co - offset)
             tagging.tag_object(obj)
 
@@ -330,9 +402,19 @@ class BlueprintSolidifier:
     ):
         obj_states = {}
         for k, o in rooms.items():
+            semantic = room_type(o.name)
+            tags = {
+                t.Semantics.Room,
+                t.SpecificObject(o.name),
+                semantic,
+            }.union(self.floor_tags)
+            if semantic in {t.Semantics.ElevatorRoom, t.Semantics.ElevatorLobby}:
+                tags.add(t.Semantics.NoChildren)
+            if semantic == t.Semantics.ElevatorRoom:
+                tags.add(t.Semantics.VerticalCore)
             obj_states[o.name] = ObjectState(
                 obj=o,
-                tags={t.Semantics.Room, t.SpecificObject(o.name), room_type(o.name)},
+                tags=tags,
                 polygon=segments[k],
             )
         for k, r in rooms.items():
@@ -364,9 +446,17 @@ class BlueprintSolidifier:
         ]
         for cutters, tag in zip(all_cutters, tag_cutters):
             for k, c in self.unroll(cutters):
+                tags = {tag, t.Semantics.Cutter}.union(self.floor_tags)
+                if c.get("elevator_landing_door", False):
+                    tags.update(
+                        {
+                            t.Semantics.ElevatorDoor,
+                            t.Semantics.ElevatorLandingDoor,
+                        }
+                    )
                 obj_states[c.name] = ObjectState(
                     obj=c,
-                    tags={tag, t.Semantics.Cutter},
+                    tags=tags,
                     relations=[RelationState(cl.CutFrom(), rooms[k_].name) for k_ in k],
                 )
 
@@ -382,9 +472,7 @@ class BlueprintSolidifier:
             dissolve=False,
         )
         butil.modify_mesh(obj, "WELD", merge_threshold=0.01)
-        butil.modify_mesh(
-            obj, "SOLIDIFY", thickness=self.constants.wall_height, offset=-1
-        )
+        butil.modify_mesh(obj, "SOLIDIFY", thickness=self.wall_height, offset=-1)
         obj.name = name
         self.tag(obj, False)
         center = read_center(obj)
@@ -452,16 +540,25 @@ class BlueprintSolidifier:
                 direction = (centroids[k] - centroids[l]) * (
                     1 if dist2entrance[k] > dist2entrance[l] else -1
                 )
-                i = name_groups[k].intersection(name_groups[l])
-                if len(i) > 0 and self.enable_open:
-                    group = combined_rooms[next(iter(i))][1]
-                    fn = rg(
-                        group["adjacent"]
-                        if k in neighbours[l]
-                        else group["non-adjacent"]
-                    )
+                room_pair = {room_type(k), room_type(l)}
+                if Semantics.ElevatorRoom in room_pair:
+                    fn = "elevator" if Semantics.ElevatorLobby in room_pair else "none"
                 else:
-                    fn = "door" if k in neighbours[l] else "none"
+                    i = name_groups[k].intersection(name_groups[l])
+                    if len(i) > 0 and self.enable_open:
+                        group = combined_rooms[next(iter(i))][1]
+                        fn = rg(
+                            group["adjacent"]
+                            if k in neighbours[l]
+                            else group["non-adjacent"]
+                        )
+                    else:
+                        fn = "door" if k in neighbours[l] else "none"
+                if fn == "elevator":
+                    shaft_name = k if room_type(k) == Semantics.ElevatorRoom else l
+                    cutter = self.make_elevator_door_cutter(se, direction, shaft_name)
+                    door_cutters[k][l] = door_cutters[l][k] = cutter
+                    continue
                 match fn:
                     case "open":
                         open_cutters[k][l] = open_cutters[l][k] = self.make_open_cutter(
@@ -477,7 +574,7 @@ class BlueprintSolidifier:
                         )
                     case "panoramic":
                         interior_cutters[k][l] = interior_cutters[l][k] = (
-                            self.make_window_cutter(se, self.level == 0)
+                            self.make_window_cutter(se, self.is_ground_level)
                         )
         return open_cutters, door_cutters, interior_cutters
 
@@ -499,7 +596,7 @@ class BlueprintSolidifier:
         entrance = self.graph.entrance
 
         for k, mls in exterior_edges.items():
-            if k == entrance and self.level == 0:
+            if k == entrance and self.is_ground_level:
                 continue
             for ls in mls.geoms:
                 ls = ls.segmentize(self.constants.max_window_length)
@@ -509,7 +606,7 @@ class BlueprintSolidifier:
                 cutters = self.make_window_cutter(ls, panoramic_rooms[room_type(k)])
                 window_cutters[k].extend(cutters)
         for k, mls in exterior_edges.items():
-            if k == entrance and self.level == 0:
+            if k == entrance and self.is_ground_level:
                 x, y, x_, y_ = max_mls(mls)
                 ls = LineString([(x, y), (x_, y_)])
                 cutter = self.make_entrance_cutter(ls)
@@ -565,6 +662,48 @@ class BlueprintSolidifier:
         self.tag(cutter)
         return cutter
 
+    def make_elevator_door_cutter(self, mls, direction, shaft_name):
+        """Create a centered sliding-door opening with stable metadata."""
+
+        x, y, x_, y_ = max_mls(mls)
+        length = np.linalg.norm([x_ - x, y_ - y])
+        width = self.constants.elevator_door_width
+        if length + _eps < width:
+            raise ValueError(
+                f"Elevator shared edge {shaft_name!r} is too short for "
+                f"door width {width}: {length}"
+            )
+        cutter = new_cube()
+        vertical = np.abs(x - x_) < 0.1
+        wt = self.constants.wall_thickness
+        cutter.scale = (
+            width / 2,
+            width + wt / 2,
+            self.constants.elevator_door_height / 2 - _snap / 2,
+        )
+        cutter.location[-1] += _snap / 2
+        butil.apply_transform(cutter, True)
+        cx, cy = (x + x_) / 2, (y + y_) / 2
+        if vertical:
+            z_rot = -np.pi / 2 if direction[0] > 0 else np.pi / 2
+        else:
+            z_rot = 0 if direction[1] > 0 else np.pi
+        elevator_index = int(shaft_name.rsplit("/", 1)[1])
+        cutter.location = (
+            cx,
+            cy,
+            self.constants.elevator_door_height / 2 + wt / 2,
+        )
+        cutter.rotation_euler[-1] = z_rot
+        cutter.name = (
+            f"{t.Semantics.ElevatorLandingDoor.value}_{self.level}/" f"{elevator_index}"
+        )
+        cutter["elevator_landing_door"] = True
+        cutter["elevator_id"] = f"elevator_{elevator_index}"
+        cutter["floor_index"] = self.level
+        self.tag(cutter)
+        return cutter
+
     def make_entrance_cutter(self, mls):
         x, y, x_, y_ = max_mls(mls)
         cutter = new_cube()
@@ -596,16 +735,16 @@ class BlueprintSolidifier:
             wt = self.constants.wall_thickness
             wm = self.constants.window_margin
 
-            if rg(is_panoramic) and self.constants.wall_height < 4:
+            if rg(is_panoramic) and self.wall_height < 4:
                 x_scale = length / 2 - wm
                 lam = 1 / 2
-                z_scale = (self.constants.wall_height - wt) / 2 - _snap
+                z_scale = (self.wall_height - wt) / 2 - _snap
                 z_loc = z_scale + wt / 2 + _snap
             else:
                 x_scale = uniform(self.constants.door_width / 2, length / 2 - wm)
                 m = (x_scale + wm) / length
                 lam = uniform(m, 1 - m)
-                z_scale = self.constants.window_size / 2
+                z_scale = self.window_size / 2
                 z_loc = z_scale + self.constants.window_height + wt / 2
 
             cutter = new_cube()
@@ -652,7 +791,7 @@ class BlueprintSolidifier:
                 bpy.ops.mesh.select_all(action="SELECT")
                 bpy.ops.mesh.extrude_region_move(
                     TRANSFORM_OT_translate={
-                        "value": (0, 0, self.constants.wall_height - wt - 2 * _snap)
+                        "value": (0, 0, self.wall_height - wt - 2 * _snap)
                     }
                 )
                 bpy.ops.mesh.select_mode(type="FACE")
@@ -666,7 +805,7 @@ class BlueprintSolidifier:
 
     def tag(self, obj, visible=True):
         center = read_center(obj) + obj.location
-        high = self.constants.wall_height - self.constants.wall_thickness / 2
+        high = self.wall_height - self.constants.wall_thickness / 2
         z = center[:, -1]
         low = self.constants.wall_thickness / 2
         ceiling = (z > high - _eps) | (np.abs(z - high + _snap) < _eps)
