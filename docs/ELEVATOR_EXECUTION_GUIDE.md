@@ -217,6 +217,15 @@ vertical-core 路径。
 ./scripts/run_full_elevator_scene.sh
 ```
 
+启用三项既有加速，同时保留天花板、`room_exterior` 框架和柱体的一键入口是：
+
+```bash
+./scripts/run_full_elevator_scene_max_speed.sh
+```
+
+该 preset 不加载 `fast_solve.gin`，不会减少原生 large/medium/small 求解步数；
+但 `INFINIGEN_GC_BATCH_REMOVE_NODE_GROUPS=1` 尚不保证严格 bitwise 等价。
+
 例如生成 8 层时使用 `N_STORIES=8 ./scripts/run_full_elevator_scene.sh`；脚本还接受
 `SEED`、`MIN_ROOMS`、`MAX_ROOMS`、`ELEVATOR_MODE`、`FINE_TERRAIN`、
 `OUTPUT_ROOT`、`EXPORT_RESOLUTION` 和 `DRY_RUN` 环境变量。`FINE_TERRAIN` 默认
